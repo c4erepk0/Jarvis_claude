@@ -1,0 +1,70 @@
+# J.A.R.V.I.S. в Docker.
+#   docker compose up -d                       — только Jarvis (папка ./vault — память Obsidian)
+#   docker compose --profile livesync up -d    — + CouchDB и мост для Self-hosted LiveSync (iPhone, Android, ПК)
+#   docker compose --profile syncthing up -d   — + Syncthing (ПК, Android, сервер)
+# Подробно — docs/sync.md.
+name: jarvis
+
+services:
+  jarvis:
+    build: .
+    image: jarvis:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      JARVIS_HOST: 0.0.0.0
+      VAULT_PATH: /vault
+      JARVIS_DATA_DIR: /data
+    ports:
+      - "${JARVIS_BIND:-127.0.0.1}:${JARVIS_PORT:-8765}:8765"
+    volumes:
+      - ./vault:/vault
+      - ./data:/data
+
+  couchdb:
+    profiles: [livesync]
+    image: couchdb:3.5.2
+    restart: unless-stopped
+    environment:
+      COUCHDB_USER: ${COUCHDB_USER:-jarvis}
+      COUCHDB_PASSWORD: ${COUCHDB_PASSWORD:?Задайте COUCHDB_PASSWORD в .env}
+    volumes:
+      - ./sync/couchdb/local.ini:/opt/couchdb/etc/local.d/20-livesync.ini
+      - couchdb_data:/opt/couchdb/data
+    ports:
+      # наружу CouchDB лучше отдавать через HTTPS (Tailscale / Cloudflare Tunnel / Caddy) — см. docs/sync.md
+      - "${COUCHDB_BIND:-127.0.0.1}:5984:5984"
+
+  livesync-bridge:
+    profiles: [livesync]
+    # официальный мост автора плагина LiveSync; закреплён на проверенном коммите
+    build: https://github.com/vrtmrz/livesync-bridge.git#8044be0dc399cd2f521353cea0db7506905a034c
+    restart: unless-stopped
+    depends_on: [couchdb]
+    user: "1000:1000"
+    volumes:
+      - ./vault:/app/data/vault
+      - ./sync/livesync:/app/dat
+      - bridge_state:/deno-dir/location_data
+
+  syncthing:
+    profiles: [syncthing]
+    image: syncthing/syncthing:2.1.6
+    restart: unless-stopped
+    hostname: jarvis-server
+    environment:
+      PUID: 1000
+      PGID: 1000
+    volumes:
+      - ./vault:/var/syncthing/vault
+      - syncthing_config:/var/syncthing/config
+    ports:
+      - "127.0.0.1:8384:8384"   # веб-интерфейс: только локально (или через SSH-туннель)
+      - "22000:22000/tcp"
+      - "22000:22000/udp"
+      - "21027:21027/udp"
+
+volumes:
+  couchdb_data:
+  bridge_state:
+  syncthing_config:

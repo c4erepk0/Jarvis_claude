@@ -1,0 +1,8 @@
+.git
+.venv
+data
+vault
+tests
+sync
+docs
+.env

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="g" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffffff"/><stop offset=".3" stop-color="#9ff6ff"/><stop offset="1" stop-color="#3ee8ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#02070d"/>
+  <circle cx="256" cy="256" r="200" fill="none" stroke="#3ee8ff" stroke-opacity=".35" stroke-width="6"/>
+  <g fill="#3ee8ff" fill-opacity=".85">
+    <path id="s" d="M256 86a170 170 0 0 1 61 11l-18 46a120 120 0 0 0-43-8z"/>
+    <use href="#s" transform="rotate(36 256 256)"/><use href="#s" transform="rotate(72 256 256)"/>
+    <use href="#s" transform="rotate(108 256 256)"/><use href="#s" transform="rotate(144 256 256)"/>
+    <use href="#s" transform="rotate(180 256 256)"/><use href="#s" transform="rotate(216 256 256)"/>
+    <use href="#s" transform="rotate(252 256 256)"/><use href="#s" transform="rotate(288 256 256)"/>
+    <use href="#s" transform="rotate(324 256 256)"/>
+  </g>
+  <circle cx="256" cy="256" r="104" fill="none" stroke="#3ee8ff" stroke-width="10"/>
+  <circle cx="256" cy="256" r="96" fill="url(#g)"/>
+</svg>
