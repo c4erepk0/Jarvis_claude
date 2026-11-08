@@ -1,6 +1,8 @@
-// J.A.R.V.I.S. — дашборд. Без сборки и фреймворков: модули ES, данные — REST + WebSocket.
-import { Reactor } from "./reactor.js?v=2";
-import { Voice } from "./voice.js?v=2";
+// J.A.R.V.I.S. — дашборд. Без сборки и фреймворков: модули ES.
+// Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
+// (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
+import { Reactor } from "./reactor.js?v=3";
+import { Voice } from "./voice.js?v=3";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -22,6 +24,8 @@ let diag = null;
 let taskView = "today";
 let ws = null;
 let greeted = false;
+let local = null;             // ядро Jarvis в браузере (режим «только iPhone»)
+let SA = null;                // модуль standalone.js
 const reactor = new Reactor($("#reactor"));
 const voice = new Voice({
   onCommand: (t) => send(t),
@@ -32,6 +36,10 @@ const voice = new Voice({
 
 // ---------- API ----------
 async function api(path, { method = "GET", body, form } = {}) {
+  if (local) {
+    try { return await local.request(method, path, body || {}); }
+    catch (e) { throw new Error(e.message || String(e)); }
+  }
   const opts = { method, credentials: "same-origin", headers: {} };
   if (form) opts.body = form;
   else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
@@ -48,10 +56,26 @@ async function boot() {
     "> калибровка голосового модуля", "> все системы в норме"];
   const log = $("#boot-log");
   for (const l of lines) { log.textContent += l + "\n"; await new Promise((r) => setTimeout(r, 170)); }
-  try {
-    const s = await api("/api/session");
-    if (s.auth && !s.logged_in) { hideBoot(); showLogin(); return; }
-  } catch { /* сервер недоступен — покажем ниже */ }
+  const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!server || server.standalone) {
+    // сервера нет (GitHub Pages / с экрана «Домой») — Jarvis работает прямо на телефоне
+    SA = await import("./standalone.js?v=3");
+    document.body.classList.add("standalone");
+    if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
+    try {
+      local = await SA.createLocal(SA.loadSettings());
+    } catch (e) {
+      hideBoot();
+      toast(`Не удалось открыть память: ${e.message}`, "error");
+      openSettings(false, e.message);
+      return;
+    }
+    await start();
+    hideBoot();
+    if (SA.needsSeed(local)) offerSeed();
+    return;
+  }
+  if (server.auth && !server.logged_in) { hideBoot(); showLogin(); return; }
   await start();
   hideBoot();
 }
@@ -73,7 +97,15 @@ $("#login-form").addEventListener("submit", async (e) => {
 
 async function start() {
   await loadState(true);
-  connect();
+  if (local) {
+    local.on(handleEvent);
+    chip("#chip-sync", "on");
+    setInterval(() => local.tick().catch(() => {}), 5000);
+    setInterval(() => api("/api/diagnostics").then(renderDiag).catch(() => {}), 30000);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") local.tick({ pollEvery: 0 }).catch(() => {});
+    });
+  } else connect();
   loadProjects();
   setInterval(loadProjects, 120000);
   setInterval(() => loadWeather(), 15 * 60000);
@@ -93,6 +125,7 @@ async function loadState(first = false) {
   if (first) {
     voice.wake = (S.voice.wake_word || "джарвис").toLowerCase();
     voice.serverTTS = S.voice.server;
+    if (SA) voice.preferredVoice = SA.loadSettings().voiceName;
     voice.muted = S.voice.muted || store.get("muted", false);
     $("#opt-mute").checked = voice.muted;
     renderLog(S.events);
@@ -121,6 +154,11 @@ function connect() {
   ws.onclose = () => { chip("#chip-sync", "bad"); setTimeout(connect, 2500); };
   ws.onmessage = (m) => {
     let e; try { e = JSON.parse(m.data); } catch { return; }
+    handleEvent(e);
+  };
+}
+
+function handleEvent(e) {
     const d = e.data || {};
     switch (e.type) {
       case "refresh": refreshSoon(d.what); break;
@@ -143,9 +181,9 @@ function connect() {
       case "workshop": workshop(d); break;
       case "job": workshop({ text: `— ${d.project}: ${d.status} ${d.result ? "· " + d.result.slice(0, 300) : ""}` });
         toast(`Мастерская: ${d.project} — ${d.status === "done" ? "готово" : d.status}`, d.status === "done" ? "ok" : "warn"); break;
+      case "sync": chip("#chip-sync", d.ok ? "on" : "bad"); if (!d.ok) $("#chip-sync").title = `Синхронизация: ${d.error}`; break;
       default: break;
     }
-  };
 }
 const TOOL_NAMES = { memory_search: "ищу в памяти", tasks_list: "смотрю задачи", task_add: "записываю задачу",
   money_add: "записываю операцию", finance_report: "считаю финансы", projects_status: "проверяю проекты",
@@ -418,6 +456,7 @@ $("#confirms").addEventListener("click", async (e) => {
 });
 
 function renderDiag(d) {
+  if (d && d.mode === "device") return renderDeviceDiag(d);
   if (!d || !d.ram) return;
   diag = d;
   $("#diag-host").textContent = (d.host || "").toUpperCase().slice(0, 18);
@@ -434,6 +473,100 @@ function renderDiag(d) {
   ].join("");
   updateMetrics();
 }
+
+// Диагностика в режиме «только iPhone»: связь, синхронизация с GitHub, память, хранилище браузера.
+function renderDeviceDiag(d) {
+  diag = { cpu: Math.round((d.load || 0) * 100) };
+  $("#diag-host").textContent = "IPHONE";
+  const meter = (label, pct, value) => {
+    const cls = pct >= 90 ? "bad" : pct >= 75 ? "warn" : "";
+    return `<div><div class="meter-h">${label}<b>${value}</b></div><div class="meter"><i class="${cls}" style="width:${Math.min(100, pct)}%"></i></div></div>`;
+  };
+  const r = d.github_rate;
+  $("#diag").innerHTML = [
+    meter("СВЯЗЬ", d.online === false ? 100 : 8, d.online === false ? "нет сети" : "в сети"),
+    r ? meter("ЛИМИТ GITHUB", 100 * (1 - r.remaining / r.limit), `${r.remaining} / ${r.limit}`) : "",
+    d.storage_quota_mb ? meter("ХРАНИЛИЩЕ", 100 * d.storage_mb / d.storage_quota_mb, `${d.storage_mb} / ${d.storage_quota_mb} МБ`) : "",
+    `<div class="diag-foot"><span>ЗАМЕТОК ${d.notes}</span><span>ПАМЯТЬ: ${d.store === "github" ? "GITHUB" : "ДЕМО"}</span>${d.last_sync !== null ? `<span>СИНХР ${d.last_sync} С НАЗАД</span>` : ""}</div>`,
+  ].join("");
+  updateMetrics();
+}
+
+// ---------- настройки (режим «только iPhone») ----------
+function openSettings(first = false, error = "") {
+  const s = SA.loadSettings();
+  const tokens = Object.entries(s.statsTokens || {}).map(([k, v]) => `${k}=${v}`).join("\n");
+  const voices = ("speechSynthesis" in window ? speechSynthesis.getVoices() : []).filter((v) => /^(ru|en-GB)/.test(v.lang));
+  modal(first ? "ПЕРВЫЙ ЗАПУСК · НАСТРОЙКА" : "НАСТРОЙКИ", `
+    ${first ? `<p>Jarvis работает прямо на iPhone. Память — ваше хранилище Obsidian в приватном репозитории GitHub
+      (на телефоне его синхронизирует плагин <b>Obsidian Git</b>). Ключи хранятся только на этом устройстве.
+      Можно начать без настройки — в демо-режиме заметки останутся в браузере.</p>` : ""}
+    ${error ? `<p class="err">${esc(error)}</p>` : ""}
+    <form id="set-form">
+      <div class="form-row"><label>КАК ОБРАЩАТЬСЯ</label><input name="title" value="${esc(s.title)}"></div>
+      <div class="form-row"><label>КЛЮЧ CLAUDE API (console.anthropic.com) — свободная речь, фото</label>
+        <input name="anthropicKey" type="password" autocomplete="off" value="${esc(s.anthropicKey)}" placeholder="sk-ant-…"></div>
+      <div class="form-row"><label>ТОКЕН GITHUB — память и проекты</label>
+        <input name="githubToken" type="password" autocomplete="off" value="${esc(s.githubToken)}" placeholder="github_pat_…"></div>
+      <div class="form-row"><label>РЕПОЗИТОРИЙ ПАМЯТИ (владелец/имя)</label>
+        <input name="vaultRepo" value="${esc(s.vaultRepo)}" placeholder="c4erepk0/jarvis-vault" autocapitalize="off"></div>
+      <div class="form-row"><label>ГОРОД ДЛЯ ПОГОДЫ</label>
+        <div class="inline-add" style="margin:0"><input name="city" value="${esc(s.city)}">
+        <button type="button" class="btn ghost" id="set-geo">⌖ ЗДЕСЬ</button></div>
+        <input type="hidden" name="lat" value="${s.lat}"><input type="hidden" name="lon" value="${s.lon}"></div>
+      <div class="form-row"><label>ГОЛОС</label><select name="voiceName"><option value="">автоматически (русский мужской)</option>
+        ${voices.map((v) => `<option ${v.name === s.voiceName ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></div>
+      <div class="form-row"><label>ГЛУБИНА РАЗМЫШЛЕНИЙ CLAUDE</label><select name="effort">
+        ${["low", "medium", "high"].map((x) => `<option value="${x}" ${x === s.effort ? "selected" : ""}>${{ low: "быстро (голос)", medium: "сбалансированно", high: "глубоко" }[x]}</option>`).join("")}</select></div>
+      <div class="form-row"><label>ТОКЕНЫ МЕТРИК ПРОЕКТОВ (Имя=токен, по строке)</label>
+        <textarea name="statsTokens" rows="2" placeholder="IPAStore=…">${esc(tokens)}</textarea></div>
+      <p class="err" id="set-err"></p>
+      <div class="modal-actions">
+        ${first ? `<button type="button" class="btn ghost" id="set-demo">ДЕМО БЕЗ НАСТРОЙКИ</button>` : `<button type="button" class="btn ghost danger" id="set-reset">СБРОСИТЬ</button>`}
+        <button class="btn primary">СОХРАНИТЬ</button></div>
+    </form>`);
+  const f = $("#set-form");
+  $("#set-geo").addEventListener("click", () => navigator.geolocation && navigator.geolocation.getCurrentPosition((pos) => {
+    f.lat.value = pos.coords.latitude.toFixed(4); f.lon.value = pos.coords.longitude.toFixed(4);
+    toast("Координаты обновлены", "ok");
+  }, () => toast("Нет доступа к геопозиции", "warn")));
+  if ($("#set-demo")) $("#set-demo").addEventListener("click", () => { SA.saveSettings(SA.loadSettings()); location.reload(); });
+  if ($("#set-reset")) $("#set-reset").addEventListener("click", () => {
+    if (confirm("Удалить ключи и настройки с этого устройства?")) { SA.clearSettings(); location.reload(); }
+  });
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const n = { ...s };
+    for (const k of ["title", "anthropicKey", "githubToken", "vaultRepo", "city", "voiceName", "effort"]) n[k] = f[k].value.trim();
+    n.lat = Number(f.lat.value) || s.lat; n.lon = Number(f.lon.value) || s.lon;
+    n.vaultRepo = n.vaultRepo.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
+    n.statsTokens = Object.fromEntries(f.statsTokens.value.split("\n").map((l) => l.split("=")).filter((x) => x.length >= 2)
+      .map(([k, ...v]) => [k.trim(), v.join("=").trim()]));
+    $("#set-err").textContent = "";
+    try {
+      if (n.githubToken && n.vaultRepo) {
+        if (!/^[\w.-]+\/[\w.-]+$/.test(n.vaultRepo)) throw new Error("репозиторий — в виде владелец/имя");
+        const info = await SA.checkVaultRepo(n.githubToken, n.vaultRepo);
+        n.vaultBranch = info.branch;
+        if (!info.private) toast("Внимание: репозиторий памяти публичный — лучше сделать его приватным.", "warn");
+      }
+      SA.saveSettings(n);
+      location.reload();
+    } catch (err) { $("#set-err").textContent = err.message; }
+  });
+}
+
+function offerSeed() {
+  renderConfirmsRaw(`<div class="confirm" id="seed-card"><p><b>ПАМЯТЬ ПУСТА</b>Создать в хранилище стартовую структуру:
+    задачи, финансы, проекты, протоколы?</p><button class="btn warn" id="seed-yes">СОЗДАТЬ</button></div>`);
+  $("#seed-yes").addEventListener("click", async () => {
+    $("#seed-card").remove();
+    toast("Создаю заметки…", "info");
+    try { const n = await SA.seedVault(local); toast(`Готово: заметок — ${n}`, "ok"); refreshSoon("all"); }
+    catch (e) { toast(`Не получилось: ${e.message}`, "error"); }
+  });
+}
+function renderConfirmsRaw(html) { $("#confirms").insertAdjacentHTML("afterbegin", html); }
 
 function updateMetrics() {
   if (!S) return;
@@ -536,11 +669,28 @@ $("#scan-file").addEventListener("change", async (e) => {
   if (!file) return;
   $("#heard").textContent = "📷 анализ изображения…";
   setMode("thinking");
-  const form = new FormData();
-  form.append("image", file, file.name);
-  try { showReply(await api("/api/scan", { method: "POST", form })); }
-  catch (err) { showReply({ text: err.message, kind: "error", speech: "" }); }
+  try {
+    if (local) {
+      const img = await shrinkImage(file);
+      showReply(await api("/api/scan", { method: "POST", body: img }));
+    } else {
+      const form = new FormData();
+      form.append("image", file, file.name);
+      showReply(await api("/api/scan", { method: "POST", form }));
+    }
+  } catch (err) { showReply({ text: err.message, kind: "error", speech: "" }); }
 });
+
+// Фото с iPhone большие — уменьшаем до 1568 px по длинной стороне (так их видит Claude) и шлём JPEG.
+async function shrinkImage(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 1568 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  const data = c.toDataURL("image/jpeg", 0.85);
+  return { base64: data.split(",")[1], mediaType: "image/jpeg" };
+}
 document.addEventListener("pointerdown", () => {
   voice.unlock();
   if (!greeted && S) { greeted = true; if (store.get("wake", false)) { $("#opt-wake").checked = voice.setWakeMode(true); } }
@@ -575,7 +725,7 @@ let holo = null;
 $("#btn-holo").addEventListener("click", async () => {
   $("#holo").classList.remove("hidden");
   try {
-    const { Hologram } = await import("./hologram.js?v=2");
+    const { Hologram } = await import("./hologram.js?v=3");
     if (!holo) holo = new Hologram($("#holo"), { onOpen: openNote, onStatus: (s) => { $("#holo-stats").textContent = s; } });
     else { holo.running = true; requestAnimationFrame(holo.loop); }
     holo.setData(await api("/api/graph"));
@@ -595,7 +745,9 @@ $("#holo-gestures").addEventListener("click", async () => {
   } catch (err) { toast(`Жесты недоступны: ${err.message}`, "error"); }
 });
 
+$("#btn-settings").addEventListener("click", () => { if (SA) openSettings(false); });
+
 // PWA
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
 boot();

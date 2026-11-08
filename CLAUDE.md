@@ -25,12 +25,21 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/web.py` — REST + WebSocket + вход; `jarvis/hub.py` — шина событий; `jarvis/watchers.py` — фоновые датчики.
 - `jarvis/voice.py` (TTS), `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
 - `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`.
+- `jarvis/webapp/static/core/*.js` — **ядро для режима «только iPhone»**: порт Python-ядра (ru, vault,
+  tasks, finance, memory, intents, brain, projects, protocols, jarvis). Отвечает на те же `/api/…`, что сервер.
+  Память — `GitHubStore` (приватный репозиторий с хранилищем, кэш блобов по sha), Claude — официальный
+  JS SDK с CDN (`dangerouslyAllowBrowser`, ключ только на устройстве). `static/standalone.js` — настройки,
+  выбор склада, засев хранилища. **Меняете логику или формат заметок в Python — меняйте и здесь** (и наоборот).
+- `jarvis/cron.py` + `.github/workflows/jarvis-cron.yml` — оповещения в Telegram без сервера (раз в 15 мин).
+- `.github/workflows/pages.yml` — публикация дашборда для iPhone на GitHub Pages.
+- `static/vault-template.json` — генерируется `scripts/build_template.py` из `vault-template/` (CI проверяет).
   **При изменении css/js поднимайте `?v=N` в `index.html`, `app.js` и `sw.js` (CACHE)**.
 - `vault-template/` — стартовое хранилище. `sync/` и `docs/sync.md` — LiveSync (CouchDB + мост) и Syncthing.
 
 ## Правила
 - Работа — в ветках и через PR в `main`; CI зелёный (`make check`).
-- Каждая новая функция — с тестом в `tests/` (фейковые Claude и GitHub — см. `test_brain.py`, `test_projects.py`).
+- Каждая новая функция — с тестом: Python — `tests/`, ядро для iPhone — `tests/js/*.test.mjs`
+  (`node --test`; фейковые Claude и GitHub — в `tests/js/jarvis.test.mjs`).
 - Деньги — в копейках (int). Даты в заметках — ISO `YYYY-MM-DD`.
 - Писать в хранилище только через `Vault` (проверка путей, атомарная запись). Не ломать формат заметок:
   их правит человек в Obsidian.
@@ -44,4 +53,5 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 ```bash
 make dev / make test / make lint / make check / make run
 python -m pytest tests/test_commands.py -q   # один набор
+node --test tests/js/*.test.mjs              # ядро для iPhone
 ```

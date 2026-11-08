@@ -70,6 +70,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 #clock-time { font: 700 26px/1 var(--display); letter-spacing: .08em; color: var(--text);
   text-shadow: 0 0 10px var(--holo-glow); }
 #clock-date { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.settings-btn { display: none; font-size: 20px; margin-left: 4px; }
+body.standalone .settings-btn { display: inline-block; }
 .weather { min-width: 120px; text-align: right; font-size: 13px; line-height: 1.25; }
 .weather b { font: 700 20px var(--display); color: var(--holo); }
 
@@ -329,8 +331,9 @@ input::placeholder, textarea::placeholder { color: #4d7584; }
 @media (max-width: 1080px) {
   .top { gap: 10px; padding-left: 14px; padding-right: 14px; flex-wrap: wrap; }
   .brand-mark { font-size: 16px; letter-spacing: .24em; }
-  .chips { order: 3; width: 100%; }
+  .chips { order: 3; width: calc(100% - 44px); }
   .weather { display: none; }
+  .settings-btn { order: 4; margin-left: auto; }
   #clock-time { font-size: 20px; }
   .layout { display: block; padding: 12px 12px calc(84px + env(safe-area-inset-bottom)); }
   .col { display: none; }
@@ -341,7 +344,7 @@ input::placeholder, textarea::placeholder { color: #4d7584; }
     padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); background: rgba(2,9,15,.96); border-top: 1px solid var(--line); }
   .tabs button { flex: 1; background: none; border: 0; padding: 10px 2px; color: var(--muted); font: 600 10px var(--display); letter-spacing: .12em; }
   .tabs button.on { color: var(--holo); text-shadow: 0 0 8px var(--holo-glow); }
-  .toasts { bottom: calc(80px + env(safe-area-inset-bottom)); right: 10px; }
+  .toasts { top: calc(64px + env(safe-area-inset-top)); bottom: auto; right: 10px; left: 10px; max-width: none; }
   .protocols { grid-template-columns: 1fr 1fr; }
   .holo-video, .holo-hands { width: 140px; height: 105px; }
 }

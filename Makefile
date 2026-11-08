@@ -6,7 +6,7 @@ SH_FILES := start.sh start.command
 
 help:
 	@echo "make dev    — создать .venv и поставить зависимости для разработки"
-	@echo "make test   — все тесты (pytest)"
+	@echo "make test   — все тесты: Python (pytest) и ядро для iPhone (node --test)"
 	@echo "make lint   — flake8 + shellcheck"
 	@echo "make audit  — уязвимости в зависимостях (pip-audit)"
 	@echo "make check  — lint + test + audit (как в CI)"
@@ -22,6 +22,8 @@ dev: .venv/bin/python
 
 test:
 	$(PY) -m pytest
+	node --test tests/js/*.test.mjs
+	$(PY) scripts/build_template.py --check
 
 lint:
 	$(PY) -m flake8 --count

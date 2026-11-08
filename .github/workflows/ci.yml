@@ -31,7 +31,11 @@ jobs:
         with:
           node-version: "22"
       - name: Синтаксис JavaScript дашборда
-        run: for f in jarvis/webapp/static/*.js jarvis/webapp/sw.js; do node --check "$f"; done
+        run: for f in jarvis/webapp/static/*.js jarvis/webapp/static/core/*.js jarvis/webapp/sw.js; do node --check "$f"; done
+      - name: Тесты ядра для iPhone (JavaScript)
+        run: node --test tests/js/*.test.mjs
+      - name: Шаблон хранилища для iPhone актуален
+        run: python scripts/build_template.py --check
 
   test:
     name: Tests (Python ${{ matrix.python-version }})

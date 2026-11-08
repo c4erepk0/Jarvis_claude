@@ -31,6 +31,11 @@ export class Voice {
       this.buildChain();
     }
     if (this.ctx.state === "suspended") this.ctx.resume();
+    // iOS разрешает речь только после первого касания — «разогреваем» синтезатор пустой фразой
+    if (!this.ttsUnlocked && "speechSynthesis" in window) {
+      this.ttsUnlocked = true;
+      try { speechSynthesis.speak(new SpeechSynthesisUtterance(" ")); } catch { /* нет синтезатора */ }
+    }
   }
 
   buildChain() {
@@ -138,8 +143,11 @@ export class Voice {
       if (!("speechSynthesis" in window)) return resolve();
       const u = new SpeechSynthesisUtterance(text.replace(/[*_#`]/g, ""));
       u.lang = /[а-яё]/i.test(text) ? "ru-RU" : "en-GB";
-      const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith(u.lang.slice(0, 2)));
-      u.voice = voices.find((v) => /yuri|dmitr|daniel|male|муж/i.test(v.name)) || voices[0] || null;
+      const all = speechSynthesis.getVoices();
+      const voices = all.filter((v) => v.lang.startsWith(u.lang.slice(0, 2)));
+      // на iPhone мужской русский голос — «Yuri» (Настройки → Универсальный доступ → Устный контент → Голоса)
+      u.voice = all.find((v) => v.name === this.preferredVoice && v.lang.startsWith(u.lang.slice(0, 2)))
+        || voices.find((v) => /yuri|юрий|dmitr|daniel|male|муж/i.test(v.name)) || voices[0] || null;
       u.rate = 0.97; u.pitch = 0.8;
       let fake = 0;
       const iv = setInterval(() => { fake = (fake + 0.37) % 1; this.onLevel(0.25 + Math.abs(Math.sin(fake * 6)) * 0.4); }, 90);

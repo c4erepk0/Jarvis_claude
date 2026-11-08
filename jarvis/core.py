@@ -76,7 +76,7 @@ class Jarvis:
                                  allowed_tools=cfg.claude_code_allowed_tools)
         self.voice = Voice(cfg.tts_engine, cfg.tts_voice, cfg.tts_rate, cfg.tts_pitch, cfg.data_dir / "tts",
                            cfg.piper_bin, cfg.piper_model)
-        self.reminders = Reminders(cfg.data_dir / "reminders.json")
+        self.reminders = Reminders(self.vault, f"{cfg.jarvis_dir}/Reminders.md", ru.now(cfg.timezone).tzinfo)
         self.briefing = briefing or Briefing(cfg.latitude, cfg.longitude, cfg.city, cfg.timezone)
         self.hub = Hub()
         self.pending: dict[str, PendingAction] = {}
