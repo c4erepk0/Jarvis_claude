@@ -363,6 +363,11 @@ input::placeholder, textarea::placeholder { color: #4d7584; }
 .gc-panel p { margin: 10px 0 0; font-size: 13px; line-height: 1.5; }
 .gc-how { white-space: normal; }
 .gc-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.gc-magnet { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.gc-magnet .muted { font-size: 12px; margin-right: 2px; }
+.gc-magnet .btn { padding: 6px 10px; font-size: 11px; }
+.gc-saved { font: 11px/1.4 var(--mono); overflow-wrap: anywhere; }
+.gc-saved.hidden { display: none; }
 /* жест держится: что он сделает и сколько осталось держать */
 .holo-gesture { position: absolute; z-index: 4; left: 50%; top: 22%; transform: translateX(-50%); pointer-events: none;
   display: flex; align-items: center; gap: 10px; padding: 8px 14px 10px; max-width: calc(100% - 32px); overflow: hidden;

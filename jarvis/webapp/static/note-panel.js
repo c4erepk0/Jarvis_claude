@@ -2,8 +2,8 @@
 // Сохранение — с версией, с которой начали править: если заметку тем временем изменили в Obsidian,
 // сервер (или ядро на iPhone) вернёт 409 и панель предложит выбрать версию — ничего не затирается молча.
 // Жестами (через голограмму): ✊ закрыть, ✌ править / диктовать строку, 👍 сохранить, взмах — назад/вперёд.
-import { esc, renderMarkdown, toggleTask } from "./markdown.js?v=10";
-import { Trail, insertDictation, noteAction, noteHint } from "./note-gestures.js?v=10";
+import { esc, renderMarkdown, toggleTask } from "./markdown.js?v=11";
+import { Trail, insertDictation, noteAction, noteHint } from "./note-gestures.js?v=11";
 
 const folderOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 const titleOf = (path) => path.split("/").pop().replace(/\.[^.]+$/, "");

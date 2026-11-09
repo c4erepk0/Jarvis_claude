@@ -12,6 +12,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from .core import Jarvis
+from .gaze import save_record as save_gaze_record
 from .vault import VaultConflict, VaultError, content_version
 
 log = logging.getLogger("jarvis.web")
@@ -252,6 +253,11 @@ def build_app(jarvis: Jarvis) -> web.Application:
             current = None if e.current is None else {"content": e.current, "version": content_version(e.current)}
             return ok({"error": str(e), "conflict": True, "current": current}, 409)
 
+    async def gaze_save(request):
+        """Запись калибровки взгляда или журнала нажатий — в хранилище (Jarvis/Gaze/…), для анализа."""
+        data = await body(request)
+        return ok({"path": save_gaze_record(j.vault, cfg.jarvis_dir, data, j.now())})
+
     async def graph(_):
         loop = asyncio.get_running_loop()
         return ok(await loop.run_in_executor(None, j.vault.graph))
@@ -356,6 +362,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_put("/api/note", note_save)
     r.add_post("/api/note", note_save)
     r.add_get("/api/graph", graph)
+    r.add_post("/api/gaze", gaze_save)
     r.add_get("/api/diagnostics", diag)
     r.add_get("/api/weather", weather)
     r.add_post("/api/tts", tts)
