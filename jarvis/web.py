@@ -133,11 +133,11 @@ def build_app(jarvis: Jarvis) -> web.Application:
         return ok({"auth": auth.enabled, "logged_in": auth.allowed(request)})
 
     async def login(request):
-        ip = request.remote or "?"
-        if not auth.throttle(ip):
+        if not auth.throttle(client_ip(request)):
             return ok({"error": "слишком много попыток, подождите 5 минут"}, 429)
         data = await body(request)
-        if auth.enabled and not auth.check_code(str(data.get("code", ""))):
+        # код часто копируют из терминала вместе с пробелом или переводом строки в конце
+        if auth.enabled and not auth.check_code(str(data.get("code", "")).strip()):
             await asyncio.sleep(0.7)
             return ok({"error": "неверный код"}, 403)
         resp = ok()
@@ -352,6 +352,17 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_post("/api/scan", scan)
     r.add_get("/ws", ws_handler)
     return app
+
+
+def client_ip(request: web.Request) -> str:
+    """Адрес посетителя. За Caddy или туннелем (запрос пришёл с этого же сервера) настоящий адрес —
+    в X-Forwarded-For, иначе лимит попыток входа был бы общим для всех и чужой перебор блокировал бы владельца."""
+    remote = request.remote or "?"
+    if remote in ("127.0.0.1", "::1"):
+        forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if forwarded:
+            return forwarded
+    return remote
 
 
 def same_origin(request: web.Request) -> bool:
