@@ -5,29 +5,139 @@ export const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7
   [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
 
 const PINCH = 0.055;
+const FINGERS = [[8, 6], [12, 10], [16, 14], [20, 18]];   // кончик и средний сустав: указательный … мизинец
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-export const pinching = (lm) => dist(lm[4], lm[8]) < PINCH;
+const handSize = (lm) => dist(lm[0], lm[9]) || 1e-6;      // запястье — основание среднего пальца
 const extended = (lm, tip, pip) => lm[tip].y < lm[pip].y - 0.02;
-export const openPalm = (lm) => [[8, 6], [12, 10], [16, 14], [20, 18]].every(([t, p]) => extended(lm, t, p)) && !pinching(lm);
+// палец сжат: кончик подвёрнут к ладони — ближе к запястью, чем средний сустав
+const curled = (lm, tip, pip) => dist(lm[tip], lm[0]) < dist(lm[pip], lm[0]) * 0.9;
+
+/** Кулак: все четыре пальца подвёрнуты к ладони (большой — как угодно). */
+export const fist = (lm) => FINGERS.every(([t, p]) => curled(lm, t, p));
+// В кулаке большой палец лежит поверх пальцев — кончики рядом, но это не щипок.
+export const pinching = (lm) => dist(lm[4], lm[8]) < PINCH && !fist(lm);
+export const openPalm = (lm) => FINGERS.every(([t, p]) => extended(lm, t, p)) && !pinching(lm);
 export const pointing = (lm) => extended(lm, 8, 6) && !extended(lm, 12, 10) && !extended(lm, 16, 14) && !pinching(lm);
+/** Два пальца (✌): указательный и средний вытянуты, безымянный и мизинец — нет. */
+export const victory = (lm) => extended(lm, 8, 6) && extended(lm, 12, 10) && !extended(lm, 16, 14) && !extended(lm, 20, 18)
+  && !pinching(lm);
+/** Большой палец вверх (👍): остальные сжаты, большой торчит выше всех суставов руки. */
+export const thumbUp = (lm) => {
+  if (FINGERS.some(([t, p]) => extended(lm, t, p))) return false;
+  const top = Math.min(...lm.slice(5).map((p) => p.y));
+  return lm[4].y < lm[3].y && lm[3].y < lm[2].y && top - lm[4].y > handSize(lm) * 0.4;
+};
 
 /** Что показывает рука (руки) в кадре. x/y — уже отзеркалены под экран (0…1).
- *  kind: none | pinch2 (щипок двумя руками, d — расстояние) | pinch | palm | point | hand (рука без жеста). */
+ *  kind: none | pinch2 (щипок двумя руками, d — расстояние) | pinch | palm | point | victory | thumb | fist
+ *  | hand (рука без жеста). */
 export function classify(hands = []) {
   if (hands.length >= 2 && pinching(hands[0]) && pinching(hands[1])) {
     return { kind: "pinch2", hands: hands.length, d: dist(hands[0][9], hands[1][9]) };
   }
   const lm = hands[0];
   if (!lm) return { kind: "none", hands: 0 };
-  if (pinching(lm)) return { kind: "pinch", hands: hands.length, x: 1 - lm[9].x, y: lm[9].y };
-  if (openPalm(lm)) return { kind: "palm", hands: hands.length };
-  if (pointing(lm)) return { kind: "point", hands: hands.length, x: 1 - lm[8].x, y: lm[8].y };
-  return { kind: "hand", hands: hands.length };
+  const at = (i) => ({ hands: hands.length, x: 1 - lm[i].x, y: lm[i].y });
+  if (pinching(lm)) return { kind: "pinch", ...at(9) };
+  if (openPalm(lm)) return { kind: "palm", ...at(9) };
+  if (pointing(lm)) return { kind: "point", ...at(8) };
+  if (victory(lm)) return { kind: "victory", ...at(9) };
+  if (thumbUp(lm)) return { kind: "thumb", ...at(9) };
+  if (fist(lm)) return { kind: "fist", ...at(9) };
+  return { kind: "hand", ...at(9) };
 }
 
 export const KIND_LABEL = {
   none: "не вижу руку", hand: "рука", point: "указка", pinch: "щипок", pinch2: "щипок двумя руками", palm: "ладонь",
+  victory: "два пальца", thumb: "большой палец вверх", fist: "кулак",
 };
+
+/** Значки жестов — для подсказок на голограмме. */
+export const GESTURE_ICON = {
+  palm: "✋", fist: "✊", thumb: "👍", victory: "✌", point: "☝", pinch: "🤏", "swipe-left": "👋", "swipe-right": "👋",
+};
+
+// ---------- удержание поз и взмах ладонью ----------
+/** Сколько держать позу, чтобы она сработала (мс). */
+export const HOLD_MS = { palm: 1000, victory: 800, thumb: 800, fist: 800 };
+
+/**
+ * Следит за кадрами classify() и превращает их в команды. Без DOM — голограмма, обучение, тесты.
+ * update(g, ts) возвращает события:
+ *   { type: "hold", kind, progress } — поза держится (0…1), для индикатора;
+ *   { type: "pose", kind }           — поза удержана; повтор — только если руку перестроить;
+ *   { type: "swipe", dir }           — быстрый взмах раскрытой ладонью: dir = "left" | "right" (по экрану).
+ * Удержание засчитывается, только пока рука стоит на месте, — взмах ладонью не сбрасывает вид.
+ */
+export class GestureTracker {
+  constructor({ hold = HOLD_MS, graceMs = 250, still = 0.1, swipe = {} } = {}) {
+    this.holdMs = hold;
+    this.graceMs = graceMs;      // MediaPipe иногда путает позу на кадр-другой — не сбрасываем удержание
+    this.still = still;          // насколько можно сдвинуть руку во время удержания (доля кадра)
+    this.swipe = { dx: 0.22, ms: 450, cooldown: 700, reverse: 1400, ...swipe };
+    this.cur = null;             // какая поза сейчас удерживается
+    this.since = 0;
+    this.seen = 0;
+    this.fired = false;
+    this.anchor = null;
+    this.path = [];              // недавние положения ладони — для взмаха
+    this.lastSwipe = null;       // { dir, at }
+    this.blockUntil = 0;         // сразу после взмаха позы не засчитываются
+  }
+
+  update(g, ts) {
+    const out = [];
+    const sw = this.detectSwipe(g, ts);
+    if (sw) {
+      out.push(sw);
+      this.cur = null;
+      this.blockUntil = ts + 1000;
+      return out;
+    }
+    const k = this.holdMs[g.kind] ? g.kind : null;
+    if (!k) {
+      if (this.cur && ts - this.seen > this.graceMs) { this.cur = null; this.fired = false; }
+      return out;
+    }
+    const moved = this.anchor && Math.hypot(g.x - this.anchor.x, g.y - this.anchor.y) > this.still;
+    if (this.cur !== k || moved || ts < this.blockUntil) {
+      if (this.cur !== k) this.fired = false;
+      this.cur = k;
+      this.since = ts;
+      this.anchor = { x: g.x, y: g.y };
+    }
+    this.seen = ts;
+    if (this.fired || ts < this.blockUntil) return out;
+    const progress = Math.min(1, (ts - this.since) / this.holdMs[k]);
+    out.push({ type: "hold", kind: k, progress });
+    if (progress >= 1) {
+      this.fired = true;
+      out.push({ type: "pose", kind: k });
+    }
+    return out;
+  }
+
+  detectSwipe(g, ts) {
+    const s = this.swipe;
+    if (g.kind !== "palm") {
+      // на быстром взмахе ладонь смазывается: «рука» или пропавший кадр путь не обрывают
+      if (g.kind !== "hand" && g.kind !== "none") this.path = [];
+      return null;
+    }
+    this.path.push({ x: g.x, y: g.y, t: ts });
+    while (this.path.length && ts - this.path[0].t > s.ms) this.path.shift();
+    const a = this.path[0];
+    const dx = g.x - a.x, dy = g.y - a.y;
+    if (Math.abs(dx) < s.dx || Math.abs(dx) < Math.abs(dy) * 1.5) return null;
+    const dir = dx > 0 ? "right" : "left";
+    const last = this.lastSwipe;
+    // рука возвращается назад после взмаха — это не новый взмах в обратную сторону
+    if (last && ts - last.at < (last.dir === dir ? s.cooldown : s.reverse)) return null;
+    this.lastSwipe = { dir, at: ts };
+    this.path = [];
+    return { type: "swipe", dir };
+  }
+}
 
 // Эталонные позы (правая рука ладонью к камере, координаты 0…100). Из них рисуются схемы в обучении,
 // и на них же проверяется распознавание — что нарисовано, то и засчитывается.
@@ -39,6 +149,14 @@ export const POSES = {
     [46, 52], [44, 58], [60, 58], [60, 50], [57, 55], [55, 60], [70, 62], [72, 54], [69, 58], [67, 62]]),
   pinch: P([[50, 92], [36, 84], [28, 75], [24, 64], [25, 51], [38, 58], [33, 46], [27, 41], [25, 47], [49, 56], [50, 40],
     [50, 30], [50, 21], [60, 58], [62, 44], [63, 35], [64, 28], [70, 62], [74, 52], [76, 45], [78, 39]]),
+  victory: P([[50, 92], [37, 84], [33, 73], [40, 67], [50, 65], [40, 58], [35, 42], [32, 32], [29, 22], [50, 56], [53, 40],
+    [55, 29], [57, 19], [60, 58], [61, 50], [58, 55], [56, 60], [69, 62], [71, 55], [68, 59], [66, 63]]),
+  // кулак боком к камере, большой палец смотрит вверх
+  thumb: P([[61, 94], [48, 78], [40, 60], [38, 42], [36, 24], [51, 52], [30, 55], [27, 66], [38, 68], [53, 63], [32, 67],
+    [31, 76], [40, 77], [56, 72], [36, 77], [35, 85], [44, 85], [58, 81], [42, 86], [40, 93], [48, 92]]),
+  // пальцы подвёрнуты к ладони, большой лежит поверх них
+  fist: P([[50, 92], [37, 84], [31, 75], [36, 66], [46, 62], [38, 58], [36, 46], [37, 52], [39, 60], [49, 56], [49, 44],
+    [50, 51], [50, 59], [60, 58], [61, 47], [61, 53], [60, 60], [70, 62], [72, 53], [71, 58], [69, 63]]),
 };
 
 /** Поза в координатах кадра 0…1 (для тестов): масштаб и сдвиг. */

@@ -194,6 +194,43 @@ export class Voice {
     return true;
   }
 
+  /** Диктовка (✌ в правке заметки): одна фраза → текст. Команду Jarvis не отправляет. */
+  dictate() {
+    if (!this.supported) return Promise.reject(new Error("этот браузер не распознаёт речь"));
+    this.unlock();
+    this.stopRec();
+    return new Promise((resolve, reject) => {
+      const r = this.makeRecognizer(false);
+      let final = "", interim = "", error = null, done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (this.rec === r) this.rec = null;
+        this.onState(this.wakeMode ? "listening" : "idle");
+        if (this.wakeMode) setTimeout(() => this.startWake(), 300);
+        const text = (final || interim).trim();
+        if (!text && error && !["no-speech", "aborted"].includes(error)) {
+          reject(new Error(error === "not-allowed" ? "нет доступа к микрофону" : error));
+        } else resolve(text);
+      };
+      r.finish = finish;            // stopRec() (например, Jarvis заговорил) — отдаём то, что успели услышать
+      r.onresult = (e) => {
+        interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) final += t; else interim += t;
+        }
+        this.onHeard(`✎ ${final || interim}`);
+        this.onLevel(0.5);
+      };
+      r.onerror = (e) => { error = e.error; };
+      r.onend = finish;
+      this.rec = r;
+      this.onState("listening");
+      try { r.start(); } catch (e) { error = e.message || "не запустить распознавание"; finish(); }
+    });
+  }
+
   setWakeMode(on) {
     this.wakeMode = on && this.supported;
     if (this.wakeMode) { this.unlock(); this.startWake(); } else { this.stopRec(); this.onState("idle"); }
@@ -231,7 +268,13 @@ export class Voice {
   }
 
   stopRec() {
-    if (this.rec) { const r = this.rec; this.rec = null; r.onend = null; try { r.abort(); } catch { /* уже остановлен */ } }
+    if (this.rec) {
+      const r = this.rec;
+      this.rec = null;
+      r.onend = null;
+      try { r.abort(); } catch { /* уже остановлен */ }
+      if (r.finish) r.finish();
+    }
   }
   pauseListening() { this.stopRec(); }
   resumeListening() { if (this.wakeMode) setTimeout(() => this.startWake(), 350); }

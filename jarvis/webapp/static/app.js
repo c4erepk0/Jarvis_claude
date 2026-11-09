@@ -1,8 +1,8 @@
 // J.A.R.V.I.S. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=7";
-import { Voice } from "./voice.js?v=7";
+import { Reactor } from "./reactor.js?v=8";
+import { Voice } from "./voice.js?v=8";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -59,7 +59,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Jarvis работает прямо на телефоне
-    SA = await import("./standalone.js?v=7");
+    SA = await import("./standalone.js?v=8");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -745,8 +745,12 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=7");
-    holo = new Hologram(el, { onOpen: openNote, onStatus: (s) => { $("#holo-stats").textContent = s; } });
+    const { Hologram } = await import("./hologram.js?v=8");
+    holo = new Hologram(el, {
+      onOpen: openNote,
+      onStatus: (s) => { $("#holo-stats").textContent = s; },
+      gestureAction: (name) => notes?.gestureAction(name) || null,   // ✊ ✌ 👍 и взмах — для открытой заметки
+    });
     await loadGraph();
   } else if (wasHidden) {
     holo.running = true;
@@ -763,7 +767,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=7");
+  const { NotePanel } = await import("./note-panel.js?v=8");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -771,6 +775,7 @@ async function notePanel() {
     onShow: (path) => { holo?.setInset(panelInset()); holo?.highlight(path); holo?.focus(path); },
     onClose: () => { holo?.highlight(null); holo?.setInset({}); },
     onCreated: () => loadGraph(),
+    dictate: voice.supported ? () => voice.dictate() : null,     // ✌ в правке — строка голосом
   });
   addEventListener("resize", () => { if (notes?.isOpen) holo?.setInset(panelInset()); });
   return notes;
@@ -790,32 +795,36 @@ $("#holo-close").addEventListener("click", () => {
 });
 
 // Первоначальное обучение жестам: показывается при первом включении, повторить — кнопка «?».
+// Кто прошёл прежнее обучение (gestures_trained: true), тому при включении показываются только новые жесты.
+const TRAINING_VERSION = 2;          // = TRAINING_VERSION в gesture-coach.js
 let tutorial = null;
 async function startCamera() {
   await holo.startGestures($("#holo-video"), $("#holo-hands"));
   $("#holo-gestures").classList.add("primary");
 }
-async function openTutorial() {
+async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=7");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=8");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
-      onFinish: () => store.set("gestures_trained", true),
+      onFinish: () => store.set("gestures_trained", TRAINING_VERSION),
       onError: (err) => toast(`Жесты недоступны: ${err.message}`, "error"),
     });
-    if (!tutorial.active) tutorial.open();
+    if (!tutorial.active) tutorial.open({ from });
   } catch (err) { toast(`Обучение недоступно: ${err.message}`, "error"); }
 }
 $("#holo-gestures").addEventListener("click", async () => {
   if (!holo) return;
   voice.unlock();
-  if (!holo.hands && !store.get("gestures_trained", false)) { openTutorial(); return; }
+  const trained = store.get("gestures_trained", false);
+  if (!holo.hands && !trained) { openTutorial(); return; }
   try {
     const on = await holo.enableGestures($("#holo-video"), $("#holo-hands"));
     $("#holo-gestures").classList.toggle("primary", on);
     if (!on && tutorial) tutorial.close();
+    if (on && Number(trained) < TRAINING_VERSION) openTutorial({ from: "press" });   // true → 1: новые жесты для заметок
   } catch (err) { toast(`Жесты недоступны: ${err.message}`, "error"); }
 });
 $("#holo-train").addEventListener("click", () => { voice.unlock(); openTutorial(); });

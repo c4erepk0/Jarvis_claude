@@ -2,8 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { classify, poseFrame } from "../../jarvis/webapp/static/gestures.js";
-import { GestureCoach, STEPS } from "../../jarvis/webapp/static/gesture-coach.js";
+import { GestureTracker, POSES, classify, poseFrame } from "../../jarvis/webapp/static/gestures.js";
+import { GestureCoach, NEW_STEPS_FROM, STEPS } from "../../jarvis/webapp/static/gesture-coach.js";
+import { Trail, dictationLine, insertDictation, noteAction } from "../../jarvis/webapp/static/note-gestures.js";
 
 test("эталонные позы из обучения распознаются как нарисованы", () => {
   assert.equal(classify([]).kind, "none");
@@ -18,6 +19,85 @@ test("эталонные позы из обучения распознаются
   assert.ok(p.x > 0.8 && p.y > 0 && p.y < 1);
   // мелкая рука вдали тоже распознаётся
   assert.equal(classify([poseFrame("palm", { scale: 0.18 })]).kind, "palm");
+});
+
+test("новые позы: два пальца, большой палец, кулак — на любом расстоянии", () => {
+  for (const name of ["victory", "thumb", "fist"]) {
+    for (const scale of [0.18, 0.4, 0.7]) assert.equal(classify([poseFrame(name, { scale })]).kind, name, `${name} ×${scale}`);
+  }
+  // каждая поза — ровно своя, все эталоны различимы
+  const kinds = Object.keys(POSES).map((n) => classify([poseFrame(n)]).kind);
+  assert.deepEqual(kinds, Object.keys(POSES));
+  // в кулаке большой палец лежит на пальцах — кончики рядом, но это не щипок, и два кулака — не масштаб
+  const f = poseFrame("fist");
+  assert.ok(Math.hypot(f[4].x - f[8].x, f[4].y - f[8].y) < 0.055);
+  assert.equal(classify([poseFrame("fist", { x: 0.05 }), poseFrame("fist", { x: 0.55 })]).kind, "fist");
+  // у позы есть точка на экране (для взмаха), отзеркаленная
+  const v = classify([poseFrame("palm", { x: 0 })]);
+  assert.ok(v.x > 0.6 && v.y > 0);
+});
+
+const G = (kind, x = 0.5, y = 0.5) => ({ kind, x, y });
+
+test("удержание позы: прогресс, одно срабатывание, дрожание кадра не сбрасывает", () => {
+  const t = new GestureTracker();
+  let out = t.update(G("fist"), 0);
+  assert.deepEqual(out, [{ type: "hold", kind: "fist", progress: 0 }]);
+  out = t.update(G("fist"), 400);
+  assert.equal(out[0].progress, 0.5);
+  assert.deepEqual(t.update(G("hand"), 500), []);                  // кадр-другой «рука» — удержание живо
+  out = t.update(G("fist", 0.52), 820);
+  assert.deepEqual(out.map((e) => e.type), ["hold", "pose"]);
+  assert.equal(out[1].kind, "fist");
+  assert.deepEqual(t.update(G("fist"), 2000), []);                 // держит дальше — не повторяется
+  t.update(G("hand"), 2100);
+  assert.deepEqual(t.update(G("hand"), 2400), []);                 // разжал руку
+  t.update(G("fist"), 2500);
+  assert.equal(t.update(G("fist"), 3300).at(-1).type, "pose");     // сжал снова — сработало снова
+
+  // рука поехала — удержание начинается заново; смена позы — тоже
+  const m = new GestureTracker();
+  m.update(G("thumb", 0.2), 0);
+  m.update(G("thumb", 0.2), 600);
+  assert.equal(m.update(G("thumb", 0.45), 700)[0].progress, 0);
+  assert.equal(m.update(G("victory", 0.45), 750)[0].kind, "victory");
+  // указка, щипок — не позы для удержания
+  assert.deepEqual(new GestureTracker().update(G("point"), 0), []);
+});
+
+test("взмах ладонью: направление по экрану, возврат руки — не взмах, сброс вида не срабатывает", () => {
+  const t = new GestureTracker();
+  const events = [];
+  let ts = 0;
+  const run = (kind, from, to, frames = 8) => {
+    for (let i = 0; i <= frames; i++, ts += 33) events.push(...t.update(G(kind, from + ((to - from) * i) / frames, 0.5), ts));
+  };
+  run("palm", 0.2, 0.7);
+  assert.deepEqual(events.filter((e) => e.type === "swipe"), [{ type: "swipe", dir: "right" }]);
+  run("palm", 0.7, 0.25);                                           // рука вернулась сразу же
+  assert.equal(events.filter((e) => e.type === "swipe").length, 1);
+  ts += 1500;
+  events.length = 0;
+  run("palm", 0.8, 0.3);
+  assert.deepEqual(events.filter((e) => e.type === "swipe"), [{ type: "swipe", dir: "left" }]);
+  // после взмаха ладонь остановилась — сброс вида не сразу, а только после честной секунды удержания
+  events.length = 0;
+  for (let i = 0; i < 20; i++, ts += 50) events.push(...t.update(G("palm", 0.3), ts));
+  assert.ok(!events.some((e) => e.type === "pose"));
+  for (let i = 0; i < 25; i++, ts += 50) events.push(...t.update(G("palm", 0.3), ts));
+  assert.ok(events.some((e) => e.type === "pose" && e.kind === "palm"));
+
+  // медленно провести рукой или водить вверх-вниз — не взмах
+  const slow = new GestureTracker();
+  const evs = [];
+  for (let i = 0; i <= 40; i++) evs.push(...slow.update(G("palm", 0.2 + i * 0.012), i * 50));
+  for (let i = 0; i <= 8; i++) evs.push(...slow.update(G("palm", 0.5, 0.1 + i * 0.08), 3000 + i * 33));
+  assert.ok(!evs.some((e) => e.type === "swipe"));
+  // путь обрывается, если рука сменила позу
+  const cut = new GestureTracker();
+  cut.update(G("palm", 0.2), 0);
+  cut.update(G("fist", 0.3), 50);
+  assert.deepEqual(cut.update(G("palm", 0.5), 100).filter((e) => e.type === "swipe"), []);
 });
 
 function frames(coach, kind, from, to, every = 33) {
@@ -76,8 +156,43 @@ test("обучение: шаги засчитываются только нас�
   assert.equal(c.feed({ type: "select", id: "Projects/Jarvis.md" }, 10500), true);
   assert.equal(c.selected, "Projects/Jarvis.md");
 
-  assert.equal(c.next(11000).id, "done");
+  // нажатие пальцем: кольцо на узле не в счёт, на кнопке — в счёт
+  assert.equal(c.next(11000).id, "press");
+  c.feed({ type: "dwell", progress: 0.7, id: "Ideas/x.md", press: false }, 11100);
+  assert.equal(c.progress, 0);
+  c.feed({ type: "dwell", progress: 0.7, id: null, press: true }, 11200);
+  assert.equal(c.progress, 0.7);
+  assert.equal(c.feed({ type: "press", label: "НАЖМИ МЕНЯ" }, 11300), true);
+
+  // позы: засчитывает только удержанная своя поза
+  for (const [i, kind] of ["victory", "thumb", "fist"].entries()) {
+    const t0 = 12000 + i * 1000;
+    assert.equal(c.next(t0).id, kind);
+    assert.equal(c.feed({ type: "pose", kind: "palm" }, t0 + 10), false);
+    c.feed({ type: "frame", kind }, t0 + 20);
+    c.feed({ type: "hold", kind, progress: 0.5 }, t0 + 30);
+    assert.equal(c.progress, 0.5);
+    c.feed({ type: "frame", kind: "hand" }, t0 + 40);                     // рука сменила позу — сначала
+    assert.equal(c.progress, 0);
+    assert.equal(c.feed({ type: "pose", kind }, t0 + 900), true);
+  }
+
+  // взмах
+  assert.equal(c.next(16000).id, "swipe");
+  assert.equal(c.feed({ type: "rotate", amount: 3 }, 16100), false);
+  assert.equal(c.feed({ type: "swipe", dir: "left" }, 16200), true);
+
+  assert.equal(c.next(17000).id, "done");
   assert.ok(c.finished);
+});
+
+test("обучение только новым жестам — для тех, кто прошёл прежнее", () => {
+  const c = new GestureCoach(STEPS, { start: NEW_STEPS_FROM });
+  assert.equal(c.step.id, "press");
+  assert.deepEqual(c.counter, { n: 1, total: 5 });
+  assert.equal(c.next(0).id, "victory");
+  assert.deepEqual(c.counter, { n: 2, total: 5 });
+  assert.equal(new GestureCoach(STEPS, { start: "нет такого" }).step.id, "intro");
 });
 
 test("обучение: подсказка, когда руки не видно, и пропуск невозможного шага", () => {
@@ -88,5 +203,84 @@ test("обучение: подсказка, когда руки не видно,
   c.feed({ type: "frame", kind: "hand" }, 3600);
   assert.equal(c.handLost(4000), false);
   while (c.step.id !== "palm") c.skip(5000);
-  assert.equal(c.next(5000).id, "done");                                   // заметок нет — выбор узла пропущен
+  assert.equal(c.next(5000).id, "press");                                  // заметок нет — выбор узла пропущен
+});
+
+// ---------- жесты для заметки ----------
+const S = (over = {}) => ({ mode: "view", dirty: false, editable: true, armed: false, back: false, forward: false,
+  dictation: true, ...over });
+const act = (g, over) => noteAction(g, S(over))?.act ?? null;
+
+test("жесты заметки: закрыть, править, сохранить, диктовать, листать", () => {
+  // просмотр
+  assert.equal(act("fist"), "close");
+  assert.equal(act("victory"), "edit");
+  assert.equal(act("victory", { editable: false }), null);              // большую заметку правят в Obsidian
+  assert.equal(act("thumb"), null);
+  assert.equal(act("swipe-right"), null);                               // истории нет — взмах повернёт граф
+  assert.equal(act("swipe-right", { back: true }), "back");
+  assert.equal(act("swipe-left", { forward: true }), "forward");
+  assert.equal(act("palm"), null);                                      // ладонь — сброс вида, её делает голограмма
+  // правка
+  assert.equal(act("thumb", { mode: "edit" }), "save");
+  assert.equal(act("victory", { mode: "edit" }), "dictate");
+  assert.equal(act("victory", { mode: "edit", dictation: false }), null);
+  assert.equal(act("fist", { mode: "edit" }), "cancel");                // правок нет — просто выйти
+  assert.equal(act("fist", { mode: "edit", dirty: true }), "arm");      // правки есть — сначала предупредить
+  assert.equal(act("fist", { mode: "edit", dirty: true, armed: true }), "cancel");
+  assert.match(noteAction("fist", S({ mode: "edit", dirty: true, armed: true })).label, /выбросить/);
+  assert.equal(act("swipe-left", { mode: "edit", forward: true }), null);
+  // новая заметка и конфликт версий
+  assert.equal(act("thumb", { mode: "create" }), "submit");
+  assert.equal(act("victory", { mode: "create" }), "dictate-name");
+  assert.equal(act("fist", { mode: "create" }), "leave");
+  assert.equal(act("fist", { mode: "conflict" }), "back-edit");
+  assert.equal(act("thumb", { mode: "conflict" }), null);               // перезаписать чужую версию — только кнопкой
+});
+
+test("история заметок для взмаха: назад, вперёд, новая ветка, удалённая заметка", () => {
+  const t = new Trail();
+  assert.equal(t.back, null);
+  t.visit("a.md"); t.visit("b.md"); t.visit("b.md"); t.visit("c.md");
+  assert.deepEqual(t.items, ["a.md", "b.md", "c.md"]);
+  assert.equal(t.back, "b.md");
+  assert.equal(t.forward, null);
+  assert.equal(t.move(-1), "b.md");
+  assert.equal(t.move(-1), "a.md");
+  assert.equal(t.move(-1), null);
+  assert.equal(t.forward, "b.md");
+  t.visit("d.md");                                                      // открыли другую — «вперёд» обрезается
+  assert.deepEqual(t.items, ["a.md", "d.md"]);
+  t.drop("a.md");
+  assert.deepEqual([t.items, t.at], [["d.md"], 0]);
+  t.clear();
+  assert.equal(t.forward, null);
+  const lim = new Trail(3);
+  ["1", "2", "3", "4"].forEach((p) => lim.visit(p));
+  assert.deepEqual([lim.items, lim.back], [["2", "3", "4"], "3"]);
+});
+
+test("диктовка: строка с голоса встаёт в заметку в формате Obsidian", () => {
+  assert.equal(dictationLine("  задача   купить молоко "), "- [ ] Купить молоко");
+  assert.equal(dictationLine("Задачу: позвонить в банк"), "- [ ] Позвонить в банк");
+  assert.equal(dictationLine("пункт цены для разработчиков"), "- Цены для разработчиков");
+  assert.equal(dictationLine("заголовок итоги недели"), "## Итоги недели");
+  assert.equal(dictationLine("обсудили оферту"), "Обсудили оферту");
+  assert.equal(dictationLine("задачи"), "Задачи");                      // одно слово — просто текст
+  assert.equal(dictationLine(""), "");
+
+  // курсор на непустой строке — новой строкой после неё
+  let r = insertDictation("# План\nпервое\nвторое", 9, "задача купить молоко");
+  assert.deepEqual(r, { value: "# План\nпервое\n- [ ] Купить молоко\nвторое", cursor: 33 });
+  // пустая строка — прямо в неё
+  r = insertDictation("# План\n\n", 7, "итоги");
+  assert.equal(r.value, "# План\nИтоги\n");
+  // «☐ задача» нажали пальцем — маркер уже есть, второй не ставим
+  r = insertDictation("# План\n- [ ] ", 13, "задача купить хлеб");
+  assert.deepEqual(r, { value: "# План\n- [ ] Купить хлеб", cursor: 24 });
+  r = insertDictation("- [ ] ", 6, "позвонить маме");
+  assert.equal(r.value, "- [ ] Позвонить маме");
+  // в конец текста по умолчанию; тишина — ничего
+  assert.equal(insertDictation("абв", undefined, "где").value, "абв\nГде");
+  assert.equal(insertDictation("абв", 3, "  "), null);
 });
