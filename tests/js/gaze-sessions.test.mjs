@@ -53,7 +53,7 @@ test("отчёт по записям: калибровки, нажатия, ср
   const rep = report(records, { lambdas: [0.3, 1] });
   assert.equal(rep.sessions.length, 1);
   const s = rep.sessions[0];
-  assert.equal(s.points, 33);
+  assert.equal(s.points, 36);
   assert.ok(s.errorPx < 20 && s.looPx < 30, JSON.stringify(s));
   assert.deepEqual(Object.keys(s.byFeatures), ["радужки", "+голова", "все"]);
   assert.ok(Object.values(s.byLambda).every((e) => e.errorPx !== null));
