@@ -90,6 +90,24 @@ test("удержание позы: прогресс, одно срабатыва
   assert.deepEqual(new GestureTracker().update(G("point"), 0), []);
 });
 
+test("короткий щипок — «нажать»: долгий, сдвинутый и дрогнувший — нет", () => {
+  const taps = (frames) => {
+    const t = new GestureTracker();
+    let ts = 0, n = 0;
+    for (const [kind, x = 0.5] of frames) { n += t.update(G(kind, x), ts).filter((e) => e.type === "tap").length; ts += 33; }
+    return n;
+  };
+  const rep = (k, count, x) => Array.from({ length: count }, () => [k, x]);
+  assert.equal(taps([...rep("hand", 3), ...rep("pinch", 5), ...rep("hand", 5)]), 1);              // свёл-развёл
+  assert.equal(taps([...rep("hand", 3), ...rep("pinch", 25), ...rep("hand", 5)]), 0);             // держал — это не нажатие
+  assert.equal(taps([...rep("hand", 3), ...Array.from({ length: 6 }, (_, i) => ["pinch", 0.5 + i * 0.02]),
+    ...rep("hand", 5)]), 0);                                                                       // потянул — это вращение
+  assert.equal(taps([...rep("hand", 3), ["pinch"], ...rep("hand", 5)]), 0);                       // один кадр — дрогнуло
+  // кадр без щипка посреди щипка — всё ещё один щипок, одно нажатие
+  assert.equal(taps([...rep("pinch", 4), ["hand"], ...rep("pinch", 4), ...rep("hand", 5)]), 1);
+  assert.equal(taps([...rep("pinch", 4), ["pinch2"], ...rep("hand", 5)]), 0);                     // ушёл в масштаб
+});
+
 test("взмах ладонью: направление по экрану, возврат руки — не взмах, сброс вида не срабатывает", () => {
   const t = new GestureTracker();
   const events = [];

@@ -6,18 +6,23 @@
 //   указательный палец — курсор: задержка 1 с на узле — открыть заметку, на кнопке, галочке задачи или [[ссылке]]
 //   в заметке — нажать; раскрытая ладонь 1 с — сброс вида; взмах ладонью — повернуть граф (или листать заметки).
 //   Позы ✊ ✌ 👍 голограмма передаёт наружу (gestureAction): что они сделают, решает панель заметки.
+// Управление взглядом (MediaPipe Face Landmarker, gaze.js): взгляд — курсор, примагниченный к ближайшей кнопке
+//   или узлу; короткий щипок — нажать то, на что смотрите; щипок и движение — вращать граф или листать заметку.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=9";
+import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=10";
+import { OneEuro2D, eyeFeatures, pickTarget, snapRadius } from "./gaze.js?v=10";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const HAND_MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 const EDGE = [0x3e / 255, 0xe8 / 255, 0xff / 255];   // цвет нитей-связей
 const PALETTE = [0x3ee8ff, 0x5dffb0, 0xffb347, 0xb48cff, 0xff6b9a, 0x7fd4ff, 0xe6ff6b, 0xff8f5a];
 const DWELL_MS = 1000;                // задержка пальца, чтобы открыть узел или нажать кнопку
 // что можно «нажать» пальцем в воздухе: кнопки, галочки задач и [[ссылки]] заметки, кнопки с data-air
 const AIR_TARGETS = ".np button:not([disabled]), .np a.md-link, .np li.md-task, [data-air]:not([disabled])";
-const OVER_UI = ".np, .gt, .holo-ui";  // над панелями палец не выбирает узлы графа за ними
+const OVER_UI = ".np, .gt, .gc, .holo-ui";  // над панелями палец и взгляд не выбирают узлы графа за ними
+const TRAINING_UI = ".gt, .gc";             // обучение жестам и калибровка взгляда: нажимаются только их кнопки
 const SCROLLABLE = ".np-body, .np-editor, .np-conflict";
 
 function glowSprite() {
@@ -83,6 +88,9 @@ export class Hologram {
     this.cursor = document.createElement("div");
     this.cursor.className = "holo-cursor hidden";
     root.append(this.cursor);
+    this.gazeCursor = document.createElement("div");   // курсор взгляда (у пальца — свой)
+    this.gazeCursor.className = "holo-gaze hidden";
+    root.append(this.gazeCursor);
     this.badge = document.createElement("div");   // какой жест держится и что он сделает
     this.badge.className = "holo-gesture hidden";
     this.badge.setAttribute("aria-live", "polite");
@@ -296,6 +304,7 @@ export class Hologram {
       this.label.style.top = `${this.hoverAt.y}px`;
       this.label.classList.remove("hidden");
     } else this.label.classList.add("hidden");
+    if (this.gaze) this.projectNodes();
     if (this.hands) this.trackHands(ts);
     this.renderer.render(this.scene, this.camera);
     if (this.tagEls.length) {
@@ -324,9 +333,8 @@ export class Hologram {
     if (this.hands) return;
     this.onStatus("загружаю модель рук…");
     if (!this.landmarker) {
-      const { FilesetResolver, HandLandmarker } = await import(VISION_URL);
-      const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
-      this.landmarker = await HandLandmarker.createFromOptions(fileset, {
+      const { tasks, fileset } = await this.visionTasks();
+      this.landmarker = await tasks.HandLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: HAND_MODEL, delegate: "GPU" }, runningMode: "VIDEO", numHands: 2,
       });
     }
@@ -342,9 +350,19 @@ export class Hologram {
     this.onStatus("жесты включены: ☝ палец 1 с — открыть или нажать, 🤏 — вращать, ✋ — сброс, ✌ — править, 👍 — сохранить, ✊ — закрыть");
   }
 
+  /** MediaPipe Tasks (модули и wasm) — грузятся один раз на руки и лицо. */
+  async visionTasks() {
+    if (!this.vision) {
+      const tasks = await import(VISION_URL);
+      this.vision = { tasks, fileset: await tasks.FilesetResolver.forVisionTasks(WASM_URL) };
+    }
+    return this.vision;
+  }
+
   emitGesture(evt) { this.gestureListeners.forEach((fn) => fn(evt)); }
 
   disableGestures() {
+    this.stopGaze();
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
     this.stream = null; this.hands = null;
     this.cursor.classList.add("hidden");
@@ -377,6 +395,11 @@ export class Hologram {
     const g = classify(hands);
     this.drawHands(hands, g.kind);
     this.emitGesture({ type: "frame", kind: g.kind, hands: g.hands });
+    if (this.gaze) {
+      this.trackGaze(v, ts, g);
+      // нажимается то, на что смотрели, когда свели пальцы (взгляд к отпусканию мог уже уйти)
+      if (g.kind === "pinch" && !h.pinch) this.gaze.pressTarget = this.gaze.target;
+    }
     for (const e of this.tracker.update(g, ts)) this.onTracked(e, ts);
     if (ts - h.badgeAt > 300 && ts > h.badgeUntil) this.badge.classList.add("hidden");
     if (g.kind !== "point" && g.kind !== "pinch") this.cursor.classList.add("hidden");
@@ -402,6 +425,10 @@ export class Hologram {
   /** Удержание позы и взмахи от GestureTracker. */
   onTracked(e, ts) {
     this.emitGesture(e);
+    if (e.type === "tap") {
+      if (this.gaze?.model && !this.gaze.calibration) this.gazeClick(ts);
+      return;
+    }
     if (e.type === "hold") {
       const a = e.progress >= 0.15 ? this.action(e.kind) : null;   // мимолётные позы не мельтешат
       if (a) this.showBadge(e.kind, a.label, a.hint ? 0 : e.progress, ts, false, a.hint);
@@ -428,13 +455,19 @@ export class Hologram {
     if (this.hands) { this.hands.badgeAt = ts; this.hands.badgeUntil = ts + keepMs; }
   }
 
-  /** Щипок: над текстом заметки — прокрутка («взял и потянул»), в остальном месте — вращение графа. */
+  /** Щипок: над текстом заметки — прокрутка («взял и потянул»), в остальном месте — вращение графа.
+   *  Пока рука почти на месте (DRAG), ничего не двигается: короткий щипок — это «нажать». */
   pinchMove(g) {
     const h = this.hands;
     const x = g.x * innerWidth, y = g.y * innerHeight;
+    const gaze = this.gaze?.model && this.gaze.point;
     if (!h.pinch) {
-      const el = document.elementFromPoint(x, y);
-      h.pinch = { x: g.x, y: g.y, scroll: el?.closest(SCROLLABLE) || null };
+      // что тянем: при управлении взглядом — то, на что смотрите, иначе — то, что под рукой
+      const at = gaze ? this.gaze.point : { x, y };
+      const el = document.elementFromPoint(at.x, at.y);
+      h.pinch = { x: g.x, y: g.y, x0: g.x, y0: g.y, drag: false, scroll: el?.closest(SCROLLABLE) || null };
+    } else if (!h.pinch.drag) {
+      h.pinch.drag = Math.hypot(g.x - h.pinch.x0, g.y - h.pinch.y0) > DRAG;
     } else if (h.pinch.scroll) {
       const amount = (h.pinch.y - g.y) * innerHeight * 1.6;
       h.pinch.scroll.scrollTop += amount;
@@ -446,6 +479,7 @@ export class Hologram {
     }
     h.pinch.x = g.x; h.pinch.y = g.y;
     h.dwell = null;
+    if (gaze) { this.cursor.classList.add("hidden"); return; }   // курсор — взгляд, рука только «держит»
     this.cursor.style.transform = `translate(${x}px, ${y}px)`;
     this.cursor.style.setProperty("--p", "0");
     this.cursor.classList.add("grab");
@@ -461,7 +495,7 @@ export class Hologram {
     if (el?.closest(OVER_UI)) {
       this.mouse.set(-9, -9); this.hoverAt = null;
       target = el.closest(AIR_TARGETS);
-      if (target && this.suppressOpen && !target.closest(".gt")) target = null;   // в обучении — только его кнопки
+      if (target && this.suppressOpen && !target.closest(TRAINING_UI)) target = null;   // в обучении — только его кнопки
     } else {
       this.setMouse(x, y);
       node = this.hovered();
@@ -490,6 +524,147 @@ export class Hologram {
     this.cursor.style.setProperty("--p", String(progress));
     this.cursor.classList.toggle("on", Boolean(id) && !h.lock);
     this.cursor.classList.remove("hidden", "grab");
+  }
+
+  // ---------- взгляд ----------
+  /** Включить управление взглядом: камера и руки (жесты — действия) и модель лица. Без model (GazeModel)
+   *  курсора нет, пока не пройдена калибровка (gaze-calibration.js). errorPx — точность калибровки. */
+  async startGaze(video, overlay, { model = null, errorPx = null } = {}) {
+    await this.startGestures(video, overlay);
+    if (!this.face) {
+      this.onStatus("загружаю модель лица…");
+      const { tasks, fileset } = await this.visionTasks();
+      this.face = await tasks.FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: FACE_MODEL, delegate: "GPU" }, runningMode: "VIDEO", numFaces: 1,
+        outputFaceBlendshapes: true,
+      });
+    }
+    this.gaze = { model, radius: snapRadius(errorPx), filter: new OneEuro2D(), target: null, pressTarget: null,
+      point: null, calibration: null, faceAt: 0 };
+    this.onStatus("взгляд — курсор, короткий щипок — нажать, щипок и движение — вращать или листать");
+  }
+
+  /** Новая калибровка: курсор начинает с чистого листа. */
+  setGazeModel(model, errorPx) {
+    if (!this.gaze) return;
+    Object.assign(this.gaze, { model, radius: snapRadius(errorPx), filter: new OneEuro2D(), point: null });
+  }
+
+  stopGaze() {
+    if (this.gaze?.target?.el) this.gaze.target.el.classList.remove("gaze-on");
+    this.gaze = null;
+    this.screenNodes = null;
+    this.gazeCursor.classList.add("hidden");
+  }
+
+  /** Экранные координаты узлов — цели для магнита взгляда. */
+  projectNodes() {
+    if (!this.positions) return;
+    this.world.updateMatrixWorld();
+    const v = new THREE.Vector3();
+    this.screenNodes = [];
+    this.positions.forEach((p, i) => {
+      v.copy(p).applyMatrix4(this.world.matrixWorld).project(this.camera);
+      if (v.z < 1) this.screenNodes.push({ id: this.nodes[i].id, node: true, x: (v.x * 0.5 + 0.5) * innerWidth, y: (-v.y * 0.5 + 0.5) * innerHeight });
+    });
+  }
+
+  trackGaze(v, ts, g) {
+    const z = this.gaze;
+    const res = this.face.detectForVideo(v, ts);
+    const lm = res.faceLandmarks?.[0];
+    const blend = {};
+    for (const c of res.faceBlendshapes?.[0]?.categories || []) blend[c.categoryName] = c.score;
+    const f = eyeFeatures(lm, blend);
+    if (lm) z.faceAt = ts;
+    this.drawFaceStatus(Boolean(lm), Boolean(f));
+    if (z.calibration) { z.calibration.feed(f, ts); this.gazeCursor.classList.add("hidden"); return; }
+    if (!z.model) return;
+    if (!f) {                                          // моргнул — курсор стоит; лица долго нет — прячем
+      if (ts - z.faceAt > 800) this.gazeCursor.classList.add("hidden");
+      return;
+    }
+    const p = z.model.predict(f);
+    const clamp = (a) => Math.max(0, Math.min(1, a));
+    z.point = z.filter.filter({ x: clamp(p.x) * innerWidth, y: clamp(p.y) * innerHeight }, ts);
+    if (g.kind === "point") { this.gazeCursor.classList.add("hidden"); return; }   // палец главнее взгляда
+    this.gazeAt(z.point);
+  }
+
+  /** Цели магнита: что можно нажать (кнопки, задачи, ссылки заметки, data-air) и узлы графа вне панелей. */
+  gazeTargets() {
+    const out = [];
+    for (const el of this.root.querySelectorAll(AIR_TARGETS)) {
+      if (this.suppressOpen && !el.closest(TRAINING_UI)) continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const clip = el.closest(SCROLLABLE)?.getBoundingClientRect();   // прокрученное за край заметки — не цель
+      if (clip && (r.bottom < clip.top || r.top > clip.bottom)) continue;
+      out.push({ id: el, el, x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height });
+    }
+    if (this.suppressOpen) return out;
+    const panels = [...this.root.querySelectorAll(".np:not(.hidden), .holo-ui")].map((e) => e.getBoundingClientRect());
+    for (const n of this.screenNodes || []) {
+      if (!panels.some((r) => n.x >= r.left && n.x <= r.right && n.y >= r.top && n.y <= r.bottom)) out.push(n);
+    }
+    return out;
+  }
+
+  /** Курсор взгляда: примагничивается к ближайшей цели, цель подсвечивается. */
+  gazeAt(pt) {
+    const z = this.gaze;
+    const t = pickTarget(pt, this.gazeTargets(), z.target ? z.target.id : null, z.radius);
+    if (z.target?.el && z.target.el !== t?.el) z.target.el.classList.remove("gaze-on");
+    if (t?.el) t.el.classList.add("gaze-on");
+    z.target = t;
+    // на широкой строке (задача во всю панель) курсор остаётся там, куда смотрите, а не прыгает в середину
+    const at = !t ? pt : t.el ? { x: Math.max(t.x - t.w / 2 + 12, Math.min(t.x + t.w / 2 - 12, pt.x)), y: t.y } : t;
+    if (t?.node) this.setMouse(t.x, t.y);              // подпись узла — как при наведении мышью
+    else { this.mouse.set(-9, -9); this.hoverAt = null; }
+    this.gazeCursor.style.transform = `translate(${at.x}px, ${at.y}px)`;
+    this.gazeCursor.classList.toggle("lock", Boolean(t));
+    this.gazeCursor.classList.remove("hidden");
+    this.emitGesture({ type: "gaze", x: pt.x, y: pt.y, target: t ? (t.node ? t.id : "button") : null });
+  }
+
+  /** Короткий щипок при управлении взглядом: нажать то, на что смотрели, когда свели пальцы. */
+  gazeClick(ts) {
+    const z = this.gaze;
+    const t = z.pressTarget || z.target;
+    z.pressTarget = null;
+    if (!t || (t.el && !t.el.isConnected)) {
+      this.showBadge("pinch", "посмотрите на кнопку или заметку", 0, ts, false, true, 1200);
+      return;
+    }
+    let label;
+    if (t.el) {
+      label = t.el.textContent.trim().replace(/\s+/g, " ").slice(0, 40) || t.el.getAttribute("aria-label") || "кнопка";
+      this.emitGesture({ type: "press", label, gaze: true });
+      t.el.click();
+    } else {
+      label = this.nodes[this.byId.get(t.id)]?.title || t.id;
+      if (!this.suppressOpen) this.onOpen(t.id);
+      this.emitGesture({ type: "select", id: t.id, gaze: true });
+    }
+    this.gazeCursor.classList.remove("click");
+    void this.gazeCursor.offsetWidth;                  // перезапуск анимации нажатия
+    this.gazeCursor.classList.add("click");
+    this.showBadge("pinch", label, 1, ts, true);
+  }
+
+  /** Подпись на окошке камеры сверху: видит ли Jarvis глаза. */
+  drawFaceStatus(face, eyes) {
+    const g = this.overlay.getContext("2d"), W = this.overlay.width;
+    const text = !face ? "👁 не вижу лицо" : eyes ? "👁 вижу взгляд" : "👁 глаза закрыты";
+    g.save();
+    g.scale(-1, 1);
+    g.font = "600 15px system-ui, sans-serif";
+    const w = g.measureText(text).width + 14;
+    g.fillStyle = "rgba(2,10,16,.78)";
+    g.fillRect(-W + 6, 6, w, 24);
+    g.fillStyle = face && eyes ? "#ffd59a" : "#ffb347";
+    g.fillText(text, -W + 13, 23);
+    g.restore();
   }
 
   /** Скелет руки поверх окошка камеры и подпись «вижу: …» — что именно распознано. */

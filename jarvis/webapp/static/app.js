@@ -1,8 +1,8 @@
 // J.A.R.V.I.S. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=9";
-import { Voice } from "./voice.js?v=9";
+import { Reactor } from "./reactor.js?v=10";
+import { Voice } from "./voice.js?v=10";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -59,7 +59,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Jarvis работает прямо на телефоне
-    SA = await import("./standalone.js?v=9");
+    SA = await import("./standalone.js?v=10");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -745,7 +745,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=9");
+    const { Hologram } = await import("./hologram.js?v=10");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -767,7 +767,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=9");
+  const { NotePanel } = await import("./note-panel.js?v=10");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -791,7 +791,9 @@ $("#holo-close").addEventListener("click", () => {
   if (notes && !notes.close()) return;          // несохранённые правки — спросили, владелец передумал
   $("#holo").classList.add("hidden");
   if (tutorial) tutorial.close();
+  if (gazeCal?.active) gazeCal.close();
   if (holo) { holo.running = false; holo.disableGestures(); $("#holo-gestures").classList.remove("primary"); }
+  eyesOff();
 });
 
 // Первоначальное обучение жестам: показывается при первом включении, повторить — кнопка «?».
@@ -805,7 +807,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=9");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=10");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -824,10 +826,60 @@ $("#holo-gestures").addEventListener("click", async () => {
     const on = await holo.enableGestures($("#holo-video"), $("#holo-hands"));
     $("#holo-gestures").classList.toggle("primary", on);
     if (!on && tutorial) tutorial.close();
+    if (!on) eyesOff();                          // без камеры нет и взгляда
     if (on && Number(trained) < TRAINING_VERSION) openTutorial({ from: "press" });   // true → 1: новые жесты для заметок
   } catch (err) { toast(`Жесты недоступны: ${err.message}`, "error"); }
 });
 $("#holo-train").addEventListener("click", () => { voice.unlock(); openTutorial(); });
+
+// Управление взглядом: взгляд — курсор, жесты — действия (короткий щипок — нажать). Калибровка хранится
+// на этом устройстве (повернули экран или сменили устройство — калибровать заново).
+let gazeCal = null;
+function savedGaze() {
+  const s = store.get("gaze_model", null);
+  if (!s?.model || !s.w || !s.h) return null;
+  const sameShape = (s.w > s.h) === (innerWidth > innerHeight) && Math.abs(s.w / innerWidth - 1) < 0.25;
+  return sameShape ? s : null;
+}
+function eyesOff() {
+  holo?.stopGaze();
+  if (gazeCal?.active) gazeCal.close();
+  $("#holo-eyes").classList.remove("primary");
+  $("#holo").classList.remove("eyes");
+}
+async function calibrateEyes() {
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=10");
+  gazeCal ??= new GazeCalibration({
+    root: $("#holo"), holo,
+    say: (text) => { if (!voice.muted) voice.say(text); },
+    onDone: (model, errorPx) => store.set("gaze_model", { model: model.toJSON(), errorPx, w: innerWidth, h: innerHeight }),
+    onCancel: () => { if (!holo.gaze?.model) eyesOff(); },   // без калибровки курсора нет — выключаем
+  });
+  if (tutorial?.active) tutorial.close();
+  if (!gazeCal.active) gazeCal.open();
+}
+async function eyesOn() {
+  const saved = savedGaze();
+  const { GazeModel } = await import("./gaze.js?v=10");
+  await holo.startGaze($("#holo-video"), $("#holo-hands"),
+    saved ? { model: GazeModel.fromJSON(saved.model), errorPx: saved.errorPx } : {});
+  $("#holo-gestures").classList.add("primary");
+  $("#holo-eyes").classList.add("primary");
+  $("#holo").classList.add("eyes");
+  if (!saved) await calibrateEyes();
+}
+$("#holo-eyes").addEventListener("click", async () => {
+  if (!holo) return;
+  voice.unlock();
+  if (holo.gaze) { eyesOff(); return; }
+  try { await eyesOn(); } catch (err) { eyesOff(); toast(`Взгляд недоступен: ${err.message}`, "error"); }
+});
+$("#holo-gaze-cal").addEventListener("click", () => {
+  if (holo?.gaze) calibrateEyes().catch((err) => toast(err.message, "error"));
+});
+addEventListener("orientationchange", () => {
+  if (holo?.gaze?.model) toast("Экран повернули — откалибруйте взгляд заново: кнопка ◎.", "warn");
+});
 
 $("#btn-settings").addEventListener("click", () => { if (SA) openSettings(false); });
 

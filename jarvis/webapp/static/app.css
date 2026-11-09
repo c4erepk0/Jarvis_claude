@@ -326,7 +326,7 @@ input::placeholder, textarea::placeholder { color: #4d7584; }
   transform: scaleX(-1); border: 1px solid var(--holo-dim); border-radius: var(--r); object-fit: cover; opacity: .75; }
 .holo-hands { background: transparent; opacity: 1; }
 /* курсор — над заметкой и обучением: палец «нажимает» их кнопки */
-.holo-cursor { position: absolute; z-index: 6; left: 0; top: 0; width: 34px; height: 34px; margin: -17px 0 0 -17px;
+.holo-cursor { position: absolute; z-index: 8; left: 0; top: 0; width: 34px; height: 34px; margin: -17px 0 0 -17px;
   border-radius: 50%; pointer-events: none; --p: 0;
   background: conic-gradient(var(--holo) calc(var(--p) * 360deg), rgba(62,232,255,.12) 0);
   -webkit-mask: radial-gradient(circle, transparent 11px, #000 12px); mask: radial-gradient(circle, transparent 11px, #000 12px);
@@ -334,6 +334,35 @@ input::placeholder, textarea::placeholder { color: #4d7584; }
 .holo-cursor.on { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
 .holo-cursor.grab { --p: 1; width: 26px; height: 26px; margin: -13px 0 0 -13px; opacity: .75; }   /* щипок: держу */
 .holo-cursor.hidden { display: none; }
+/* взгляд — курсор (янтарный, у пальца — голубой); цель, к которой он прилип, подсвечена */
+.holo-gaze { position: absolute; z-index: 8; left: 0; top: 0; width: 48px; height: 48px; margin: -24px 0 0 -24px;
+  border-radius: 50%; pointer-events: none; border: 2px solid rgba(255,179,71,.5);
+  background: radial-gradient(circle, rgba(255,179,71,.2), transparent 70%);
+  transition: transform .06s linear, width .15s, height .15s, margin .15s, border-color .15s, box-shadow .15s; }
+.holo-gaze.lock { width: 30px; height: 30px; margin: -15px 0 0 -15px; border-color: #ffb347; box-shadow: 0 0 14px rgba(255,179,71,.7); }
+.holo-gaze.click { animation: gaze-click .3s ease-out; }
+.holo-gaze.hidden { display: none; }
+@keyframes gaze-click { 0% { box-shadow: 0 0 0 0 rgba(255,179,71,.9); } 100% { box-shadow: 0 0 0 22px rgba(255,179,71,0); } }
+.holo .gaze-on { outline: 2px solid #ffb347; outline-offset: 2px; box-shadow: 0 0 14px rgba(255,179,71,.45); }
+.holo .np li.gaze-on { outline-offset: 0; border-radius: 3px; }
+.holo:not(.eyes) #holo-gaze-cal { display: none; }
+/* калибровка взгляда — на весь экран, чтобы ничто не отвлекало от точки */
+.gc { position: absolute; inset: 0; z-index: 7; background: rgba(1,6,10,.9); }
+.gc.hidden, .gc-dot.hidden, .gc-panel.hidden { display: none; }
+.gc-dot { position: absolute; left: 0; top: 0; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%;
+  border: 2px solid var(--holo); --p: 0; transition: transform .3s ease; box-shadow: 0 0 18px rgba(62,232,255,.35); }
+.gc-dot::after { content: ""; position: absolute; inset: 0; margin: auto; width: 8px; height: 8px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 10px var(--holo); }
+.gc-dot i { position: absolute; inset: 3px; border-radius: 50%; background: rgba(62,232,255,.35); transform: scale(calc(1 - var(--p))); }
+.gc-dot.check { border-color: #ffb347; box-shadow: 0 0 18px rgba(255,179,71,.4); }
+.gc-dot.check i { background: rgba(255,179,71,.35); }
+.gc-status { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: calc(100% - 32px);
+  font: 500 12px/1.4 var(--mono); color: var(--muted); text-align: center; pointer-events: none; }
+.gc-panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(460px, calc(100% - 24px));
+  background: rgba(3,14,22,.96); }
+.gc-panel p { margin: 10px 0 0; font-size: 13px; line-height: 1.5; }
+.gc-how { white-space: normal; }
+.gc-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 /* жест держится: что он сделает и сколько осталось держать */
 .holo-gesture { position: absolute; z-index: 4; left: 50%; top: 22%; transform: translateX(-50%); pointer-events: none;
   display: flex; align-items: center; gap: 10px; padding: 8px 14px 10px; max-width: calc(100% - 32px); overflow: hidden;
@@ -487,6 +516,8 @@ input::placeholder, textarea::placeholder { color: #4d7584; }
   .np-actions .btn { padding: 7px 8px; font-size: 10px; letter-spacing: .1em; }
   .holo.reading .holo-video, .holo.reading .holo-hands { bottom: calc(58vh + 10px); }
   .holo.reading .holo-gesture { left: 50%; top: max(96px, calc(42vh - 210px)); }
+  .holo-actions .lbl { display: none; }               /* на телефоне — только значки, подписи — в подсказках */
+  .holo-actions { gap: 6px; }
 }
 
 /* ---------- вкладки (телефон) ---------- */

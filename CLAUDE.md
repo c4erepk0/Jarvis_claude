@@ -45,6 +45,12 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `tests/js/fixtures/hands-hagrid.json` (точки MediaPipe на кадрах HaGRID, тест «реальные руки»); нарисованные
   эталоны проходят почти при любых порогах. Распознанное видно на окошке камеры («вижу: …»); жест, которому сейчас
   нечего делать, показывает подсказку (`noteHint`), а не молчит.
+- `static/gaze.js` — управление взглядом без DOM (тест — `tests/js/gaze.test.mjs`): `eyeFeatures` (радужки, уголки глаз,
+  поворот головы по точкам MediaPipe Face Landmarker + коэффициенты `eyeLook*`), `Calibration` (13 точек, точность в px),
+  `GazeModel` (гребневая регрессия признаки → доля экрана), `OneEuro2D` (сглаживание), `pickTarget` (магнит к целям).
+  `static/gaze-calibration.js` — окно калибровки; модель хранится в localStorage (`jarvis.gaze_model`).
+  В голограмме: `startGaze` / `stopGaze` / `setGazeModel`, цели магнита — `AIR_TARGETS` и узлы графа вне панелей;
+  нажатие — событие `tap` от `GestureTracker` (короткий щипок, сдвиг < `DRAG`); сам взгляд ничего не нажимает.
 - `jarvis/webapp/static/core/*.js` — **ядро для режима «только iPhone»**: порт Python-ядра (ru, vault,
   tasks, finance, memory, intents, brain, projects, protocols, jarvis). Отвечает на те же `/api/…`, что сервер.
   Память — `GitHubStore` (приватный репозиторий с хранилищем, кэш блобов по sha), Claude — официальный

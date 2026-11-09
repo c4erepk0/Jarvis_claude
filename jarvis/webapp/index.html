@@ -9,12 +9,12 @@
 <meta name="apple-mobile-web-app-title" content="JARVIS">
 <title>J.A.R.V.I.S.</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="static/icon.svg?v=9" type="image/svg+xml">
-<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=9">
+<link rel="icon" href="static/icon.svg?v=10" type="image/svg+xml">
+<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=10">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="static/app.css?v=9">
+<link rel="stylesheet" href="static/app.css?v=10">
 </head>
 <body>
 <div class="bg-grid" aria-hidden="true"></div>
@@ -180,17 +180,20 @@
     <div class="holo-title">ГОЛОГРАММА ПАМЯТИ <span class="muted" id="holo-stats"></span></div>
     <div class="holo-actions">
       <button class="btn ghost" id="holo-new" title="Новая заметка" aria-label="Новая заметка" data-air>＋</button>
-      <button class="btn ghost" id="holo-gestures">✋ ЖЕСТЫ</button>
+      <button class="btn ghost" id="holo-gestures" title="Жесты рук" aria-label="Жесты рук">✋<span class="lbl"> ЖЕСТЫ</span></button>
       <button class="btn ghost" id="holo-train" title="Обучение жестам" aria-label="Обучение жестам">?</button>
-      <button class="btn ghost" id="holo-close">✕ ЗАКРЫТЬ</button>
+      <button class="btn ghost" id="holo-eyes" title="Управление взглядом: взгляд — курсор, жесты — действия"
+        aria-label="Управление взглядом">👁<span class="lbl"> ВЗГЛЯД</span></button>
+      <button class="btn ghost" id="holo-gaze-cal" title="Калибровка взгляда" aria-label="Калибровка взгляда" data-air>◎</button>
+      <button class="btn ghost" id="holo-close" title="Закрыть голограмму" aria-label="Закрыть голограмму">✕<span class="lbl"> ЗАКРЫТЬ</span></button>
     </div>
-    <div class="holo-hint" id="holo-hint">Вращайте мышью или пальцем · колёсико/щипок — масштаб · нажмите на узел — заметка откроется здесь, её можно поправить</div>
+    <div class="holo-hint" id="holo-hint">Вращайте мышью или пальцем · колёсико/щипок — масштаб · нажмите на узел — заметка откроется здесь, её можно поправить · ✋ — жесты · 👁 — взгляд вместо курсора</div>
   </div>
   <div class="holo-label hidden" id="holo-label"></div>
   <video id="holo-video" class="holo-video hidden" playsinline muted></video>
   <canvas id="holo-hands" class="holo-hands hidden"></canvas>
 </div>
 
-<script type="module" src="static/app.js?v=9"></script>
+<script type="module" src="static/app.js?v=10"></script>
 </body>
 </html>
