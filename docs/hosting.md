@@ -74,6 +74,31 @@ nano /opt/jarvis/.env && systemctl restart jarvis   # поменять наст�
 Свой домен: создайте у регистратора A-запись на IP сервера и выполните
 `JARVIS_DOMAIN=jarvis.example.ru bash /opt/jarvis/scripts/vps.sh install`.
 
+### Обновлять одной командой прямо из терминала на iPhone
+
+Один раз вставьте в терминал на iPhone (не на сервере), подставив IP своего сервера в двух местах.
+Команда создаст SSH-ключ (пароль root спросит последний раз) и добавит короткие команды:
+`ju` — обновить Jarvis, `jstat` — состояние, `jlog` — журнал (выход Ctrl+C), `jssh` — зайти на сервер.
+```bash
+D=/home/termiux; [ -d "$D" ] || D=$HOME; mkdir -p "$D/.ssh" && chmod 700 "$D/.ssh"
+command -v ssh-keygen >/dev/null || apt-get install -y openssh-client >/dev/null
+[ -f "$D/.ssh/jarvis_ed25519" ] || ssh-keygen -t ed25519 -N "" -q -f "$D/.ssh/jarvis_ed25519"
+cat > "$D/jarvis.sh" <<EOF
+# Jarvis на сервере: ju — обновить, jstat — состояние, jlog — журнал (выход Ctrl+C), jssh — зайти на сервер
+J_SSH="ssh -t -i $D/.ssh/jarvis_ed25519 -o UserKnownHostsFile=$D/.ssh/known_hosts -o ConnectTimeout=15 root@IP-СЕРВЕРА"
+ju()    { \$J_SSH 'bash /opt/jarvis/scripts/vps.sh update'; }
+jstat() { \$J_SSH 'bash /opt/jarvis/scripts/vps.sh status'; }
+jlog()  { \$J_SSH 'bash /opt/jarvis/scripts/vps.sh logs'; }
+jssh()  { \$J_SSH; }
+EOF
+grep -qF "$D/jarvis.sh" ~/.bashrc 2>/dev/null || echo ". $D/jarvis.sh" >> ~/.bashrc
+. "$D/jarvis.sh"
+ssh -o UserKnownHostsFile="$D/.ssh/known_hosts" root@IP-СЕРВЕРА 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo "✓ ключ добавлен"' < "$D/.ssh/jarvis_ed25519.pub"
+```
+`/home/termiux` — папка, которая переживает перезапуск терминала; ключ и команды хранятся там. Если после
+перезапуска терминал пишет `ju: command not found`, выполните `. /home/termiux/jarvis.sh`.
+Пароль root в команды не записывается: вход — по ключу.
+
 ## 5. Если не открывается
 
 - **Порты 80 и 443.** У некоторых хостеров в панели есть файрвол / «группа безопасности» — откройте в ней
