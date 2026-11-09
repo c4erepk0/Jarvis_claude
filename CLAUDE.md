@@ -28,6 +28,10 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/web.py` — REST + WebSocket + вход; `jarvis/hub.py` — шина событий; `jarvis/watchers.py` — фоновые датчики.
 - `jarvis/voice.py` (TTS), `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
 - `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`.
+- `static/note-panel.js` — заметка в голограмме: просмотр, правка, новая, [[ссылки]], галочки задач; рендер —
+  `static/markdown.js` (сначала экранирование, тест — `tests/js/markdown.test.mjs`). Сохранение — с версией
+  (`content_version` / `contentVersion`, одинаковые в Python и JS): PUT /api/note с `base`, при чужой правке — 409.
+  Голограмма: `highlight`, `focus`, `setInset`; событие `open_note` открывает заметку на всех дашбордах.
 - `static/gestures.js` — распознавание жестов по точкам руки MediaPipe и эталонные позы; `static/gesture-coach.js` —
   шаги обучения жестам (без DOM, тест — `tests/js/gestures.test.mjs`); `static/gesture-tutorial.js` — окно обучения.
   Голограмма сообщает распознанное через `holo.gestureListeners` (`frame`, `rotate`, `zoom`, `reset`, `dwell`, `select`).

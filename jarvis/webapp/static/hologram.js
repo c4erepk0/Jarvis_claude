@@ -1,13 +1,16 @@
 // Голограмма памяти: 3D-граф заметок Obsidian (узлы — заметки, нити — [[ссылки]]).
+// Открытая заметка подсвечивается вместе со связями, граф поворачивается к ней (focus), вид сдвигается,
+// чтобы узел не прятался под панелью заметки (setInset).
 // Управление мышью/пальцами или жестами рук перед камерой (MediaPipe Hand Landmarker):
 //   щипок (большой + указательный) и движение — вращение; щипок двумя руками — масштаб;
 //   указательный палец — курсор, задержка на узле 1 с — открыть заметку; раскрытая ладонь 1 с — сброс вида.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, classify } from "./gestures.js?v=6";
+import { BONES, classify } from "./gestures.js?v=7";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const HAND_MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+const EDGE = [0x3e / 255, 0xe8 / 255, 0xff / 255];   // цвет нитей-связей
 const PALETTE = [0x3ee8ff, 0x5dffb0, 0xffb347, 0xb48cff, 0xff6b9a, 0x7fd4ff, 0xe6ff6b, 0xff8f5a];
 
 function glowSprite() {
@@ -23,17 +26,20 @@ function glowSprite() {
   return new THREE.CanvasTexture(c);
 }
 
-function layout(nodes, links) {
+function layout(nodes, links, prev = new Map()) {
   const groups = [...new Set(nodes.map((n) => n.group))];
   const centers = new Map(groups.map((g, i) => {
     const phi = Math.acos(1 - (2 * (i + 0.5)) / groups.length), th = Math.PI * (1 + Math.sqrt(5)) * i;
     const r = groups.length > 1 ? 34 : 0;
     return [g, new THREE.Vector3(r * Math.sin(phi) * Math.cos(th), r * Math.cos(phi), r * Math.sin(phi) * Math.sin(th))];
   }));
-  const pos = nodes.map((n) => centers.get(n.group).clone().add(new THREE.Vector3().randomDirection().multiplyScalar(6 + Math.random() * 10)));
+  // известные узлы остаются на своих местах — после правки или новой заметки граф не «разлетается»
+  const pos = nodes.map((n) => (prev.get(n.id)?.clone()
+    || centers.get(n.group).clone().add(new THREE.Vector3().randomDirection().multiplyScalar(6 + Math.random() * 10))));
   const index = new Map(nodes.map((n, i) => [n.id, i]));
   const edges = links.map((l) => [index.get(l.source), index.get(l.target)]).filter(([a, b]) => a !== undefined && b !== undefined);
-  for (let it = 0; it < 90; it++) {
+  const rounds = nodes.every((n) => prev.has(n.id)) ? 0 : prev.size ? 30 : 90;
+  for (let it = 0; it < rounds; it++) {
     const f = pos.map(() => new THREE.Vector3());
     for (let i = 0; i < pos.length; i++) {
       for (let k = 0; k < 24; k++) {
@@ -80,6 +86,10 @@ export class Hologram {
     this.world = new THREE.Group();
     this.scene.add(this.world);
     this.decor();
+    this.marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowSprite(), color: 0xffffff, transparent: true,
+      opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending }));
+    this.marker.visible = false;
+    this.world.add(this.marker);
     this.ray = new THREE.Raycaster();
     this.ray.params.Points.threshold = 2.2;
     this.mouse = new THREE.Vector2(-9, -9);
@@ -121,8 +131,13 @@ export class Hologram {
 
   setData({ nodes, links }) {
     if (this.points) { this.world.remove(this.points); this.world.remove(this.lines); }
+    const prev = new Map((this.nodes || []).map((n, i) => [n.id, this.positions[i]]));
     this.nodes = nodes;
-    const { pos, edges, groups } = layout(nodes, links);
+    const { pos, edges, groups } = layout(nodes, links, prev);
+    this.byId = new Map(nodes.map((n, i) => [n.id, i]));
+    this.neighbors = new Map(nodes.map((n) => [n.id, new Set()]));
+    for (const [a, b] of edges) { this.neighbors.get(nodes[a].id).add(nodes[b].id); this.neighbors.get(nodes[b].id).add(nodes[a].id); }
+    this.edges = edges;
     const colors = [], positions = [], sizes = [];
     nodes.forEach((n, i) => {
       const col = new THREE.Color(PALETTE[groups.indexOf(n.group) % PALETTE.length]);
@@ -133,16 +148,19 @@ export class Hologram {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    this.baseColors = Float32Array.from(colors);
     const size = nodes.length < 50 ? 7 : nodes.length < 200 ? 5 : 4;
     this.points = new THREE.Points(g, new THREE.PointsMaterial({ size, map: glowSprite(), vertexColors: true,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
     this.world.add(this.points);
-    const lp = [];
+    const lp = [], lc = [];
     for (const [a, b] of edges) lp.push(pos[a].x, pos[a].y, pos[a].z, pos[b].x, pos[b].y, pos[b].z);
     const lg = new THREE.BufferGeometry();
     lg.setAttribute("position", new THREE.Float32BufferAttribute(lp, 3));
-    this.lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x3ee8ff, transparent: true, opacity: 0.22,
-      blending: THREE.AdditiveBlending }));
+    for (let k = 0; k < edges.length * 2; k++) lc.push(...EDGE.map((c) => c * 0.55));
+    lg.setAttribute("color", new THREE.Float32BufferAttribute(lc, 3));
+    this.lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.4,
+      blending: THREE.AdditiveBlending, depthWrite: false }));
     this.world.add(this.lines);
     this.positions = pos;
     this.tags.innerHTML = "";
@@ -152,8 +170,54 @@ export class Hologram {
       this.tags.append(el);
       return el;
     }) : [];
-    if (nodes.length < 50) this.target.z = 90;
+    if (nodes.length < 50 && !prev.size) this.target.z = 90;
+    this.highlight(this.selected && this.byId.has(this.selected) ? this.selected : null);
     this.onStatus(`${nodes.length} заметок · ${edges.length} связей`);
+  }
+
+  /** Подсветить заметку и её связи (остальное приглушается); null — снять подсветку. */
+  highlight(id) {
+    this.selected = id && this.byId?.has(id) ? id : null;
+    if (!this.points) return;
+    const i0 = this.selected ? this.byId.get(this.selected) : -1;
+    const near = this.selected ? this.neighbors.get(this.selected) : null;
+    const col = this.points.geometry.attributes.color;
+    this.nodes.forEach((n, i) => {
+      const k = !near || i === i0 || near.has(n.id) ? 1 : 0.16;
+      for (let c = 0; c < 3; c++) col.array[i * 3 + c] = i === i0 ? 1 : this.baseColors[i * 3 + c] * k;
+    });
+    col.needsUpdate = true;
+    const lc = this.lines.geometry.attributes.color;
+    this.edges.forEach(([a, b], e) => {
+      const k = !near ? 0.55 : a === i0 || b === i0 ? 1.4 : 0.08;
+      for (let v = 0; v < 6; v++) lc.array[e * 6 + v] = EDGE[v % 3] * k;
+    });
+    lc.needsUpdate = true;
+    this.tagEls.forEach((el, i) => {
+      el.classList.toggle("sel", i === i0);
+      el.classList.toggle("dim", Boolean(near) && i !== i0 && !near.has(this.nodes[i].id));
+    });
+    this.marker.visible = i0 >= 0;
+    if (i0 >= 0) this.marker.position.copy(this.positions[i0]);
+  }
+
+  /** Плавно повернуть граф так, чтобы заметка оказалась впереди, по центру. */
+  focus(id) {
+    const i = this.byId?.get(id);
+    if (i === undefined) return;
+    const p = this.positions[i];
+    let ry = Math.atan2(-p.x, p.z);                         // после поворота по Y узел — на оси Z
+    const z1 = -p.x * Math.sin(ry) + p.z * Math.cos(ry);
+    ry += Math.round((this.world.rotation.y - ry) / (2 * Math.PI)) * 2 * Math.PI;   // ближайший путь, без «пропеллера»
+    const rx = Math.max(-1.2, Math.min(1.2, Math.atan2(p.y, z1)));
+    this.target = { rx, ry, z: Math.max(70, Math.min(160, z1 + 45)) };
+    this.spin = 0;
+  }
+
+  /** Часть экрана занята панелью заметки — центр вида сдвигается в свободную часть. */
+  setInset({ right = 0, bottom = 0 } = {}) {
+    this.inset = { right, bottom };
+    this.resize();
   }
 
   bindPointer() {
@@ -196,6 +260,9 @@ export class Hologram {
     const w = innerWidth, h = innerHeight;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
+    const { right = 0, bottom = 0 } = this.inset || {};
+    if (right || bottom) this.camera.setViewOffset(w, h, right / 2, bottom / 2, w, h);
+    else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
   }
 
@@ -207,6 +274,7 @@ export class Hologram {
     this.camera.position.z += (this.target.z - this.camera.position.z) * 0.08;
     this.camera.lookAt(0, 0, 0);
     this.rings.forEach((r, i) => { r.rotation.z = ts * 0.0001 * (i % 2 ? -1 : 1); });
+    if (this.marker.visible) this.marker.scale.setScalar(7 + Math.sin(ts / 260) * 1.2);
     const n = this.hovered();
     if (n && this.hoverAt) {
       this.label.textContent = n.title;
