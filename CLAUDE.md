@@ -38,6 +38,8 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   push; токен — только в заголовке команды, не в .git/config.
 - `jarvis/tunnel.py` — `python -m jarvis --tunnel` / `bash start.sh --tunnel`: Cloudflare Quick Tunnel →
   localhost.run → pinggy; код входа создаётся сам. За туннелем Origin сверяется и с `X-Forwarded-Host`.
+- `scripts/vps.sh` — установка на VPS (Ubuntu 24.04 / Debian 12): systemd-служба `jarvis`, Caddy с HTTPS
+  на `<ip>.sslip.io`, `install|update|status|logs|check`; тест — `tests/test_vps.py`, инструкция — `docs/hosting.md`.
 - `.github/workflows/pages.yml` — публикация дашборда для iPhone на GitHub Pages.
 - `static/vault-template.json` — генерируется `scripts/build_template.py` из `vault-template/` (CI проверяет).
   **При изменении css/js поднимайте `?v=N` в `index.html`, `app.js` и `sw.js` (CACHE)**.

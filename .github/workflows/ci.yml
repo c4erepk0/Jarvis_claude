@@ -26,7 +26,7 @@ jobs:
         run: |
           pip install flake8==7.4.1 shellcheck-py==0.11.0.1
           flake8 --count
-          shellcheck -S error start.sh start.command
+          shellcheck -S error start.sh start.command scripts/vps.sh
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

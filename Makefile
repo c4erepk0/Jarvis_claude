@@ -1,6 +1,6 @@
 # Команды разработки Jarvis.  make help — список.
 PY ?= .venv/bin/python
-SH_FILES := start.sh start.command
+SH_FILES := start.sh start.command scripts/vps.sh
 
 .PHONY: help dev test lint audit check run livesync-config
 
