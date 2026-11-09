@@ -261,7 +261,7 @@ check_net() {
     if [ -n "$code" ] && [ "$code" != "000" ]; then say "   ✓ $name"; else say "   ✗ $name — $hint"; fi
   done <<'EOF'
 GitHub (код, память, проекты)|https://api.github.com|без него не скачать код и не синхронизировать память
-Telegram (оповещения)|https://api.telegram.org|оповещения в Telegram не дойдут
+Telegram (оповещения)|https://api.telegram.org|оповещения — через GitHub Actions: docs/hosting.md, раздел 6
 Голос edge-tts|https://speech.platform.bing.com|поставьте TTS_ENGINE=browser в .env — будет говорить голос iPhone
 Погода (open-meteo)|https://api.open-meteo.com/v1/forecast?latitude=55.75&longitude=37.62&current=temperature_2m|в брифинге не будет погоды
 Курсы ЦБ|https://www.cbr-xml-daily.ru/daily_json.js|в брифинге не будет курсов

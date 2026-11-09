@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import aiohttp
@@ -16,31 +17,51 @@ if TYPE_CHECKING:
     from .core import Jarvis
 
 log = logging.getLogger("jarvis.telegram")
+SEND_TIMEOUT = 20      # отправка сообщения: дольше не ждём, чтобы не тормозить остальное
+CONNECT_TIMEOUT = 15   # если до api.telegram.org не достучаться — понять это быстро
+POLL_TIMEOUT = 50      # long polling: Telegram держит getUpdates открытым до 50 с
+MAX_RETRY = 300        # при недоступности повторяем всё реже, но не реже раза в 5 минут
 COMMANDS = {"/brief": "доброе утро", "/tasks": "задачи на сегодня", "/money": "финансы",
             "/status": "статус проектов", "/diag": "протокол диагностика", "/help": "что ты умеешь"}
 
 
+def describe(e: BaseException) -> str:
+    """Понятная причина сбоя: у таймаута и части сетевых ошибок текст пустой."""
+    if isinstance(e, (asyncio.TimeoutError, TimeoutError)):
+        return "нет ответа (таймаут) — похоже, api.telegram.org недоступен с этого сервера"
+    return str(e) or type(e).__name__
+
+
 class Telegram:
-    def __init__(self, jarvis: "Jarvis", token: str, owner_id: int, api: str = "https://api.telegram.org"):
+    def __init__(self, jarvis: "Jarvis", token: str, owner_id: int, api: str = "https://api.telegram.org", *,
+                 poll_timeout: int = POLL_TIMEOUT, retry: float = 10, max_retry: float = MAX_RETRY,
+                 send_timeout: float = SEND_TIMEOUT):
         self.j = jarvis
         self.token = token
         self.owner = owner_id
         self.base = f"{api.rstrip('/')}/bot{token}"
         self._session: aiohttp.ClientSession | None = None
         self.offset = 0
+        self.poll_timeout, self.retry, self.max_retry, self.send_timeout = poll_timeout, retry, max_retry, send_timeout
+        self.down_since: float | None = None   # с какого момента Telegram не отвечает
+        self._sending: set[asyncio.Task] = set()
 
     async def session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=70), trust_env=True)
+            self._session = aiohttp.ClientSession(trust_env=True)
         return self._session
 
     async def close(self) -> None:
+        if self._sending:   # дать уйти последним оповещениям
+            await asyncio.wait(self._sending, timeout=5)
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def call(self, method: str, **params) -> dict:
+    async def call(self, method: str, *, wait: float | None = None, **params) -> dict:
         s = await self.session()
-        async with s.post(f"{self.base}/{method}", json=params) as r:
+        total = wait or self.send_timeout
+        timeout = aiohttp.ClientTimeout(total=total, connect=min(CONNECT_TIMEOUT, total))
+        async with s.post(f"{self.base}/{method}", json=params, timeout=timeout) as r:
             data = await r.json(content_type=None)
         if not data.get("ok"):
             raise RuntimeError(f"Telegram {method}: {data.get('description')}")
@@ -60,8 +81,17 @@ class Telegram:
             await r.read()
 
     async def notify(self, text: str, level: str = "warn") -> None:
+        """Оповещение уходит в фоне: если Telegram тормозит или недоступен, остальной Jarvis не ждёт."""
         icon = {"error": "🔴", "warn": "🟠", "info": "🔵", "ok": "🟢"}.get(level, "🔵")
-        await self.send(f"{icon} {text}")
+        task = asyncio.create_task(self._deliver(f"{icon} {text}"))
+        self._sending.add(task)
+        task.add_done_callback(self._sending.discard)
+
+    async def _deliver(self, text: str) -> None:
+        try:
+            await self.send(text)
+        except Exception as e:  # noqa: BLE001
+            log.warning("оповещение в Telegram не отправлено: %s", describe(e))
 
     async def handle_update(self, upd: dict) -> None:
         msg = upd.get("message") or upd.get("edited_message")
@@ -93,10 +123,14 @@ class Telegram:
 
     async def poll(self) -> None:
         log.info("Telegram: жду сообщений от владельца %s", self.owner)
+        delay, last_reason = self.retry, None
         while True:
             try:
-                updates = await self.call("getUpdates", offset=self.offset, timeout=50,
-                                          allowed_updates=["message", "edited_message"])
+                updates = await self.call("getUpdates", wait=self.poll_timeout + 20, offset=self.offset,
+                                          timeout=self.poll_timeout, allowed_updates=["message", "edited_message"])
+                if self.down_since is not None:
+                    log.info("Telegram снова доступен (не было связи %d с)", time.monotonic() - self.down_since)
+                    self.down_since, delay, last_reason = None, self.retry, None
                 for upd in updates:
                     self.offset = upd["update_id"] + 1
                     try:
@@ -105,6 +139,14 @@ class Telegram:
                         log.exception("ошибка обработки сообщения Telegram")
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001 — сеть пропала: ждём и пробуем снова
-                log.warning("Telegram недоступен: %s", e)
-                await asyncio.sleep(10)
+            except Exception as e:  # noqa: BLE001 — сеть пропала: ждём и пробуем снова, всё реже
+                reason = describe(e)
+                if self.down_since is None:
+                    self.down_since = time.monotonic()
+                if reason != last_reason:   # одна и та же причина — в журнал один раз, а не каждую минуту
+                    log.warning("Telegram недоступен: %s. Повторяю всё реже (до раза в %d мин). Если так постоянно — "
+                                "оповещения можно получать через GitHub Actions: docs/hosting.md, раздел 6.",
+                                reason, self.max_retry // 60)
+                    last_reason = reason
+                await asyncio.sleep(delay)
+                delay = min(self.max_retry, delay * 2)

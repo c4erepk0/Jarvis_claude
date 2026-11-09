@@ -83,7 +83,34 @@ nano /opt/jarvis/.env && systemctl restart jarvis   # поменять наст�
 - Если Let's Encrypt не выдаёт сертификат на `sslip.io` (такое бывает при большой нагрузке на общий домен) —
   подключите бесплатный поддомен DuckDNS или свой домен (раздел 4).
 
-## 6. После переезда на сервер
+## 6. Если Telegram недоступен с сервера
+
+Признак — в журнале (`bash /opt/jarvis/scripts/vps.sh status`) строка «Telegram недоступен: нет ответа (таймаут)»,
+а в проверке установщика — «✗ Telegram». Проверить вручную:
+```bash
+curl -sS -m 15 -o /dev/null -w "Telegram: HTTP %{http_code} за %{time_total} с\n" https://api.telegram.org || echo "Telegram: нет связи"
+```
+Jarvis при этом работает: дашборд, голос и память не зависят от Telegram, оповещения не тормозят остальное,
+а попытки переподключиться идут всё реже (до раза в 5 минут) и не засоряют журнал.
+
+Оповещения тогда можно получать через **GitHub Actions** — серверы GitHub достают до Telegram:
+раз в 15 минут они проверяют память (`jarvis-vault`) и присылают напоминания, утренний брифинг и упавшие
+сборки проектов. Команды из Telegram (`/tasks`, `/money`…) в этом режиме не работают — только оповещения.
+
+1. GitHub → репозиторий `Jarvis_claude` → Settings → Secrets and variables → Actions:
+   - вкладка **Variables** → `VAULT_REPO` = `c4erepk0/jarvis-vault`;
+   - вкладка **Secrets** → `VAULT_TOKEN` (токен GitHub с правом Contents: read/write на `jarvis-vault`),
+     `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID`.
+2. На сервере выключите Telegram, чтобы он не пытался зря (и не было дублей, если связь появится):
+   ```bash
+   sed -i 's/^TELEGRAM_BOT_TOKEN=.*/TELEGRAM_BOT_TOKEN=/' /opt/jarvis/.env && systemctl restart jarvis
+   ```
+3. Проверка: Actions → «Jarvis — оповещения» → Run workflow. Подробно — `docs/iphone.md`, раздел 4.
+
+Минуты Actions: у приватного репозитория на бесплатном тарифе — 2000 минут в месяц; запуск раз в 15 минут
+укладывается примерно в 1500. Если не хватает — сделайте реже (строка `cron` в `.github/workflows/jarvis-cron.yml`).
+
+## 7. После переезда на сервер
 
 Остановите Jarvis в терминале на iPhone (Ctrl+C): иначе два Jarvis будут присылать одинаковые
 оповещения в Telegram. Память у них общая (`jarvis-vault`), поэтому ничего не потеряется.
