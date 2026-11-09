@@ -2,16 +2,23 @@
 // Открытая заметка подсвечивается вместе со связями, граф поворачивается к ней (focus), вид сдвигается,
 // чтобы узел не прятался под панелью заметки (setInset).
 // Управление мышью/пальцами или жестами рук перед камерой (MediaPipe Hand Landmarker):
-//   щипок (большой + указательный) и движение — вращение; щипок двумя руками — масштаб;
-//   указательный палец — курсор, задержка на узле 1 с — открыть заметку; раскрытая ладонь 1 с — сброс вида.
+//   щипок (большой + указательный) и движение — вращение, над заметкой — прокрутка текста; щипок двумя руками — масштаб;
+//   указательный палец — курсор: задержка 1 с на узле — открыть заметку, на кнопке, галочке задачи или [[ссылке]]
+//   в заметке — нажать; раскрытая ладонь 1 с — сброс вида; взмах ладонью — повернуть граф (или листать заметки).
+//   Позы ✊ ✌ 👍 голограмма передаёт наружу (gestureAction): что они сделают, решает панель заметки.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, classify } from "./gestures.js?v=7";
+import { BONES, GESTURE_ICON, GestureTracker, classify } from "./gestures.js?v=8";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const HAND_MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const EDGE = [0x3e / 255, 0xe8 / 255, 0xff / 255];   // цвет нитей-связей
 const PALETTE = [0x3ee8ff, 0x5dffb0, 0xffb347, 0xb48cff, 0xff6b9a, 0x7fd4ff, 0xe6ff6b, 0xff8f5a];
+const DWELL_MS = 1000;                // задержка пальца, чтобы открыть узел или нажать кнопку
+// что можно «нажать» пальцем в воздухе: кнопки, галочки задач и [[ссылки]] заметки, кнопки с data-air
+const AIR_TARGETS = ".np button:not([disabled]), .np a.md-link, .np li.md-task, [data-air]:not([disabled])";
+const OVER_UI = ".np, .gt, .holo-ui";  // над панелями палец не выбирает узлы графа за ними
+const SCROLLABLE = ".np-body, .np-editor, .np-conflict";
 
 function glowSprite() {
   const c = document.createElement("canvas");
@@ -61,10 +68,13 @@ function layout(nodes, links, prev = new Map()) {
 }
 
 export class Hologram {
-  constructor(root, { onOpen, onStatus }) {
+  /** onOpen(id) — открыть заметку; onStatus(text); gestureAction(name) → { label, run } | null — действие жеста
+   *  с открытой заметкой (name: fist | thumb | victory | palm | swipe-left | swipe-right). */
+  constructor(root, { onOpen, onStatus, gestureAction }) {
     this.root = root;
     this.onOpen = onOpen;
     this.onStatus = onStatus || (() => {});
+    this.gestureAction = gestureAction || (() => null);
     this.label = root.querySelector("#holo-label");
     this.tags = document.createElement("div");
     this.tags.className = "holo-tags";
@@ -73,8 +83,12 @@ export class Hologram {
     this.cursor = document.createElement("div");
     this.cursor.className = "holo-cursor hidden";
     root.append(this.cursor);
+    this.badge = document.createElement("div");   // какой жест держится и что он сделает
+    this.badge.className = "holo-gesture hidden";
+    this.badge.setAttribute("aria-live", "polite");
+    root.append(this.badge);
     this.gestureListeners = new Set();   // обучение жестам слушает, что распознано
-    this.suppressOpen = false;           // во время обучения выбор узла не открывает заметку
+    this.suppressOpen = false;           // во время обучения жесты не открывают, не правят и не закрывают заметки
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.domElement.className = "three";
@@ -323,8 +337,9 @@ export class Hologram {
     this.overlay = overlay;
     overlay.width = 320; overlay.height = 240;
     video.classList.remove("hidden"); overlay.classList.remove("hidden");
-    this.hands = { last: -1, pinch: null, pinch2: null, palmSince: 0, dwell: null };
-    this.onStatus("жесты включены: щипок — вращать, две руки — масштаб, палец — выбрать, ладонь — сброс");
+    this.hands = { last: -1, pinch: null, pinch2: null, dwell: null, lock: null, badgeAt: 0 };
+    this.tracker = new GestureTracker();
+    this.onStatus("жесты включены: ☝ палец 1 с — открыть или нажать, 🤏 — вращать, ✋ — сброс, ✌ — править, 👍 — сохранить, ✊ — закрыть");
   }
 
   emitGesture(evt) { this.gestureListeners.forEach((fn) => fn(evt)); }
@@ -333,8 +348,21 @@ export class Hologram {
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
     this.stream = null; this.hands = null;
     this.cursor.classList.add("hidden");
+    this.badge.classList.add("hidden");
     if (this.video) this.video.classList.add("hidden");
     if (this.overlay) this.overlay.classList.add("hidden");
+  }
+
+  /** Что сделает жест прямо сейчас: сначала спрашиваем панель заметки, иначе — действия самой голограммы. */
+  action(name) {
+    const ext = this.suppressOpen ? null : this.gestureAction(name);
+    if (ext) return ext;
+    switch (name) {
+      case "palm": return { label: "сброс вида", run: () => { this.reset(); this.emitGesture({ type: "reset" }); } };
+      case "swipe-left": return { label: "повернуть граф", run: () => this.rotate(-0.9, 0) };
+      case "swipe-right": return { label: "повернуть граф", run: () => this.rotate(0.9, 0) };
+      default: return null;
+    }
   }
 
   trackHands(ts) {
@@ -346,7 +374,12 @@ export class Hologram {
     this.drawHands(hands);
     const g = classify(hands);
     this.emitGesture({ type: "frame", kind: g.kind, hands: g.hands });
-    if (g.kind !== "point") this.cursor.classList.add("hidden");
+    for (const e of this.tracker.update(g, ts)) this.onTracked(e, ts);
+    if (ts - h.badgeAt > 300 && !this.badge.classList.contains("done")) this.badge.classList.add("hidden");
+    if (g.kind !== "point" && g.kind !== "pinch") this.cursor.classList.add("hidden");
+    if (g.kind !== "point" && g.kind !== "hand") h.dwell = null;   // «рука» на кадр — палец просто дрогнул
+    // руку перестроили (не просто потеряли на кадр) — то же место можно нажать снова
+    if (!["point", "hand", "none"].includes(g.kind)) h.lock = null;
 
     if (g.kind === "pinch2") {
       if (h.pinch2 !== null) {
@@ -358,44 +391,101 @@ export class Hologram {
       return;
     }
     h.pinch2 = null;
-    if (g.kind === "none") { h.pinch = null; h.palmSince = 0; h.dwell = null; return; }
-    if (g.kind === "pinch") {
-      if (h.pinch) {
-        const dy = (g.x - h.pinch.x) * 6, dx = (g.y - h.pinch.y) * 4;
-        this.rotate(dy, dx);
-        this.emitGesture({ type: "rotate", amount: Math.abs(dy) + Math.abs(dx) });
-      }
-      h.pinch = { x: g.x, y: g.y }; h.dwell = null;
-      return;
-    }
+    if (g.kind === "pinch") { this.pinchMove(g); return; }
     h.pinch = null;
-    if (g.kind === "palm") {
-      h.palmSince = h.palmSince || ts;
-      if (ts - h.palmSince > 1000) { this.reset(); h.palmSince = ts + 1500; this.emitGesture({ type: "reset" }); }
+    if (g.kind === "point") this.pointAt(g, ts);
+  }
+
+  /** Удержание позы и взмахи от GestureTracker. */
+  onTracked(e, ts) {
+    this.emitGesture(e);
+    if (e.type === "hold") {
+      const a = e.progress >= 0.15 ? this.action(e.kind) : null;   // мимолётные позы не мельтешат
+      if (a) this.showBadge(e.kind, a.label, e.progress, ts);
       return;
     }
-    h.palmSince = 0;
-    if (g.kind === "point") {
-      const x = g.x * innerWidth, y = g.y * innerHeight;
-      this.setMouse(x, y);
-      const n = this.hovered();
-      let progress = 0;
-      if (n) {
-        if (!h.dwell || h.dwell.id !== n.id) h.dwell = { id: n.id, since: ts };
-        progress = Math.max(0, Math.min(1, (ts - h.dwell.since) / 1000));
-        if (ts - h.dwell.since > 1000) {
-          if (!this.suppressOpen) this.onOpen(n.id);
-          this.emitGesture({ type: "select", id: n.id });
-          h.dwell = { id: n.id, since: ts + 3000 };
-          progress = 1;
-        }
-        this.emitGesture({ type: "dwell", progress, id: n.id });
-      } else h.dwell = null;
-      this.cursor.style.transform = `translate(${x}px, ${y}px)`;
-      this.cursor.style.setProperty("--p", String(progress));
-      this.cursor.classList.toggle("on", Boolean(n));
-      this.cursor.classList.remove("hidden");
+    const name = e.type === "swipe" ? `swipe-${e.dir}` : e.kind;
+    const a = this.action(name);
+    if (!a) return;
+    a.run();
+    this.showBadge(name, a.label, 1, ts, true);
+    this.emitGesture({ type: "command", gesture: name, label: a.label });
+  }
+
+  showBadge(name, label, progress, ts, done = false) {
+    const b = this.badge;
+    const arrow = name === "swipe-left" ? " ←" : name === "swipe-right" ? " →" : "";
+    b.innerHTML = `<b>${GESTURE_ICON[name] || "•"}${arrow}</b><span>${done ? "✓ " : ""}${label}</span><i></i>`;
+    b.style.setProperty("--p", String(progress));
+    b.classList.remove("hidden");
+    b.classList.toggle("done", done);
+    if (this.hands) this.hands.badgeAt = ts;
+    clearTimeout(this.badgeTimer);
+    if (done) this.badgeTimer = setTimeout(() => b.classList.remove("done"), 900);
+  }
+
+  /** Щипок: над текстом заметки — прокрутка («взял и потянул»), в остальном месте — вращение графа. */
+  pinchMove(g) {
+    const h = this.hands;
+    const x = g.x * innerWidth, y = g.y * innerHeight;
+    if (!h.pinch) {
+      const el = document.elementFromPoint(x, y);
+      h.pinch = { x: g.x, y: g.y, scroll: el?.closest(SCROLLABLE) || null };
+    } else if (h.pinch.scroll) {
+      const amount = (h.pinch.y - g.y) * innerHeight * 1.6;
+      h.pinch.scroll.scrollTop += amount;
+      this.emitGesture({ type: "scroll", amount });
+    } else {
+      const dy = (g.x - h.pinch.x) * 6, dx = (g.y - h.pinch.y) * 4;
+      this.rotate(dy, dx);
+      this.emitGesture({ type: "rotate", amount: Math.abs(dy) + Math.abs(dx) });
     }
+    h.pinch.x = g.x; h.pinch.y = g.y;
+    h.dwell = null;
+    this.cursor.style.transform = `translate(${x}px, ${y}px)`;
+    this.cursor.style.setProperty("--p", "0");
+    this.cursor.classList.add("grab");
+    this.cursor.classList.remove("hidden", "on");
+  }
+
+  /** Указка: курсор; задержка на узле — открыть заметку, на кнопке/галочке/ссылке — нажать. */
+  pointAt(g, ts) {
+    const h = this.hands;
+    const x = g.x * innerWidth, y = g.y * innerHeight;
+    const el = document.elementFromPoint(x, y);
+    let target = null, node = null;
+    if (el?.closest(OVER_UI)) {
+      this.mouse.set(-9, -9); this.hoverAt = null;
+      target = el.closest(AIR_TARGETS);
+      if (target && this.suppressOpen && !target.closest(".gt")) target = null;   // в обучении — только его кнопки
+    } else {
+      this.setMouse(x, y);
+      node = this.hovered();
+    }
+    // после нажатия ждём, пока палец уйдёт: иначе на месте нажатой кнопки сработает следующая
+    if (h.lock && Math.hypot(x - h.lock.x, y - h.lock.y) > 48) h.lock = null;
+    const id = target || node?.id || null;
+    let progress = 0;
+    if (id && !h.lock) {
+      if (!h.dwell || h.dwell.id !== id) h.dwell = { id, since: ts };
+      progress = Math.max(0, Math.min(1, (ts - h.dwell.since) / DWELL_MS));
+      if (progress >= 1) {
+        h.dwell = null;
+        h.lock = { x, y };
+        if (target) {
+          this.emitGesture({ type: "press", label: target.textContent.trim().slice(0, 40) });
+          target.click();
+        } else {
+          if (!this.suppressOpen) this.onOpen(node.id);
+          this.emitGesture({ type: "select", id: node.id });
+        }
+      }
+      this.emitGesture({ type: "dwell", progress, id: node?.id || null, press: Boolean(target) });
+    } else h.dwell = null;
+    this.cursor.style.transform = `translate(${x}px, ${y}px)`;
+    this.cursor.style.setProperty("--p", String(progress));
+    this.cursor.classList.toggle("on", Boolean(id) && !h.lock);
+    this.cursor.classList.remove("hidden", "grab");
   }
 
   drawHands(hands) {

@@ -1,7 +1,9 @@
 // Панель заметки внутри голограммы: просмотр (markdown Obsidian), правка, новая заметка, переходы по [[ссылкам]].
 // Сохранение — с версией, с которой начали править: если заметку тем временем изменили в Obsidian,
 // сервер (или ядро на iPhone) вернёт 409 и панель предложит выбрать версию — ничего не затирается молча.
-import { esc, renderMarkdown, toggleTask } from "./markdown.js?v=7";
+// Жестами (через голограмму): ✊ закрыть, ✌ править / диктовать строку, 👍 сохранить, взмах — назад/вперёд.
+import { esc, renderMarkdown, toggleTask } from "./markdown.js?v=8";
+import { Trail, insertDictation, noteAction } from "./note-gestures.js?v=8";
 
 const folderOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 const titleOf = (path) => path.split("/").pop().replace(/\.[^.]+$/, "");
@@ -10,12 +12,16 @@ export class NotePanel {
   /**
    * root — #holo; api(path, opts) — запросы как в app.js; toast(text, level);
    * resolve(name) — путь заметки по названию из [[ссылки]] (или null); today() — ГГГГ-ММ-ДД;
-   * onShow(path) / onClose() — голограмма подсвечивает узел и сдвигает вид; onCreated(path) — новая заметка.
+   * onShow(path) / onClose() — голограмма подсвечивает узел и сдвигает вид; onCreated(path) — новая заметка;
+   * dictate() — фраза с микрофона текстом (null — браузер не распознаёт речь).
    */
-  constructor(root, { api, toast, resolve, today, onShow = () => {}, onClose = () => {}, onCreated = () => {} }) {
-    Object.assign(this, { root, api, toast, resolve, today, onShow, onClose, onCreated });
+  constructor(root, { api, toast, resolve, today, onShow = () => {}, onClose = () => {}, onCreated = () => {}, dictate = null }) {
+    Object.assign(this, { root, api, toast, resolve, today, onShow, onClose, onCreated, dictateFn: dictate });
     this.note = null;
     this.mode = "view";            // view | edit | conflict | create
+    this.trail = new Trail();      // открытые заметки — взмахом ладони назад/вперёд
+    this.armedUntil = 0;           // ✊ при несохранённых правках: до этого момента второй ✊ выбросит их
+    this.listening = false;        // идёт диктовка
     this.el = document.createElement("aside");
     this.el.className = "np panel hidden";
     this.el.setAttribute("aria-label", "Заметка");
@@ -35,14 +41,18 @@ export class NotePanel {
 
   confirmLeave() { return !this.dirty || confirm("Есть несохранённые правки. Закрыть без сохранения?"); }
 
-  async open(path, { edit = false } = {}) {
+  /** nav — переход по истории (взмах): саму историю не меняет. */
+  async open(path, { edit = false, nav = false } = {}) {
     if (this.note && this.note.path !== path && !this.confirmLeave()) return false;
     try {
       this.note = await this.api(`/api/note?path=${encodeURIComponent(path)}`);
     } catch (e) {
       this.toast(`Не открыть заметку: ${e.message}`, "error");
+      if (nav) this.trail.drop(path);
       return false;
     }
+    if (!nav) this.trail.visit(this.note.path);
+    this.armedUntil = 0;
     this.el.classList.remove("hidden");
     this.root.classList.add("reading");
     this.render(edit && this.note.editable ? "edit" : "view");
@@ -66,6 +76,8 @@ export class NotePanel {
     this.root.classList.remove("reading");
     this.note = null;
     this.mode = "view";
+    this.trail.clear();
+    this.armedUntil = 0;
     this.onClose();
     return true;
   }
@@ -120,7 +132,7 @@ export class NotePanel {
       ed.value = this.draft ?? n.content;
       this.draft = null;
       ed.addEventListener("input", () => {
-        this.el.querySelector(".np-status").textContent = this.dirty ? "● есть несохранённые правки" : "⌘S / Ctrl+S — сохранить";
+        if (!this.listening) this.status(this.dirty ? "● есть несохранённые правки" : "⌘S / Ctrl+S — сохранить");
       });
       ed.focus({ preventScroll: true });
       return;
@@ -165,13 +177,98 @@ export class NotePanel {
       case "save": this.save(); break;
       case "new": this.startCreate(); break;
       case "back": this.note ? this.render("view") : this.close(true); break;
-      case "back-edit": this.render("edit"); break;
+      case "back-edit": this.draft = this.pending; this.render("edit"); break;   // правки — те, что не сохранились
       case "mine": this.save({ base: this.conflict ? this.conflict.version : null, overwrite: true }); break;
       case "theirs": this.takeTheirs(); break;
       case "ins-task": this.newLine(ed, "- [ ] "); break;
       case "ins-link": this.insert(ed, "[[", "]]"); break;
       case "ins-head": this.insert(ed, "## ", "", true); break;
       default: break;
+    }
+  }
+
+  status(text) {
+    const el = this.el.querySelector(".np-status");
+    if (el) el.textContent = text;
+  }
+
+  // ---------- жесты (голограмма спрашивает, что сделает жест, и показывает это до срабатывания) ----------
+  /** { label, run } для жеста или null — тогда жест обработает сама голограмма (поворот, сброс вида). */
+  gestureAction(gesture) {
+    if (!this.isOpen) return null;
+    const a = noteAction(gesture, {
+      mode: this.mode, dirty: this.dirty, editable: Boolean(this.note?.editable), armed: Date.now() < this.armedUntil,
+      back: Boolean(this.trail.back), forward: Boolean(this.trail.forward), dictation: Boolean(this.dictateFn),
+    });
+    return a && { label: a.label, run: () => this.runGesture(a.act) };
+  }
+
+  runGesture(act) {
+    switch (act) {
+      case "close": this.close(); break;
+      case "edit": this.render("edit"); break;
+      case "back": this.go(-1); break;
+      case "forward": this.go(1); break;
+      case "save": this.armedUntil = 0; this.save(); break;
+      case "arm":
+        this.armedUntil = Date.now() + 6000;
+        this.status("● есть несохранённые правки: 👍 — сохранить, ✊ ещё раз — выбросить");
+        this.toast("Есть несохранённые правки: 👍 — сохранить, ✊ ещё раз — выбросить", "warn");
+        break;
+      case "cancel": this.armedUntil = 0; this.render("view"); break;   // без confirm(): он бы остановил камеру
+      case "dictate": this.dictate(); break;
+      case "submit": this.el.querySelector("form[data-form=create]")?.requestSubmit(); break;
+      case "dictate-name": this.dictateName(); break;
+      case "leave": if (this.note) this.render("view"); else this.close(true); break;
+      case "back-edit": this.draft = this.pending; this.render("edit"); break;
+      default: break;
+    }
+  }
+
+  /** Взмах ладонью: предыдущая (-1) или следующая (+1) из открытых заметок. */
+  async go(step) {
+    const path = step < 0 ? this.trail.back : this.trail.forward;
+    if (path && await this.open(path, { nav: true })) this.trail.move(step);
+  }
+
+  /** ✌ в правке: продиктовать строку — она встанет после строки с курсором («задача …» → «- [ ] …»). */
+  async dictate() {
+    const ed = this.editor;
+    if (!ed || this.listening || !this.dictateFn) return;
+    this.listening = true;
+    this.status("🎙 говорите — запишу строку («задача …», «пункт …», «заголовок …»)");
+    try {
+      const text = await this.dictateFn();
+      if (!ed.isConnected) { this.toast(`Правка закрыта, не вставил: «${text}»`, "warn"); return; }
+      const r = insertDictation(ed.value, ed.selectionEnd, text);
+      if (!r) { this.status("не расслышал — ✌ ещё раз"); return; }
+      ed.value = r.value;
+      ed.setSelectionRange(r.cursor, r.cursor);
+      ed.focus({ preventScroll: false });
+      this.listening = false;
+      ed.dispatchEvent(new Event("input"));
+    } catch (e) {
+      this.toast(`Диктовка не удалась: ${e.message}`, "error");
+    } finally {
+      this.listening = false;
+    }
+  }
+
+  /** ✌ при создании: продиктовать название новой заметки (папка, если уже введена, сохраняется). */
+  async dictateName() {
+    const input = this.el.querySelector("#np-new");
+    if (!input || this.listening || !this.dictateFn) return;
+    this.listening = true;
+    try {
+      const text = String(await this.dictateFn()).trim().replace(/[.!?]+$/, "");
+      if (text && input.isConnected) {
+        const folder = input.value.includes("/") ? input.value.slice(0, input.value.lastIndexOf("/") + 1) : "";
+        input.value = folder + text.charAt(0).toUpperCase() + text.slice(1);
+      }
+    } catch (e) {
+      this.toast(`Диктовка не удалась: ${e.message}`, "error");
+    } finally {
+      this.listening = false;
     }
   }
 

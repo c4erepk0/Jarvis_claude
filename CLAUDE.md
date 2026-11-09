@@ -32,9 +32,15 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `static/markdown.js` (сначала экранирование, тест — `tests/js/markdown.test.mjs`). Сохранение — с версией
   (`content_version` / `contentVersion`, одинаковые в Python и JS): PUT /api/note с `base`, при чужой правке — 409.
   Голограмма: `highlight`, `focus`, `setInset`; событие `open_note` открывает заметку на всех дашбордах.
-- `static/gestures.js` — распознавание жестов по точкам руки MediaPipe и эталонные позы; `static/gesture-coach.js` —
-  шаги обучения жестам (без DOM, тест — `tests/js/gestures.test.mjs`); `static/gesture-tutorial.js` — окно обучения.
-  Голограмма сообщает распознанное через `holo.gestureListeners` (`frame`, `rotate`, `zoom`, `reset`, `dwell`, `select`).
+- `static/gestures.js` — распознавание жестов по точкам руки MediaPipe (указка, щипок, ладонь, ✌, 👍, ✊), эталонные
+  позы и `GestureTracker` (удержание позы, взмах ладонью); `static/gesture-coach.js` — шаги обучения жестам
+  (без DOM, тест — `tests/js/gestures.test.mjs`; `TRAINING_VERSION` — обученным раньше показываются только новые шаги);
+  `static/gesture-tutorial.js` — окно обучения. `static/note-gestures.js` — что делает жест с заметкой в каждом режиме
+  панели (`noteAction`), история для взмаха (`Trail`), диктовка строки (`insertDictation`); без DOM, тест — там же.
+  Голограмма сообщает распознанное через `holo.gestureListeners` (`frame`, `rotate`, `zoom`, `reset`, `dwell`, `select`,
+  `press`, `hold`, `pose`, `swipe`, `scroll`, `command`), а действие жеста спрашивает у панели (`gestureAction`).
+  Палец «нажимает» элементы `AIR_TARGETS` в `hologram.js` (кнопки, задачи и ссылки заметки, всё с `data-air`).
+  В жестах нет `confirm()`: он останавливает камеру — опасное подтверждается повтором жеста.
 - `jarvis/webapp/static/core/*.js` — **ядро для режима «только iPhone»**: порт Python-ядра (ru, vault,
   tasks, finance, memory, intents, brain, projects, protocols, jarvis). Отвечает на те же `/api/…`, что сервер.
   Память — `GitHubStore` (приватный репозиторий с хранилищем, кэш блобов по sha), Claude — официальный

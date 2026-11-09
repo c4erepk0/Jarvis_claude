@@ -1,7 +1,12 @@
 // Логика первоначального обучения жестам (без DOM — проверяется в node --test).
 // Голограмма присылает события: { type: "frame", kind } на каждый кадр камеры, { type: "rotate", amount },
-// { type: "zoom", amount }, { type: "reset" }, { type: "dwell", progress }, { type: "select", id }.
-// Шаг засчитывается только когда жест действительно распознан камерой.
+// { type: "zoom", amount }, { type: "reset" }, { type: "dwell", progress, press }, { type: "select", id },
+// { type: "press" } (палец нажал кнопку), { type: "hold", kind, progress } и { type: "pose", kind } (удержание
+// ✊ ✌ 👍 ✋), { type: "swipe", dir }. Шаг засчитывается только когда жест действительно распознан камерой.
+
+/** Версия обучения: кто прошёл прежнюю (без жестов для заметок), тому показываем только новые шаги. */
+export const TRAINING_VERSION = 2;
+export const NEW_STEPS_FROM = "press";
 
 export const STEPS = [
   {
@@ -11,7 +16,7 @@ export const STEPS = [
     speech: "Начнём калибровку жестов, сэр. Поставьте телефон на опору и отойдите на полметра.",
   },
   {
-    id: "hand", goal: "hold", kinds: ["hand", "point", "pinch", "pinch2", "palm"], ms: 800, pose: "palm",
+    id: "hand", goal: "hold", kinds: ["hand", "point", "pinch", "pinch2", "palm", "victory", "thumb", "fist"], ms: 800, pose: "palm",
     title: "Покажите руку", text: "Поднимите руку перед камерой, чтобы она целиком была в кадре.",
     speech: "Покажите мне руку, сэр.", praise: "Вижу вас.",
   },
@@ -39,25 +44,59 @@ export const STEPS = [
     speech: "Раскройте ладонь и задержите на секунду.", praise: "Вид сброшен.",
   },
   {
-    id: "select", goal: "event", event: "select", progressEvent: "dwell", pose: "point", anim: "target", needsNodes: true,
-    title: "Открыть заметку",
+    id: "select", goal: "event", event: "select", progressEvent: "dwell", press: false, pose: "point", anim: "target",
+    needsNodes: true, title: "Открыть заметку",
     text: "Наведите палец на светящийся узел и задержите, пока кольцо курсора не замкнётся. После обучения так открываются заметки.",
     speech: "Наведите палец на любую заметку и задержите.", praise: "Цель захвачена.",
   },
   {
+    id: "press", goal: "event", event: "press", progressEvent: "dwell", press: true, pose: "point", anim: "press",
+    title: "Палец на кнопке — нажать",
+    text: "Наведите палец на кнопку «НАЖМИ МЕНЯ» ниже и задержите на секунду. Так же в заметке нажимаются кнопки, "
+      + "отмечаются галочки задач и открываются [[ссылки]]. А щипок над текстом заметки листает его.",
+    speech: "Наведите палец на кнопку внизу и задержите. Так нажимаются кнопки в заметке.", praise: "Нажато.",
+  },
+  {
+    id: "victory", goal: "pose", kind: "victory", pose: "victory", anim: "pulse", title: "Два пальца — править",
+    text: "Покажите два пальца (✌) и задержите: открытая заметка перейдёт в правку. В правке ✌ — продиктовать строку "
+      + "голосом: «задача купить молоко» станет задачей.",
+    speech: "Покажите два пальца — так заметка открывается для правки.", praise: "Есть.",
+  },
+  {
+    id: "thumb", goal: "pose", kind: "thumb", pose: "thumb", anim: "pulse", title: "Большой палец — сохранить",
+    text: "Большой палец вверх (👍), остальные сжаты, — задержите. Правка сохранится, новая заметка — создастся.",
+    speech: "Большой палец вверх — и я сохраню правку.", praise: "Принято.",
+  },
+  {
+    id: "fist", goal: "pose", kind: "fist", pose: "fist", anim: "pulse", title: "Кулак — закрыть",
+    text: "Сожмите кулак (✊) и задержите — заметка закроется, правка — отменится. Если есть несохранённые правки, "
+      + "Jarvis переспросит: ✊ ещё раз — выбросить, 👍 — сохранить.",
+    speech: "Сожмите кулак — заметка закроется.", praise: "Закрыто.",
+  },
+  {
+    id: "swipe", goal: "event", event: "swipe", pose: "palm", anim: "swipe", title: "Взмах ладонью — листать",
+    text: "Раскрытой ладонью быстро проведите вбок. С открытой заметкой: вправо — предыдущая, влево — следующая. "
+      + "Без заметки взмах поворачивает граф.",
+    speech: "Взмахните ладонью в сторону.", praise: "Отлично.",
+  },
+  {
     id: "done", manual: true, pose: "done", title: "Готово, сэр",
-    text: "☝ указка — курсор\n🤏 щипок и движение — вращать\n🤏🤏 две руки — масштаб\n✋ ладонь 1 с — сброс вида\n"
-      + "◎ палец на узле 1 с — открыть заметку\nПовторить обучение — кнопка «?» вверху.",
+    text: "☝ указка — курсор; палец 1 с на узле — открыть заметку, на кнопке или задаче — нажать\n"
+      + "🤏 щипок и движение — вращать, над заметкой — листать\n🤏🤏 две руки — масштаб\n✋ ладонь 1 с — сброс вида\n"
+      + "👋 взмах — предыдущая / следующая заметка\n✌ — править, в правке — диктовать\n👍 — сохранить\n✊ — закрыть\n"
+      + "Повторить обучение — кнопка «?» вверху.",
     speech: "Калибровка завершена. Жесты в вашем распоряжении, сэр.",
   },
 ];
 
 export class GestureCoach {
-  constructor(steps = STEPS, { graceMs = 300, hasNodes = true } = {}) {
+  /** start — id шага, с которого начать (только новые жесты: NEW_STEPS_FROM). */
+  constructor(steps = STEPS, { graceMs = 300, hasNodes = true, start = null } = {}) {
     this.steps = steps;
     this.graceMs = graceMs;   // MediaPipe иногда теряет руку на кадр-другой — не сбрасываем удержание
     this.hasNodes = hasNodes;
-    this.i = 0;
+    this.first = Math.max(0, start ? steps.findIndex((s) => s.id === start) : 0);
+    this.i = this.first;
     this.lastKind = "none";
     this.lastHandAt = null;
     this.startedAt = null;
@@ -69,7 +108,7 @@ export class GestureCoach {
   get index() { return this.i; }
   /** Номер шага среди действий (без вступления и итога) и их число — для «ШАГ 2/6». */
   get counter() {
-    const acts = this.steps.filter((s) => !s.manual);
+    const acts = this.steps.slice(this.first).filter((s) => !s.manual);
     return { n: acts.indexOf(this.step) + 1, total: acts.length };
   }
   get finished() { return this.i >= this.steps.length - 1 && this.step.manual; }
@@ -122,10 +161,15 @@ export class GestureCoach {
       } else if (s.holdKind && evt.type === "frame") {
         this.progress = Math.min(0.95, this.hold(evt.kind === s.holdKind, now, s.ms));
       } else if (s.progressEvent && evt.type === s.progressEvent) {
-        this.progress = Math.min(0.95, evt.progress || 0);
+        // кольцо на узле и кольцо на кнопке — разные цели: учитываем только своё
+        if (s.press === undefined || Boolean(evt.press) === s.press) this.progress = Math.min(0.95, evt.progress || 0);
       } else if (s.progressEvent && evt.type === "frame" && evt.kind !== "point") {
         this.progress = 0;
       }
+    } else if (s.goal === "pose") {
+      if (evt.type === "pose" && evt.kind === s.kind) this.progress = 1;
+      else if (evt.type === "hold" && evt.kind === s.kind) this.progress = Math.min(0.95, evt.progress || 0);
+      else if (evt.type === "frame" && evt.kind !== s.kind && evt.kind !== "none") this.progress = 0;
     }
     if (this.progress >= 1) {
       this.complete = true;

@@ -1,7 +1,7 @@
 // Окно первоначального обучения жестам поверх голограммы. Логика шагов — gesture-coach.js,
 // схемы рук рисуются из тех же эталонных поз, по которым проверяется распознавание (gestures.js).
-import { GestureCoach, STEPS } from "./gesture-coach.js?v=7";
-import { BONES, KIND_LABEL, POSES } from "./gestures.js?v=7";
+import { GestureCoach, STEPS } from "./gesture-coach.js?v=8";
+import { BONES, KIND_LABEL, POSES } from "./gestures.js?v=8";
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -22,8 +22,12 @@ function picture(step) {
         <text x="44" y="44" class="gt-txt">40–60 см</text>${hand("palm", { x: 50, y: 6 })}`, "0 0 150 100");
     case "pinch2":
       return svg(`<g class="gt-l">${hand("pinch", { flip: true, x: -6 })}</g><g class="gt-r">${hand("pinch", { x: 56 })}</g>`, "0 0 150 100");
-    case "point":
-      return svg(`${hand("point")}${step.anim === "target" ? '<circle class="gt-node" cx="34" cy="16" r="4"/><circle class="gt-ring" cx="34" cy="16" r="9"/>' : ""}`);
+    case "point": {
+      const extra = step.anim === "target" ? '<circle class="gt-node" cx="34" cy="16" r="4"/><circle class="gt-ring" cx="34" cy="16" r="9"/>'
+        : step.anim === "press" ? '<rect class="gt-key" x="18" y="9" width="32" height="12" rx="2"/><circle class="gt-ring" cx="34" cy="15" r="9"/>'
+          : "";
+      return svg(`${hand("point")}${extra}`);
+    }
     case "done":
       return svg('<circle class="gt-ok" cx="50" cy="50" r="30"/><path class="gt-check" d="M36 51 L46 61 L65 40"/>');
     default:
@@ -51,8 +55,9 @@ export class GestureTutorial {
 
   get active() { return !this.el.classList.contains("hidden"); }
 
-  open() {
-    this.coach = new GestureCoach(STEPS, { hasNodes: Boolean(this.holo.nodes?.length) });
+  /** from — id шага, с которого начать (только новые жесты, камера уже включена). */
+  open({ from = null } = {}) {
+    this.coach = new GestureCoach(STEPS, { hasNodes: Boolean(this.holo.nodes?.length), start: from });
     this.el.classList.remove("hidden");
     this.root.classList.add("training");
     this.holo.suppressOpen = true;
@@ -105,6 +110,8 @@ export class GestureTutorial {
   }
 
   skip() { this.advance(); }
+  /** Кнопка шага «нажми пальцем»: нажали пальцем в воздухе (голограмма) или по экрану — засчитано. */
+  tap() { this.onGesture({ type: "press" }); }
   exit() { this.onFinish(); this.close(); }
   finish() { this.onFinish(); this.close(); }
 
@@ -135,10 +142,12 @@ export class GestureTutorial {
     const head = s.manual ? "" : `ШАГ ${n}/${total}`;
     let actions;
     if (s.id === "intro") actions = '<button class="btn ghost" data-act="noTraining">БЕЗ ОБУЧЕНИЯ</button><button class="btn primary" data-act="begin">ВКЛЮЧИТЬ КАМЕРУ</button>';
-    else if (s.id === "done") actions = '<button class="btn primary" data-act="finish">ГОТОВО</button>';
+    else if (s.id === "done") actions = '<button class="btn primary" data-act="finish" data-air>ГОТОВО</button>';
     else actions = '<button class="btn ghost" data-act="exit">ВЫЙТИ</button><button class="btn ghost" data-act="skip">ПРОПУСТИТЬ ШАГ</button>';
+    if (s.anim === "press") actions = `<button class="btn primary gt-tap" data-act="tap" data-air>НАЖМИ МЕНЯ</button>${actions}`;
+    const title = c.first > 0 ? "ЖЕСТЫ ДЛЯ ЗАМЕТОК" : "КАЛИБРОВКА ЖЕСТОВ";
     this.el.innerHTML = `
-      <div class="panel-h"><span class="idx">◈</span> КАЛИБРОВКА ЖЕСТОВ <span class="h-meta">${head}</span></div>
+      <div class="panel-h"><span class="idx">◈</span> ${title} <span class="h-meta">${head}</span></div>
       <div class="gt-body">
         <div class="gt-pic">${picture(s)}</div>
         <div class="gt-text"><b>${esc(s.title)}</b><p>${esc(s.text)}</p></div>
