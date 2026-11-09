@@ -345,6 +345,8 @@ input::placeholder, textarea::placeholder { color: #4d7584; }
 .holo-gesture i { position: absolute; left: 0; bottom: 0; height: 3px; width: calc(var(--p) * 100%); background: var(--holo);
   box-shadow: 0 0 8px var(--holo); }
 .holo-gesture.done { border-color: var(--holo); box-shadow: 0 0 28px rgba(62,232,255,.4); }
+.holo-gesture.hint { border-style: dashed; color: var(--muted); box-shadow: none; }   /* распознал, но сейчас не для чего */
+.holo-gesture.hint i { display: none; }
 .holo-gesture.hidden, .holo.training .holo-gesture { display: none; }
 .holo.reading .holo-gesture { left: calc((100% - min(540px, 44vw) - 24px) / 2); }
 

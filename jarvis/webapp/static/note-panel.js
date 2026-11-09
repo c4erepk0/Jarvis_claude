@@ -2,8 +2,8 @@
 // Сохранение — с версией, с которой начали править: если заметку тем временем изменили в Obsidian,
 // сервер (или ядро на iPhone) вернёт 409 и панель предложит выбрать версию — ничего не затирается молча.
 // Жестами (через голограмму): ✊ закрыть, ✌ править / диктовать строку, 👍 сохранить, взмах — назад/вперёд.
-import { esc, renderMarkdown, toggleTask } from "./markdown.js?v=8";
-import { Trail, insertDictation, noteAction } from "./note-gestures.js?v=8";
+import { esc, renderMarkdown, toggleTask } from "./markdown.js?v=9";
+import { Trail, insertDictation, noteAction, noteHint } from "./note-gestures.js?v=9";
 
 const folderOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 const titleOf = (path) => path.split("/").pop().replace(/\.[^.]+$/, "");
@@ -193,14 +193,18 @@ export class NotePanel {
   }
 
   // ---------- жесты (голограмма спрашивает, что сделает жест, и показывает это до срабатывания) ----------
-  /** { label, run } для жеста или null — тогда жест обработает сама голограмма (поворот, сброс вида). */
+  /** { label, run } для жеста, { label, hint: true } — жест сейчас ничего не делает (подсказка), или null —
+   *  тогда жест обработает сама голограмма (поворот, сброс вида). */
   gestureAction(gesture) {
     if (!this.isOpen) return null;
-    const a = noteAction(gesture, {
+    const s = {
       mode: this.mode, dirty: this.dirty, editable: Boolean(this.note?.editable), armed: Date.now() < this.armedUntil,
       back: Boolean(this.trail.back), forward: Boolean(this.trail.forward), dictation: Boolean(this.dictateFn),
-    });
-    return a && { label: a.label, run: () => this.runGesture(a.act) };
+    };
+    const a = noteAction(gesture, s);
+    if (a) return { label: a.label, run: () => this.runGesture(a.act) };
+    const hint = noteHint(gesture, s);
+    return hint && { label: hint, hint: true };
   }
 
   runGesture(act) {

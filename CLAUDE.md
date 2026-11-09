@@ -41,6 +41,10 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `press`, `hold`, `pose`, `swipe`, `scroll`, `command`), а действие жеста спрашивает у панели (`gestureAction`).
   Палец «нажимает» элементы `AIR_TARGETS` в `hologram.js` (кнопки, задачи и ссылки заметки, всё с `data-air`).
   В жестах нет `confirm()`: он останавливает камеру — опасное подтверждается повтором жеста.
+  Пороги распознавания — **в долях размера руки** (`handSize`), не кадра. Меняете их — проверяйте на реальных руках:
+  `tests/js/fixtures/hands-hagrid.json` (точки MediaPipe на кадрах HaGRID, тест «реальные руки»); нарисованные
+  эталоны проходят почти при любых порогах. Распознанное видно на окошке камеры («вижу: …»); жест, которому сейчас
+  нечего делать, показывает подсказку (`noteHint`), а не молчит.
 - `jarvis/webapp/static/core/*.js` — **ядро для режима «только iPhone»**: порт Python-ядра (ru, vault,
   tasks, finance, memory, intents, brain, projects, protocols, jarvis). Отвечает на те же `/api/…`, что сервер.
   Память — `GitHubStore` (приватный репозиторий с хранилищем, кэш блобов по sha), Claude — официальный

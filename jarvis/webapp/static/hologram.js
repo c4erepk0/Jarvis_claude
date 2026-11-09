@@ -7,7 +7,7 @@
 //   в заметке — нажать; раскрытая ладонь 1 с — сброс вида; взмах ладонью — повернуть граф (или листать заметки).
 //   Позы ✊ ✌ 👍 голограмма передаёт наружу (gestureAction): что они сделают, решает панель заметки.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, GESTURE_ICON, GestureTracker, classify } from "./gestures.js?v=8";
+import { BONES, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=9";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
@@ -337,7 +337,7 @@ export class Hologram {
     this.overlay = overlay;
     overlay.width = 320; overlay.height = 240;
     video.classList.remove("hidden"); overlay.classList.remove("hidden");
-    this.hands = { last: -1, pinch: null, pinch2: null, dwell: null, lock: null, badgeAt: 0 };
+    this.hands = { last: -1, pinch: null, pinch2: null, dwell: null, lock: null, badgeAt: 0, badgeUntil: 0 };
     this.tracker = new GestureTracker();
     this.onStatus("жесты включены: ☝ палец 1 с — открыть или нажать, 🤏 — вращать, ✋ — сброс, ✌ — править, 👍 — сохранить, ✊ — закрыть");
   }
@@ -361,6 +361,9 @@ export class Hologram {
       case "palm": return { label: "сброс вида", run: () => { this.reset(); this.emitGesture({ type: "reset" }); } };
       case "swipe-left": return { label: "повернуть граф", run: () => this.rotate(-0.9, 0) };
       case "swipe-right": return { label: "повернуть граф", run: () => this.rotate(0.9, 0) };
+      // позы для заметки без открытой заметки: показать, что жест распознан и что сделать
+      case "fist": case "victory": case "thumb":
+        return this.suppressOpen ? null : { label: "сначала откройте заметку", hint: true };
       default: return null;
     }
   }
@@ -371,11 +374,11 @@ export class Hologram {
     h.last = v.currentTime;
     const res = this.landmarker.detectForVideo(v, ts);
     const hands = res.landmarks || [];
-    this.drawHands(hands);
     const g = classify(hands);
+    this.drawHands(hands, g.kind);
     this.emitGesture({ type: "frame", kind: g.kind, hands: g.hands });
     for (const e of this.tracker.update(g, ts)) this.onTracked(e, ts);
-    if (ts - h.badgeAt > 300 && !this.badge.classList.contains("done")) this.badge.classList.add("hidden");
+    if (ts - h.badgeAt > 300 && ts > h.badgeUntil) this.badge.classList.add("hidden");
     if (g.kind !== "point" && g.kind !== "pinch") this.cursor.classList.add("hidden");
     if (g.kind !== "point" && g.kind !== "hand") h.dwell = null;   // «рука» на кадр — палец просто дрогнул
     // руку перестроили (не просто потеряли на кадр) — то же место можно нажать снова
@@ -401,27 +404,28 @@ export class Hologram {
     this.emitGesture(e);
     if (e.type === "hold") {
       const a = e.progress >= 0.15 ? this.action(e.kind) : null;   // мимолётные позы не мельтешат
-      if (a) this.showBadge(e.kind, a.label, e.progress, ts);
+      if (a) this.showBadge(e.kind, a.label, a.hint ? 0 : e.progress, ts, false, a.hint);
       return;
     }
     const name = e.type === "swipe" ? `swipe-${e.dir}` : e.kind;
     const a = this.action(name);
     if (!a) return;
+    if (a.hint) { this.showBadge(name, a.label, 0, ts, false, true, 1500); return; }   // успеть прочитать
     a.run();
     this.showBadge(name, a.label, 1, ts, true);
     this.emitGesture({ type: "command", gesture: name, label: a.label });
   }
 
-  showBadge(name, label, progress, ts, done = false) {
+  /** keepMs — сколько держать надпись после того, как жест закончился (срабатывание, подсказка). */
+  showBadge(name, label, progress, ts, done = false, hint = false, keepMs = done ? 900 : 0) {
     const b = this.badge;
     const arrow = name === "swipe-left" ? " ←" : name === "swipe-right" ? " →" : "";
     b.innerHTML = `<b>${GESTURE_ICON[name] || "•"}${arrow}</b><span>${done ? "✓ " : ""}${label}</span><i></i>`;
     b.style.setProperty("--p", String(progress));
     b.classList.remove("hidden");
     b.classList.toggle("done", done);
-    if (this.hands) this.hands.badgeAt = ts;
-    clearTimeout(this.badgeTimer);
-    if (done) this.badgeTimer = setTimeout(() => b.classList.remove("done"), 900);
+    b.classList.toggle("hint", hint);
+    if (this.hands) { this.hands.badgeAt = ts; this.hands.badgeUntil = ts + keepMs; }
   }
 
   /** Щипок: над текстом заметки — прокрутка («взял и потянул»), в остальном месте — вращение графа. */
@@ -488,7 +492,8 @@ export class Hologram {
     this.cursor.classList.remove("hidden", "grab");
   }
 
-  drawHands(hands) {
+  /** Скелет руки поверх окошка камеры и подпись «вижу: …» — что именно распознано. */
+  drawHands(hands, kind = "none") {
     const g = this.overlay.getContext("2d"), W = this.overlay.width, H = this.overlay.height;
     g.clearRect(0, 0, W, H);
     g.strokeStyle = "rgba(62,232,255,.9)"; g.fillStyle = "#eaffff"; g.lineWidth = 2;
@@ -496,6 +501,16 @@ export class Hologram {
       for (const [a, b] of BONES) { g.beginPath(); g.moveTo(lm[a].x * W, lm[a].y * H); g.lineTo(lm[b].x * W, lm[b].y * H); g.stroke(); }
       for (const p of lm) { g.beginPath(); g.arc(p.x * W, p.y * H, 2.5, 0, Math.PI * 2); g.fill(); }
     }
+    const text = kind === "none" ? "не вижу руку" : `вижу: ${GESTURE_ICON[kind] || ""} ${KIND_LABEL[kind] || kind}`;
+    g.save();
+    g.scale(-1, 1);                 // окошко отзеркалено стилем — текст отзеркаливаем обратно, чтобы читался
+    g.font = "600 17px system-ui, sans-serif";
+    const w = g.measureText(text).width + 16;
+    g.fillStyle = "rgba(2,10,16,.78)";
+    g.fillRect(-W + 6, H - 34, w, 28);
+    g.fillStyle = kind === "none" ? "#ffb347" : "#eaffff";
+    g.fillText(text, -W + 14, H - 14);
+    g.restore();
   }
 
   destroy() {

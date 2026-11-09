@@ -37,6 +37,19 @@ export function noteAction(gesture, s) {
   }
 }
 
+/** Жест распознан, но сейчас ничего не делает — подсказка, что сделать (null — молча, например взмах).
+ *  Без неё кажется, что жесты «не работают». s — как у noteAction. */
+export function noteHint(gesture, s) {
+  if (!["fist", "victory", "thumb"].includes(gesture)) return null;
+  if (s.mode === "view" && gesture === "thumb") return "сохраняет правку — сначала ✌";
+  if (s.mode === "view" && gesture === "victory" && !s.editable) return "заметка большая — правьте в Obsidian";
+  if ((s.mode === "edit" || s.mode === "create") && gesture === "victory" && !s.dictation) {
+    return "диктовка: браузер не распознаёт речь";
+  }
+  if (s.mode === "conflict") return "выберите версию кнопкой";
+  return null;
+}
+
 /** История открытых заметок, как в браузере: открыли новую — «вперёд» обрезается. */
 export class Trail {
   constructor(limit = 50) {
