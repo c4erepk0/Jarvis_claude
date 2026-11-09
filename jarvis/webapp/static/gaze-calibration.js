@@ -1,11 +1,11 @@
-// Калибровка взгляда поверх голограммы: точки по очереди по всему экрану (по ним учится модель), затем
-// проверочные — по ним видна точность; в конце владелец сам нажимает «ГОТОВО» взглядом и щипком.
-// Быстрая — 9 точек, скан лица и 4 проверочные, ~35 с; большая — 25 точек, скан и 8 проверочных, ~1,5 мин.
-// Скан лица: смотрите на точку и водите телефоном — модель учится, что движение телефона ≠ перевод взгляда
-// (иначе калибровка верна только в той позе, где её прошли). Обе записывают «сырые» кадры (точки глаз и лица,
-// без фото) — запись уходит в хранилище (Jarvis/Gaze/sessions) для анализа: scripts/gaze_eval.mjs.
-// Логика точек — Calibration в gaze.js, сам взгляд считает голограмма (hologram.js: trackGaze).
-import { Calibration, MAGNET_LEVELS, SCAN_AXES } from "./gaze.js?v=12";
+// Калибровка взгляда поверх голограммы. Точка плавно переезжает, ждёт, пока взгляд устоится, и только потом
+// сжимается — идёт замер (по нему учится модель). Затем проверочные точки — по ним видна точность; в конце владелец
+// сам нажимает «ГОТОВО» взглядом и щипком.
+//   быстрая — 9 точек и 4 проверочные, ~25 с; большая — 25 и 8, ~1 мин;
+//   привязка — 3 точки, ~6 с, при каждом включении взгляда: убирает сдвиг новой сессии (свет, поза), модель та же.
+// Все записывают «сырые» кадры (точки глаз и лица, без фото) в хранилище (Jarvis/Gaze/sessions) — для анализа:
+// scripts/gaze_eval.mjs. Логика точек — Calibration в gaze.js, сам взгляд считает голограмма (hologram.js: trackGaze).
+import { Calibration, MAGNET_LEVELS } from "./gaze.js?v=13";
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -25,9 +25,9 @@ function deviceLabel() {
 }
 
 export class GazeCalibration {
-  /** holo — Hologram (взгляд уже включён: holo.gaze); onDone(model, errorPx, session) — сохранить модель и запись,
-   *  может вернуть Promise с путём записи в хранилище; onMagnet(level) — сменили силу магнита;
-   *  onCancel() — закрыли без калибровки. */
+  /** holo — Hologram (взгляд уже включён: holo.gaze); onDone(model, errorPx, session, mode) — сохранить модель и
+   *  запись, может вернуть Promise с путём записи в хранилище; onMagnet(level) — сменили силу магнита;
+   *  onCancel() — закрыли, а модели так и нет. */
   constructor({ root, holo, say = () => {}, onDone = () => {}, onMagnet = () => {}, onCancel = () => {} }) {
     Object.assign(this, { root, holo, say, onDone, onMagnet, onCancel });
     this.el = document.createElement("section");
@@ -35,12 +35,9 @@ export class GazeCalibration {
     this.el.setAttribute("role", "dialog");
     this.el.setAttribute("aria-label", "Калибровка взгляда");
     this.el.innerHTML = `<div class="gc-dot hidden"><i></i></div><div class="gc-status" aria-live="polite"></div>
-      <div class="gc-scan hidden">${Object.entries(SCAN_AXES).map(([k, name]) =>
-        `<div class="gc-axis" data-axis="${k}"><span>${{ x: "↔", y: "↕", z: "⤢", roll: "⟲" }[k]} ${name}</span><i></i></div>`).join("")}</div>
       <div class="gc-panel panel"></div>`;
     root.append(this.el);
     this.dot = this.el.querySelector(".gc-dot");
-    this.scanBox = this.el.querySelector(".gc-scan");
     this.status = this.el.querySelector(".gc-status");
     this.panel = this.el.querySelector(".gc-panel");
     this.el.addEventListener("click", (e) => {
@@ -51,31 +48,31 @@ export class GazeCalibration {
   }
 
   get active() { return !this.el.classList.contains("hidden"); }
+  get hasModel() { return Boolean(this.holo.gaze?.model); }
 
-  open() {
+  /** mode: "anchor" — сразу привязка (при включении взгляда, если модель уже есть), иначе — выбор калибровки. */
+  open({ mode = null } = {}) {
     this.el.classList.remove("hidden");
     this.holo.suppressOpen = true;
-    this.intro();
+    if (mode === "anchor" && this.hasModel) this.begin("anchor");
+    else this.intro();
   }
 
   intro() {
-    this.cal = null;
-    if (this.holo.gaze) this.holo.gaze.calibration = null;
-    this.dot.classList.add("hidden");
-    this.scanBox.classList.add("hidden");
-    this.status.textContent = "";
+    this.stop();
+    const anchor = this.hasModel ? '<button class="btn ghost" data-act="anchor" data-air>ПРИВЯЗКА · 6 с</button>' : "";
     this.showPanel(`
       <div class="panel-h"><span class="idx">◈</span> КАЛИБРОВКА ВЗГЛЯДА</div>
-      <p><b>Смотрите на точку, пока она не сожмётся</b> — потом она перепрыгнет.</p>
-      <p><b>Скан лица</b>: когда точка станет янтарной, смотрите на неё и <b>медленно водите телефоном</b> — влево-вправо,
-        вверх-вниз, ближе-дальше, наклоняйте. Тогда калибровка не собьётся, когда телефон в руке сдвинется.</p>
-      <p class="muted">Держите телефон или садитесь к ноутбуку как обычно: лицо целиком в кадре, свет спереди.</p>
-      <p class="muted"><b>Большая</b> точнее и записывает данные для анализа и улучшения: точки глаз и лица по кадрам,
-        без фото — в хранилище, папка Jarvis/Gaze. Быстрая тоже сохраняется.</p>
+      <p><b>Смотрите на точку.</b> Она плавно переедет, подождёт, пока взгляд устоится, и сожмётся — это замер.
+        Голову и телефон держите как обычно, лицо целиком в кадре, свет спереди.</p>
+      <p class="muted"><b>Привязка</b> — 3 точки при каждом включении взгляда: убирает сдвиг, если свет или поза другие.
+        <b>Большая</b> калибровка точнее быстрой. Нажатия щипком по цели сразу поправляют курсор.</p>
+      <p class="muted">Каждая калибровка записывается для анализа — точки глаз и лица, без фото — в хранилище,
+        папка Jarvis/Gaze.</p>
       ${this.liveLine()}
-      <div class="gc-actions"><button class="btn ghost" data-act="cancel">ОТМЕНА</button>
-        <button class="btn ghost" data-act="quick" data-air>БЫСТРАЯ · 35 с</button>
-        <button class="btn primary" data-act="big" data-air>БОЛЬШАЯ · 1,5 мин</button></div>`);
+      <div class="gc-actions"><button class="btn ghost" data-act="cancel">ОТМЕНА</button>${anchor}
+        <button class="btn ghost" data-act="quick" data-air>БЫСТРАЯ · 25 с</button>
+        <button class="btn primary" data-act="big" data-air>БОЛЬШАЯ · 1 мин</button></div>`);
     this.say("Калибровка взгляда. Смотрите на точку, пока она не сожмётся.");
   }
 
@@ -84,12 +81,12 @@ export class GazeCalibration {
     this.panel.classList.remove("hidden");
   }
 
-  /** Точность в работе — по последним нажатиям щипком (модель на них доучивается). */
+  /** Точность в работе — промах взгляда на последних нажатиях щипком (по ним курсор и поправляется). */
   liveLine() {
     const live = this.holo.gaze?.model?.liveErrorPx?.();
     const n = this.holo.gaze?.model?.usage?.length || 0;
     return live === null || live === undefined ? ""
-      : `<p class="muted">Точность в работе ≈ ${live} px — по последним нажатиям (${n}); модель на них доучивается.</p>`;
+      : `<p class="muted">Точность в работе ≈ ${live} px — по последним нажатиям (${n}).</p>`;
   }
 
   magnetRow() {
@@ -110,16 +107,17 @@ export class GazeCalibration {
 
   quick() { this.begin("quick"); }
   big() { this.begin("big"); }
+  anchor() { this.begin("anchor"); }
 
   begin(mode = "quick") {
     if (!this.holo.gaze) { this.cancel(); return; }
     this.panel.classList.add("hidden");
     this.cal = new Calibration({ mode, screen: { w: innerWidth, h: innerHeight }, record: true });
     this.holo.gaze.calibration = this.cal;
-    this.dot.classList.remove("hidden");
+    this.dot.classList.remove("hidden", "sampling", "check");
     this.lastPoint = null;
-    this.scanSaid = false;
     this.startedAt = performance.now();
+    if (mode === "anchor") this.say("Привязка. Посмотрите на три точки.");
     requestAnimationFrame(this.tick);
   }
 
@@ -132,35 +130,29 @@ export class GazeCalibration {
       this.lastPoint = c.point;
       this.dot.style.transform = `translate(${x * innerWidth}px, ${y * innerHeight}px)`;
       this.dot.classList.toggle("check", c.checking);
-      this.dot.classList.toggle("scan", c.scanning);
-      this.scanBox.classList.toggle("hidden", !c.scanning);
-      this.status.classList.toggle("gc-status-scan", c.scanning);
-      if (c.scanning && !this.scanSaid) { this.scanSaid = true; this.say("Скан лица. Смотрите на точку и медленно водите телефоном."); }
     }
-    this.dot.style.setProperty("--p", String(c.progress));
+    this.dot.classList.toggle("sampling", c.sampling);
+    this.dot.style.setProperty("--p", String(c.sampling ? (c.progress - 0.3) / 0.7 : 0));
     const { n, total } = c.counter;
     const lost = c.faceSeenAt === null ? ts - this.startedAt > 2500 : c.faceLost(ts);
-    const cov = c.scanning ? c.coverage : null;
-    if (cov) for (const el of this.scanBox.querySelectorAll(".gc-axis")) el.style.setProperty("--p", String(cov[el.dataset.axis]));
-    const left = cov ? Object.keys(SCAN_AXES).filter((k) => cov[k] < 1).map((k) => SCAN_AXES[k]) : [];
+    const what = c.mode === "anchor" ? "привязка" : c.checking ? "проверка" : "точка";
     this.status.innerHTML = lost
       ? '<span class="gt-bad">не вижу лицо — посмотрите в камеру, нужен свет спереди</span>'
-      : c.scanning ? `<b>скан лица</b>: смотрите на точку и медленно водите телефоном${left.length ? ` — ещё ${left.join(", ")}` : " — так держать"}`
-        : `${c.checking ? "проверка" : "точка"} ${n}/${total}`;
+      : `${what} ${n}/${total}${c.sampling ? "" : " · смотрите на точку"}`;
     requestAnimationFrame(this.tick);
   }
 
   finish() {
     const cal = this.cal;
-    const { errorPx } = cal;
-    const model = cal.adaptive();
     const session = cal.toSession({ device: deviceLabel() });
     this.holo.gaze.calibration = null;
-    this.holo.setGazeModel(model, errorPx);
-    const saving = Promise.resolve(this.onDone(model, errorPx, session));
     this.dot.classList.add("hidden");
-    this.scanBox.classList.add("hidden");
     this.status.textContent = "";
+    if (cal.mode === "anchor") { this.finishAnchor(cal, session); return; }
+    const { errorPx } = cal;
+    const model = cal.adaptive();
+    this.holo.setGazeModel(model, errorPx);
+    const saving = Promise.resolve(this.onDone(model, errorPx, session, cal.mode));
     const px = Math.round(errorPx);
     this.showPanel(`
       <div class="panel-h"><span class="idx">◈</span> ВЗГЛЯД НАСТРОЕН</div>
@@ -168,9 +160,9 @@ export class GazeCalibration {
       <p class="gc-saved muted">записываю калибровку в хранилище…</p>
       ${this.magnetRow()}
       <p class="gc-how">👁 взгляд — курсор; ближайшая к нему кнопка или заметка подсвечивается — её и нажмёт щипок<br>
-        🤏 короткий щипок (свести и развести пальцы) — нажать<br>
+        🤏 короткий щипок (свести и развести пальцы) — нажать; после каждого нажатия курсор поправляется сам<br>
         🤏 щипок и движение — вращать граф или листать заметку, на которую смотрите<br>
-        📱 телефон можно двигать — скан это учёл; надпись «поза вне скана» на камере — пора пройти калибровку снова<br>
+        📱 при каждом включении взгляда — привязка по 3 точкам; «поза другая» на камере — пройдите её снова (◎)<br>
         ✊ ✌ 👍 ✋ 👋 — как раньше: закрыть, править, сохранить, сброс, листать</p>
       <p class="muted">Попробуйте сразу: посмотрите на «ГОТОВО» и щипните. Повторить калибровку — кнопка ◎ вверху.</p>
       <div class="gc-actions"><button class="btn ghost" data-act="intro" data-air>ПОВТОРИТЬ</button>
@@ -178,6 +170,23 @@ export class GazeCalibration {
     this.say(px <= 110 ? "Взгляд настроен. Посмотрите на «Готово» и щипните пальцами." : "Калибровка грубая, сэр. Лучше повторить при хорошем свете.");
     saving.then((path) => this.savedLine(path ? `Запись калибровки: ${path}` : ""),
       (err) => this.savedLine(`Запись не сохранилась: ${err?.message || err}`, true));
+  }
+
+  /** Привязка: модель та же, поправляется только сдвиг — и окно закрывается само. */
+  finishAnchor(cal, session) {
+    const model = this.holo.gaze.model;
+    const before = { ...model.bias };
+    const bias = model.anchor(cal.anchorSamples, cal.poseRange);
+    const shift = Math.round(Math.hypot((bias.x - before.x) * innerWidth, (bias.y - before.y) * innerHeight));
+    this.holo.setGazeModel(model, this.holo.gaze.errorPx);
+    this.onDone(model, this.holo.gaze.errorPx, session, "anchor");
+    this.showPanel(`<div class="panel-h"><span class="idx">◈</span> ПРИВЯЗКА ГОТОВА</div>
+      <p>Курсор поправлен на ${shift} px. Нажатия щипком дальше поправляют его сами.</p>
+      <div class="gc-actions"><button class="btn primary" data-act="close" data-air>ГОТОВО</button></div>`);
+    this.say("Привязка готова.");
+    this.cal = null;
+    clearTimeout(this.closeTimer);
+    this.closeTimer = setTimeout(() => { if (this.active && !this.cal) this.close(); }, 2500);
   }
 
   savedLine(text, bad = false) {
@@ -188,14 +197,21 @@ export class GazeCalibration {
     el.classList.toggle("hidden", !text);
   }
 
+  stop() {
+    if (this.holo.gaze?.calibration === this.cal) this.holo.gaze.calibration = null;
+    this.cal = null;
+    this.dot.classList.add("hidden");
+    this.status.textContent = "";
+  }
+
   cancel() {
     this.close();
     this.onCancel();
   }
 
   close() {
-    if (this.holo.gaze?.calibration === this.cal) this.holo.gaze.calibration = null;
-    this.cal = null;
+    clearTimeout(this.closeTimer);
+    this.stop();
     this.startedAt = null;
     this.holo.suppressOpen = false;
     this.el.classList.add("hidden");

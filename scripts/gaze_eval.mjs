@@ -1,30 +1,34 @@
 #!/usr/bin/env node
 // Анализ записанных калибровок взгляда и журнала нажатий (Jarvis/Gaze в хранилище).
 //
-//   node scripts/gaze_eval.mjs [файлы или папки…]     отчёт; по умолчанию — tests/js/fixtures/gaze
-//   node scripts/gaze_eval.mjs --import <…/Jarvis/Gaze> скопировать новые записи в тесты и пересчитать baseline
-//   node scripts/gaze_eval.mjs --baseline               пересчитать tests/js/fixtures/gaze/baseline.json
+//   node scripts/gaze_eval.mjs [файлы или папки…]     отчёт; по умолчанию — записи владельца (GAZE_DIRS ниже)
+//   node scripts/gaze_eval.mjs --baseline               принять текущую точность за образец (tests/js/fixtures/gaze/baseline.json)
 //   node scripts/gaze_eval.mjs --lambda 0.3,1,3 --json  сравнить регуляризацию; отчёт в JSON
 //
-// Признаки пересчитываются из «сырых» точек текущей eyeFeatures: улучшили её — запустите отчёт и сравните
-// с baseline. Тест tests/js/gaze-sessions.test.mjs не даст ухудшить точность на записанных калибровках.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+// Записи владельца — точки его лица, а репозиторий Jarvis публичный: сами записи сюда не кладём, только цифры
+// точности (baseline.json). Читаем их из хранилища: $JARVIS_GAZE_DIR или клон ../jarvis-vault/Jarvis/Gaze рядом
+// с репозиторием (или tests/js/fixtures/gaze, если владелец сам решит положить их туда).
+// Признаки пересчитываются из «сырых» точек текущей gazeFeatures: улучшили её — запустите отчёт и сравните
+// с baseline. Тест tests/js/gaze-sessions.test.mjs не даст ухудшить точность на калибровках владельца.
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { evaluateSession, evaluateUsage, eyeFeatures } from "../jarvis/webapp/static/gaze.js";
+import { evaluateSession, evaluateUsage, eyeFeatures, gazeFeatures } from "../jarvis/webapp/static/gaze.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 export const FIXTURES = join(ROOT, "tests/js/fixtures/gaze");
 export const BASELINE = join(FIXTURES, "baseline.json");
+/** Где искать записи владельца, по порядку: переменная окружения, клон хранилища рядом, папка тестов. */
+export const GAZE_DIRS = [process.env.JARVIS_GAZE_DIR, join(ROOT, "../jarvis-vault/Jarvis/Gaze"), FIXTURES].filter(Boolean);
 
-// Наборы признаков для сравнения: что даёт каждая группа (номера — порядок в eyeFeatures).
+// Признаки для сравнения: нынешние (только глаза) и прежние (eyeFeatures — с положением лица в кадре).
+const subset = (idx) => (lm, b) => { const f = eyeFeatures(lm, b); return f && idx.map((i) => f[i]); };
 export const FEATURE_SETS = {
-  "радужки": [0, 1, 2, 3],
-  "+голова": [0, 1, 2, 3, 4, 5, 6, 7, 8],
-  "все": null,
+  "глаза (v3)": gazeFeatures,
+  "прежние 17": eyeFeatures,
+  "прежние без головы": subset([0, 1, 2, 3, 9, 10, 11, 12, 13, 14, 15, 16]),
 };
-const pick = (idx) => (idx ? (lm, b) => { const f = eyeFeatures(lm, b); return f && idx.map((i) => f[i]); } : eyeFeatures);
 
 /** Все записи из файлов и папок (рекурсивно): { name, path, data }. */
 export function loadRecords(paths) {
@@ -35,7 +39,7 @@ export function loadRecords(paths) {
     if (!p.endsWith(".json") || basename(p) === "baseline.json") return;
     try {
       const data = JSON.parse(readFileSync(p, "utf8"));
-      if (data.kind === "jarvis-gaze-session" || data.kind === "jarvis-gaze-usage") out.push({ name: relative(FIXTURES, p).startsWith("..") ? basename(p) : relative(FIXTURES, p), path: p, data });
+      if (data.kind === "jarvis-gaze-session" || data.kind === "jarvis-gaze-usage") out.push({ name: basename(p), path: p, data });
     } catch { /* не запись взгляда */ }
   };
   paths.forEach(walk);
@@ -54,7 +58,10 @@ export function report(records, { lambdas = [1] } = {}) {
   const sessions = records.filter((r) => r.data.kind === "jarvis-gaze-session").map((r) => {
     const d = r.data;
     const byLambda = Object.fromEntries(lambdas.map((l) => [l, evaluateSession(d, { lambda: l })]));
-    const byFeatures = Object.fromEntries(Object.entries(FEATURE_SETS).map(([k, idx]) => [k, evaluateSession(d, { features: pick(idx) }).errorPx]));
+    const byFeatures = Object.fromEntries(Object.entries(FEATURE_SETS).map(([k, feat]) => {
+      const e = evaluateSession(d, { features: feat });
+      return [k, `${e.errorPx}/${e.livePx}`];
+    }));
     return { name: r.name, mode: d.mode, device: d.device || "", screen: `${d.screen.w}×${d.screen.h}`, created: d.created,
       appErrorPx: d.result?.errorPx ?? null, ...byLambda[lambdas[0]], byLambda, byFeatures };
   });
@@ -70,28 +77,28 @@ export function baseline(records) {
   return {
     note: "Точность взгляда на записанных калибровках (px); tests/js/gaze-sessions.test.mjs не даёт её ухудшить. "
       + "Пересчитать: node scripts/gaze_eval.mjs --baseline",
-    sessions: Object.fromEntries(sessions.map((s) => [s.name, { errorPx: s.errorPx, looPx: s.looPx }])),
+    sessions: Object.fromEntries(sessions.map((s) => [s.name, { errorPx: s.errorPx, looPx: s.looPx, livePx: s.livePx }])),
     usage: Object.fromEntries(usage.map((u) => [u.name, { errorPx: u.errorPx, learnedErrorPx: u.learnedErrorPx }])),
   };
 }
 
 function print({ sessions, usage }, lambdas) {
   if (!sessions.length && !usage.length) {
-    console.log("Записей нет. Скопируйте их из хранилища: node scripts/gaze_eval.mjs --import <хранилище>/Jarvis/Gaze");
+    console.log("Записей нет: укажите папку Jarvis/Gaze хранилища (JARVIS_GAZE_DIR) или склонируйте его в ../jarvis-vault");
     return;
   }
   for (const s of sessions) {
     console.log(`\n▸ ${s.name} — ${s.mode}, ${s.screen}, ${s.device}`);
     console.log(`  кадров ${s.frames}, точек ${s.points}; в приложении ${s.appErrorPx} px`);
-    console.log(`  проверочные точки: ${s.errorPx} px · по одной точке на проверку: ${s.looPx} px · дрожание: ${s.jitterPx} px`);
+    console.log(`  проверочные точки: ${s.errorPx} px · в работе (с поправкой по нажатиям): ${s.livePx} px · по одной точке на проверку: ${s.looPx} px · дрожание: ${s.jitterPx} px`);
     if (lambdas.length > 1) console.log(`  λ: ${lambdas.map((l) => `${l} → ${s.byLambda[l].errorPx}/${s.byLambda[l].looPx}`).join(" · ")}`);
-    console.log(`  признаки: ${Object.entries(s.byFeatures).map(([k, v]) => `${k} ${v}`).join(" · ")} px`);
+    console.log(`  признаки (проверочные / в работе): ${Object.entries(s.byFeatures).map(([k, v]) => `${k} ${v}`).join(" · ")} px`);
     const worst = [...s.perPoint].sort((a, b) => b.err - a.err).slice(0, 3);
     if (worst.length) console.log(`  хуже всего: ${worst.map((p) => `(${p.x}, ${p.y}) ${p.err} px`).join(", ")}`);
   }
   for (const u of usage) {
     console.log(`\n▸ ${u.name} — нажатий ${u.clicks} (калибровка ${u.session})`);
-    console.log(`  промах взгляда: ${u.errorPx} px · с доучиванием на нажатиях: ${u.learnedErrorPx} px`);
+    console.log(`  промах взгляда: ${u.errorPx} px · с поправкой по нажатиям: ${u.learnedErrorPx} px`);
   }
 }
 
@@ -102,23 +109,12 @@ function main(argv) {
   const asJson = flag("--json");
   const writeBaseline = flag("--baseline");
   const lambdas = (value("--lambda") || "1").split(",").map(Number).filter((v) => v > 0);
-  const from = value("--import");
-  if (from) {
+  const dirs = args.length ? args : [GAZE_DIRS.find((d) => existsSync(d)) || FIXTURES];
+  const records = loadRecords(dirs);
+  if (writeBaseline) {
     mkdirSync(FIXTURES, { recursive: true });
-    let n = 0;
-    for (const r of loadRecords([from])) {
-      const dst = join(FIXTURES, r.data.kind === "jarvis-gaze-usage" ? "usage" : "sessions", basename(r.path));
-      if (existsSync(dst)) continue;
-      mkdirSync(join(dst, ".."), { recursive: true });
-      copyFileSync(r.path, dst);
-      n += 1;
-    }
-    console.log(`Скопировано записей: ${n} → ${relative(ROOT, FIXTURES)}`);
-  }
-  const records = loadRecords(args.length ? args : [FIXTURES]);
-  if (from || writeBaseline) {
-    writeFileSync(BASELINE, `${JSON.stringify(baseline(loadRecords([FIXTURES])), null, 2)}\n`);
-    console.log(`baseline: ${relative(ROOT, BASELINE)}`);
+    writeFileSync(BASELINE, `${JSON.stringify(baseline(records), null, 2)}\n`);
+    console.log(`baseline: ${relative(ROOT, BASELINE)} (записи: ${dirs.join(", ")})`);
   }
   const rep = report(records, { lambdas });
   if (asJson) console.log(JSON.stringify(rep, null, 2)); else print(rep, lambdas);

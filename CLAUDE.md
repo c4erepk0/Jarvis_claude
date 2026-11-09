@@ -45,23 +45,25 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `tests/js/fixtures/hands-hagrid.json` (точки MediaPipe на кадрах HaGRID, тест «реальные руки»); нарисованные
   эталоны проходят почти при любых порогах. Распознанное видно на окошке камеры («вижу: …»); жест, которому сейчас
   нечего делать, показывает подсказку (`noteHint`), а не молчит.
-- `static/gaze.js` — управление взглядом без DOM (тест — `tests/js/gaze.test.mjs`): `gazeFeatures` — признаки с учётом
-  позы головы относительно камеры (матрица MediaPipe 4×4 по столбцам, см): луч из головы до плоскости экрана + поворот
-  глаз × расстояние в осях головы, `FEATURE_VERSION`; без матрицы — `eyeFeatures` (радужки, уголки глаз, коэффициенты
-  `eyeLook*`). `Calibration` — точки, **скан лица** (`SCAN`: смотреть на точку и водить телефоном, пока размах позы
-  по осям не наберётся) и проверочные; точность в px. Проверка устойчивости к движению телефона — 3D-голова
-  `face3d` в `tests/js/gaze-synthetic.mjs` (`MOVED_POSES`): без позы головы и скана ошибка вдвое больше.
-  `GazeModel` (гребневая регрессия признаки → доля экрана), `OneEuro2D` (сглаживание), `pickTarget` (магнит к целям).
-  `static/gaze-calibration.js` — окно калибровки; модель хранится в localStorage (`jarvis.gaze_model`).
+- `static/gaze.js` — управление взглядом без DOM (тест — `tests/js/gaze.test.mjs`): `gazeFeatures` (v3, `FEATURE_VERSION`) —
+  **только глаза**: x — радужки, eyeLook, поворот лица; y — радужки, eyeLook, открытость глаз, blink/wide, наклон лица
+  (`SPLIT`, модель по осям — `SplitModel`). Положение головы (матрица MediaPipe) в признаки не входит: на калибровках
+  владельца оно коррелировало с точкой экрана по-разному в каждой сессии, и модель «ломалась» в новой (300–500 px).
+  Сдвиг сессии и позы убирают **привязка** (`Calibration` mode `anchor`, 3 точки → `AdaptiveGaze.anchor`) и
+  **поправка по каждому щипку** (`AdaptiveGaze.learn`, `LIVE_ALPHA` = 0,6 — подобрано на записях). Темп калибровки:
+  замер только когда взгляд устоялся (`settleMs`…`settleMaxMs`, `STEADY`). `headPose` — для подсказки «поза другая».
+  `OneEuro2D` (сглаживание), `pickTarget` (магнит к целям). `static/gaze-calibration.js` — окно калибровки и привязки;
+  модель хранится в localStorage (`jarvis.gaze_model`), при включении взгляда — привязка.
   В голограмме: `startGaze` / `stopGaze` / `setGazeModel`, цели магнита — `AIR_TARGETS` и узлы графа вне панелей;
   нажатие — событие `tap` от `GestureTracker` (короткий щипок, сдвиг < `DRAG`); сам взгляд ничего не нажимает.
   Курсор — там, куда смотрят; магнит (`pickTarget`, сила `MAGNET_LEVELS`, по умолчанию слабый) только выбирает цель.
-  Модель — `AdaptiveGaze`: калибровка + нажатия по целям (`gazeLearn`), хранится в `jarvis.gaze_model`.
-  **Записи взгляда**: калибровки (`Calibration.toSession`, быстрая/большая) и журнал нажатий — «сырые» точки глаз и лица
+  **Записи взгляда**: калибровки (`Calibration.toSession`) и журнал нажатий — «сырые» точки глаз и лица
   (`packFrame`, без фото) → `POST /api/gaze` (`jarvis/gaze.py`, то же в `core/jarvis.js`) → `Jarvis/Gaze/{sessions,usage}`.
-  Анализ — `scripts/gaze_eval.mjs` (признаки пересчитываются из сырых точек текущей `eyeFeatures`); записи владельца —
-  `tests/js/fixtures/gaze` + `baseline.json`, тест `gaze-sessions.test.mjs` не даёт ухудшить точность на них.
-  Меняете признаки или модель — сравните отчёт до и после, обновите baseline (`--baseline`), только если стало лучше.
+  Анализ — `scripts/gaze_eval.mjs` (признаки пересчитываются из сырых точек; «в работе» — проверочные точки как поток
+  нажатий с поправкой). **Записи владельца — в его хранилище**, не в этом (публичном) репозитории: тест
+  `gaze-sessions.test.mjs` читает их из `$JARVIS_GAZE_DIR` или клона `../jarvis-vault`, образец точности — цифры —
+  `tests/js/fixtures/gaze/baseline.json`. Меняете признаки или модель — сравните отчёт до и после, обновите baseline
+  (`--baseline`), только если стало лучше.
 - `jarvis/webapp/static/core/*.js` — **ядро для режима «только iPhone»**: порт Python-ядра (ru, vault,
   tasks, finance, memory, intents, brain, projects, protocols, jarvis). Отвечает на те же `/api/…`, что сервер.
   Память — `GitHubStore` (приватный репозиторий с хранилищем, кэш блобов по sha), Claude — официальный

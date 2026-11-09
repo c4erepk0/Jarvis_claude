@@ -349,21 +349,15 @@ input::placeholder, textarea::placeholder { color: #4d7584; }
 /* калибровка взгляда — на весь экран, чтобы ничто не отвлекало от точки */
 .gc { position: absolute; inset: 0; z-index: 7; background: rgba(1,6,10,.9); }
 .gc.hidden, .gc-dot.hidden, .gc-panel.hidden { display: none; }
+/* точка плавно переезжает; пока взгляд устанавливается — светится тускло, на замере ярче и сжимается */
 .gc-dot { position: absolute; left: 0; top: 0; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%;
-  border: 2px solid var(--holo); --p: 0; transition: transform .3s ease; box-shadow: 0 0 18px rgba(62,232,255,.35); }
+  border: 2px solid var(--holo-dim); --p: 0; transition: transform .5s cubic-bezier(.45,.05,.35,1), border-color .2s;
+  box-shadow: 0 0 10px rgba(62,232,255,.2); }
+.gc-dot.sampling { border-color: var(--holo); box-shadow: 0 0 18px rgba(62,232,255,.45); }
 .gc-dot::after { content: ""; position: absolute; inset: 0; margin: auto; width: 8px; height: 8px; border-radius: 50%;
   background: #fff; box-shadow: 0 0 10px var(--holo); }
 .gc-dot i { position: absolute; inset: 3px; border-radius: 50%; background: rgba(62,232,255,.35); transform: scale(calc(1 - var(--p))); }
 .gc-dot.check { border-color: #ffb347; box-shadow: 0 0 18px rgba(255,179,71,.4); }
-.gc-dot.scan { border-color: #ffb347; border-style: dashed; animation: gc-scan 2.4s linear infinite; }
-@keyframes gc-scan { to { rotate: 360deg; } }
-.gc-scan { position: absolute; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%);
-  width: min(360px, calc(100% - 32px)); display: grid; gap: 8px; }
-.gc-scan.hidden { display: none; }
-.gc-axis { --p: 0; display: grid; gap: 4px; font: 500 12px var(--mono); color: var(--muted); }
-.gc-axis i { display: block; height: 4px; border-radius: 2px; background: linear-gradient(90deg, #ffb347 calc(var(--p) * 100%),
-  rgba(255,179,71,.15) 0); }
-.gc-status-scan { color: #ffd59a; font-size: 13px; }
 .gc-dot.check i { background: rgba(255,179,71,.35); }
 .gc-status { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: calc(100% - 32px);
   font: 500 12px/1.4 var(--mono); color: var(--muted); text-align: center; pointer-events: none; }

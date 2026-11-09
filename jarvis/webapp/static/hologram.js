@@ -9,8 +9,8 @@
 // Управление взглядом (MediaPipe Face Landmarker, gaze.js): взгляд — курсор, примагниченный к ближайшей кнопке
 //   или узлу; короткий щипок — нажать то, на что смотрите; щипок и движение — вращать граф или листать заметку.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=12";
-import { DEFAULT_MAGNET, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=12";
+import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=13";
+import { DEFAULT_MAGNET, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=13";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
@@ -586,12 +586,12 @@ export class Hologram {
     const blend = {};
     for (const c of res.faceBlendshapes?.[0]?.categories || []) blend[c.categoryName] = c.score;
     const matrix = res.facialTransformationMatrixes?.[0]?.data || null;
-    // признаки с учётом позы головы относительно камеры: телефон сдвинули — взгляд не «съезжает»
-    const f = gazeFeatures(lm, blend, matrix);
+    // признаки — только глаза (gaze.js: FEATURE_VERSION 3); сдвиг от позы и света убирают привязка и щипки
+    const f = gazeFeatures(lm, blend);
     if (lm) z.faceAt = ts;
     // «сырой» кадр — для записи калибровки и журнала нажатий (упаковывается, только когда нужен)
     z.raw = f ? { lm, blend, matrix } : null;
-    // телефон увели далеко за пределы того, что было на скане, — точность падает, подскажем пройти его заново
+    // телефон держат совсем иначе, чем на калибровке и привязке, — точность падает, подскажем привязку (◎)
     const off = Boolean(f && !z.calibration && z.model?.outOfRange?.(headPose(matrix)));
     this.drawFaceStatus(Boolean(lm), Boolean(f), off);
     if (z.calibration) {
@@ -657,7 +657,7 @@ export class Hologram {
     const fs = z.recent.map((r) => r.f);
     z.press = fs.length && z.raw && z.rawPoint ? {
       f: fs[0].map((_, j) => fs.reduce((s, f) => s + f[j], 0) / fs.length),   // среднее за 250 мс — без дрожания
-      raw: packFrame(z.raw.lm, z.raw.blend, z.raw.matrix), pred: { ...z.rawPoint },
+      raw: packFrame(z.raw.lm, z.raw.blend, z.raw.matrix), pred: { ...z.rawPoint }, pose: headPose(z.raw.matrix),
     } : null;
   }
 
@@ -696,8 +696,9 @@ export class Hologram {
     const label = t.el && t.w > 120 ? { x: Math.max(t.x - t.w / 2 + 16, Math.min(t.x + t.w / 2 - 16, press.pred.x)), y: t.y }
       : { x: t.x, y: t.y };
     const errPx = Math.hypot(press.pred.x - label.x, press.pred.y - label.y);
-    if (errPx > Math.max(160, this.gaze.radius * 3)) return;   // промах вдвое шире магнита — скорее случайное нажатие
-    this.gaze.model.learn?.(press.f, label.x / innerWidth, label.y / innerHeight, errPx);
+    if (errPx > Math.max(220, this.gaze.radius * 4)) return;   // промах далеко за магнитом — скорее случайное нажатие
+    // поправка сдвига: следующий взгляд сразу точнее (AdaptiveGaze.learn)
+    this.gaze.model.learn?.(press.f, label.x / innerWidth, label.y / innerHeight, errPx, press.pose);
     const r1 = (v) => Math.round(v * 10) / 10;
     this.emitGesture({ type: "gaze-click", record: {
       t: Date.now(), target: { x: r1(t.x), y: r1(t.y), w: r1(t.w || 0), h: r1(t.h || 0), kind: t.node ? "node" : "button" },
@@ -706,10 +707,10 @@ export class Hologram {
     } });
   }
 
-  /** Подпись на окошке камеры сверху: видит ли Jarvis глаза и не ушёл ли телефон за пределы скана. */
+  /** Подпись на окошке камеры сверху: видит ли Jarvis глаза и не держат ли телефон совсем иначе, чем на калибровке. */
   drawFaceStatus(face, eyes, off = false) {
     const g = this.overlay.getContext("2d"), W = this.overlay.width;
-    const text = !face ? "👁 не вижу лицо" : !eyes ? "👁 глаза закрыты" : off ? "👁 поза вне скана — ◎" : "👁 вижу взгляд";
+    const text = !face ? "👁 не вижу лицо" : !eyes ? "👁 глаза закрыты" : off ? "👁 поза другая — ◎ привязка" : "👁 вижу взгляд";
     g.save();
     g.scale(-1, 1);
     g.font = "600 15px system-ui, sans-serif";
