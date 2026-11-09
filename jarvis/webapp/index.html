@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#02070d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="JARVIS">
+<title>J.A.R.V.I.S.</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="static/icon.svg?v=3" type="image/svg+xml">
+<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=3">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="static/app.css?v=3">
+</head>
+<body>
+<div class="bg-grid" aria-hidden="true"></div>
+<div class="bg-scan" aria-hidden="true"></div>
+
+<!-- загрузка -->
+<div id="boot" class="boot">
+  <div class="boot-inner">
+    <div class="boot-logo">J.A.R.V.I.S.</div>
+    <div class="boot-sub">JUST A RATHER VERY INTELLIGENT SYSTEM</div>
+    <pre id="boot-log" class="boot-log"></pre>
+  </div>
+</div>
+
+<!-- вход -->
+<div id="login" class="login hidden">
+  <form id="login-form" class="login-box panel">
+    <div class="panel-h"><span class="idx">00</span> ИДЕНТИФИКАЦИЯ</div>
+    <p class="muted">Назовите код доступа, сэр.</p>
+    <input id="login-code" type="password" autocomplete="current-password" placeholder="Код доступа" required>
+    <button class="btn primary" type="submit">ВОЙТИ</button>
+    <p id="login-err" class="err"></p>
+  </form>
+</div>
+
+<header class="top">
+  <div class="brand"><span class="brand-mark">J.A.R.V.I.S.</span><span class="brand-ver">MK·I</span></div>
+  <div class="chips">
+    <span class="chip" id="chip-brain" title="Мозг Claude">BRAIN</span>
+    <span class="chip" id="chip-sync" title="Связь с сервером и Obsidian">SYNC</span>
+    <span class="chip" id="chip-voice" title="Голос">VOICE</span>
+    <span class="chip" id="chip-tg" title="Telegram">TG</span>
+  </div>
+  <div class="clock"><div id="clock-time">--:--</div><div id="clock-date" class="muted">—</div></div>
+  <div class="weather" id="weather"><span class="muted">—</span></div>
+  <button class="h-btn settings-btn" id="btn-settings" title="Настройки" aria-label="Настройки">⚙</button>
+</header>
+
+<main class="layout">
+  <!-- левая колонка -->
+  <section class="col col-left" data-tab="missions">
+    <article class="panel" id="p-tasks">
+      <div class="panel-h"><span class="idx">01</span> МИССИИ <span class="h-meta" id="tasks-meta"></span></div>
+      <div class="seg" id="tasks-seg">
+        <button data-view="today" class="on">СЕГОДНЯ</button><button data-view="week">НЕДЕЛЯ</button><button data-view="nodate">БЕЗ СРОКА</button>
+      </div>
+      <ul class="tasks" id="tasks-list"></ul>
+      <form class="inline-add" id="task-form">
+        <input id="task-input" placeholder="Новая задача… (можно «завтра», «в пятницу», «срочно»)" autocomplete="off">
+        <button class="btn" type="submit">+</button>
+      </form>
+    </article>
+    <article class="panel" id="p-protocols">
+      <div class="panel-h"><span class="idx">02</span> ПРОТОКОЛЫ</div>
+      <div class="protocols" id="protocols"></div>
+    </article>
+    <article class="panel" id="p-memory">
+      <div class="panel-h"><span class="idx">03</span> ПАМЯТЬ <span class="h-meta" id="memory-meta"></span></div>
+      <form class="inline-add" id="mem-form"><input id="mem-q" placeholder="Поиск по Obsidian…" autocomplete="off"><button class="btn" type="submit">⌕</button></form>
+      <ul class="facts" id="facts"></ul>
+    </article>
+  </section>
+
+  <!-- центр -->
+  <section class="col col-center" data-tab="core">
+    <div class="reactor-wrap" id="reactor-wrap">
+      <canvas id="reactor" aria-label="Ядро Jarvis"></canvas>
+      <div class="reactor-state" id="reactor-state">ОЖИДАНИЕ</div>
+      <div class="focus-timer hidden" id="focus-timer"></div>
+    </div>
+    <div class="transcript" id="transcript">
+      <div class="heard" id="heard"></div>
+      <div class="said" id="said">Инициализация…</div>
+    </div>
+    <div class="confirms" id="confirms"></div>
+    <form class="command" id="cmd-form">
+      <button type="button" class="icon-btn" id="btn-mic" title="Говорить (или скажите «Джарвис»)" aria-label="Микрофон">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-2.07A7 7 0 0 0 19 12h-2Z"/></svg>
+      </button>
+      <input id="cmd" placeholder="Команда, сэр…" autocomplete="off" enterkeyhint="send">
+      <label class="icon-btn" id="btn-scan" title="Сканировать фото (чек, документ)" aria-label="Камера">
+        <svg viewBox="0 0 24 24"><path d="M9 3 7.2 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9Zm3 14a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/></svg>
+        <input type="file" id="scan-file" accept="image/*" capture="environment" hidden>
+      </label>
+      <button class="icon-btn send" type="submit" aria-label="Отправить">
+        <svg viewBox="0 0 24 24"><path d="M3 20.5 21 12 3 3.5v6.6L15 12 3 13.9v6.6Z"/></svg>
+      </button>
+    </form>
+    <div class="toggles">
+      <label class="tgl"><input type="checkbox" id="opt-wake"><span>«ДЖАРВИС» — ПОСТОЯННОЕ ПРОСЛУШИВАНИЕ</span></label>
+      <label class="tgl"><input type="checkbox" id="opt-fx" checked><span>ЭФФЕКТ ГОЛОСА</span></label>
+      <label class="tgl"><input type="checkbox" id="opt-mute"><span>БЕЗ ЗВУКА</span></label>
+      <button class="btn ghost" id="btn-holo">◈ ГОЛОГРАММА</button>
+    </div>
+    <article class="panel log-panel">
+      <div class="panel-h"><span class="idx">07</span> ЖУРНАЛ СОБЫТИЙ</div>
+      <ul class="log" id="log"></ul>
+    </article>
+  </section>
+
+  <!-- правая колонка -->
+  <section class="col col-right" data-tab="projects">
+    <article class="panel" id="p-projects">
+      <div class="panel-h"><span class="idx">04</span> ПРОЕКТЫ <button class="h-btn" id="projects-refresh" title="Обновить">⟳</button></div>
+      <div id="projects"></div>
+    </article>
+    <article class="panel hidden" id="p-workshop">
+      <div class="panel-h"><span class="idx">08</span> МАСТЕРСКАЯ · CLAUDE CODE</div>
+      <pre class="workshop" id="workshop"></pre>
+    </article>
+  </section>
+
+  <section class="col col-right2" data-tab="finance">
+    <article class="panel" id="p-finance">
+      <div class="panel-h"><span class="idx">05</span> ФИНАНСЫ <span class="h-meta" id="fin-month"></span></div>
+      <div class="fin-top">
+        <svg class="gauge" viewBox="0 0 120 120" id="fin-gauge">
+          <circle cx="60" cy="60" r="50" class="g-bg"/>
+          <circle cx="60" cy="60" r="50" class="g-val" id="fin-gauge-val"/>
+          <text x="60" y="58" class="g-num" id="fin-gauge-num">—</text>
+          <text x="60" y="76" class="g-lbl">БЮДЖЕТ</text>
+        </svg>
+        <dl class="fin-nums">
+          <div><dt>РАСХОД</dt><dd id="fin-exp">—</dd></div>
+          <div><dt>ДОХОД</dt><dd id="fin-inc">—</dd></div>
+          <div><dt>ПРОГНОЗ</dt><dd id="fin-fc">—</dd></div>
+        </dl>
+      </div>
+      <ul class="cats" id="fin-cats"></ul>
+      <form class="inline-add" id="fin-form">
+        <input id="fin-amount" inputmode="decimal" placeholder="−450" autocomplete="off" class="amt">
+        <input id="fin-note" placeholder="кофе / зарплата…" autocomplete="off">
+        <button class="btn" type="submit">+</button>
+      </form>
+      <ul class="ops" id="fin-ops"></ul>
+    </article>
+    <article class="panel" id="p-diag" data-tab="systems">
+      <div class="panel-h"><span class="idx">06</span> ДИАГНОСТИКА <span class="h-meta" id="diag-host"></span></div>
+      <div class="bars" id="diag"></div>
+    </article>
+  </section>
+</main>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="core" class="on">ЯДРО</button>
+  <button data-tab="missions">МИССИИ</button>
+  <button data-tab="projects">ПРОЕКТЫ</button>
+  <button data-tab="finance">ФИНАНСЫ</button>
+</nav>
+
+<div class="toasts" id="toasts"></div>
+
+<!-- модальные окна -->
+<div class="modal hidden" id="modal">
+  <div class="modal-box panel">
+    <div class="panel-h"><span class="idx">◈</span> <span id="modal-title"></span> <button class="h-btn" id="modal-close">✕</button></div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<div class="holo hidden" id="holo">
+  <div class="holo-ui">
+    <div class="holo-title">ГОЛОГРАММА ПАМЯТИ <span class="muted" id="holo-stats"></span></div>
+    <div class="holo-actions">
+      <button class="btn ghost" id="holo-gestures">✋ ЖЕСТЫ</button>
+      <button class="btn ghost" id="holo-close">✕ ЗАКРЫТЬ</button>
+    </div>
+    <div class="holo-hint" id="holo-hint">Вращайте мышью или пальцем · колёсико/щипок — масштаб · нажмите на узел, чтобы открыть заметку</div>
+  </div>
+  <div class="holo-label hidden" id="holo-label"></div>
+  <video id="holo-video" class="holo-video hidden" playsinline muted></video>
+  <canvas id="holo-hands" class="holo-hands hidden"></canvas>
+</div>
+
+<script type="module" src="static/app.js?v=3"></script>
+</body>
+</html>

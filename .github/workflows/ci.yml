@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: flake8 и shellcheck
+        run: |
+          pip install flake8==7.4.1 shellcheck-py==0.11.0.1
+          flake8 --count
+          shellcheck -S error start.sh start.command
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Синтаксис JavaScript дашборда
+        run: for f in jarvis/webapp/static/*.js jarvis/webapp/static/core/*.js jarvis/webapp/sw.js; do node --check "$f"; done
+      - name: Тесты ядра для iPhone (JavaScript)
+        run: node --test tests/js/*.test.mjs
+      - name: Шаблон хранилища для iPhone актуален
+        run: python scripts/build_template.py --check
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - run: pytest -v
+
+  audit:
+    name: Уязвимости в зависимостях
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install pip-audit==2.10.1
+          pip-audit -r requirements.txt --desc
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false

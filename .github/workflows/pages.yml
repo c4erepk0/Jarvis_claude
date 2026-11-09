@@ -1,0 +1,44 @@
+name: Pages (Jarvis для iPhone)
+
+# Публикует дашборд как приложение для iPhone: https://<владелец>.github.io/<репозиторий>/
+# Включите один раз: Settings → Pages → Source: GitHub Actions.
+# Ключи в сайт не попадают — их вводят в настройках приложения на телефоне, и они хранятся только там.
+on:
+  push:
+    branches: [main]
+    paths: ["jarvis/webapp/**", "vault-template/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Шаблон хранилища актуален
+        run: python scripts/build_template.py --check
+      - name: Сборка сайта
+        run: |
+          mkdir -p _site
+          cp -r jarvis/webapp/. _site/
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

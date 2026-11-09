@@ -1,0 +1,57 @@
+# Jarvis — контекст для разработки
+
+Этот файл читают Claude Code и `@claude` в GitHub. При заметных изменениях — обновляйте.
+
+## Что это
+Личный ассистент владельца (@c4erepk0): голос + HUD-дашборд в духе фильма «Железный человек»,
+память в хранилище Obsidian (markdown), проекты (IPAStore и др.), задачи, финансы.
+Интерфейс, тексты, комментарии, README и описания PR — **на русском**.
+
+## Стек
+Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-tts · psutil.
+Без ORM и баз: **всё состояние — файлы в хранилище Obsidian** (+ `data/` для служебного).
+Фронтенд — ES-модули без сборки (`jarvis/webapp/`), Three.js/MediaPipe — с CDN, только для голограммы.
+
+## Структура
+- `jarvis/__main__.py` — запуск, засев пустого хранилища из `vault-template/`.
+- `jarvis/config.py` — настройки из `.env`. Новая настройка → `config.py` + `.env.example` + README.
+- `jarvis/core.py` — класс `Jarvis`: все действия `act_*`, очередь подтверждений, `handle()` — главный вход.
+- `jarvis/intents.py` — локальный разбор русских команд; `jarvis/ru.py` — даты, суммы, склонения.
+- `jarvis/brain.py` — Claude: инструменты, append-only история, `fallbacks="default"`, отказ (`refusal`).
+- `jarvis/protocols.py` — протоколы (встроенные + `Jarvis/Protocols.md`).
+- `jarvis/vault.py` — безопасные пути, атомарная запись, frontmatter, поиск, граф, наблюдение за изменениями.
+- `jarvis/tasks.py` (формат Obsidian Tasks) · `jarvis/finance.py` (таблицы по месяцам, копейки) · `jarvis/memory.py`.
+- `jarvis/projects.py` + `jarvis/github.py` — статус, задачи для @claude, локальный Claude Code, деплой.
+- `jarvis/web.py` — REST + WebSocket + вход; `jarvis/hub.py` — шина событий; `jarvis/watchers.py` — фоновые датчики.
+- `jarvis/voice.py` (TTS), `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
+- `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`.
+- `jarvis/webapp/static/core/*.js` — **ядро для режима «только iPhone»**: порт Python-ядра (ru, vault,
+  tasks, finance, memory, intents, brain, projects, protocols, jarvis). Отвечает на те же `/api/…`, что сервер.
+  Память — `GitHubStore` (приватный репозиторий с хранилищем, кэш блобов по sha), Claude — официальный
+  JS SDK с CDN (`dangerouslyAllowBrowser`, ключ только на устройстве). `static/standalone.js` — настройки,
+  выбор склада, засев хранилища. **Меняете логику или формат заметок в Python — меняйте и здесь** (и наоборот).
+- `jarvis/cron.py` + `.github/workflows/jarvis-cron.yml` — оповещения в Telegram без сервера (раз в 15 мин).
+- `.github/workflows/pages.yml` — публикация дашборда для iPhone на GitHub Pages.
+- `static/vault-template.json` — генерируется `scripts/build_template.py` из `vault-template/` (CI проверяет).
+  **При изменении css/js поднимайте `?v=N` в `index.html`, `app.js` и `sw.js` (CACHE)**.
+- `vault-template/` — стартовое хранилище. `sync/` и `docs/sync.md` — LiveSync (CouchDB + мост) и Syncthing.
+
+## Правила
+- Работа — в ветках и через PR в `main`; CI зелёный (`make check`).
+- Каждая новая функция — с тестом: Python — `tests/`, ядро для iPhone — `tests/js/*.test.mjs`
+  (`node --test`; фейковые Claude и GitHub — в `tests/js/jarvis.test.mjs`).
+- Деньги — в копейках (int). Даты в заметках — ISO `YYYY-MM-DD`.
+- Писать в хранилище только через `Vault` (проверка путей, атомарная запись). Не ломать формат заметок:
+  их правит человек в Obsidian.
+- Внешние/необратимые действия — только через `ask_confirm()` (подтверждение владельца).
+- История разговора с Claude только дописывается; системный промпт и набор инструментов неизменны в
+  пределах разговора (кэш и preserved thinking). Время и служебное — в начало сообщения пользователя.
+- Не коммитить `.env`, `data/`, `vault/`, `sync/livesync/config.json`.
+- Зависимости — точные версии в `requirements.txt`.
+
+## Команды
+```bash
+make dev / make test / make lint / make check / make run
+python -m pytest tests/test_commands.py -q   # один набор
+node --test tests/js/*.test.mjs              # ядро для iPhone
+```
