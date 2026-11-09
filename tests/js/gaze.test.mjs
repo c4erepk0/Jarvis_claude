@@ -2,10 +2,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { AdaptiveGaze, BIG_CHECK, BIG_POINTS, BLEND_KEYS, CAL_POINTS, CHECK_POINTS, Calibration, FACE, GazeModel,
-  OneEuro2D, RAW_LANDMARKS, evaluateSession, evaluateUsage, eyeFeatures, packFrame, pickTarget, snapRadius, targetDistance,
-  unpackFrame } from "../../jarvis/webapp/static/gaze.js";
-import { face, rng, runCalibration } from "./gaze-synthetic.mjs";
+import { AdaptiveGaze, BIG_CHECK, BIG_POINTS, BLEND_KEYS, CAL_POINTS, CALIBRATIONS, CHECK_POINTS, Calibration, FACE,
+  FEATURE_VERSION, GazeModel, OneEuro2D, RAW_LANDMARKS, SCAN, evaluateSession, evaluateUsage, eyeFeatures, gazeFeatures,
+  headPose, packFrame, pickTarget, snapRadius, targetDistance, unpackFrame } from "../../jarvis/webapp/static/gaze.js";
+import { BASE_POSE, MOVED_POSES, PHONE, face, face3d, poseError, rng, runCalibration, runCalibration3d } from "./gaze-synthetic.mjs";
 
 test("признаки взгляда: радужка внутри глаза, моргание и отсутствие лица", () => {
   const center = eyeFeatures(face(0.5, 0.5).lm, face(0.5, 0.5).blend);
@@ -42,7 +42,7 @@ test("модель: учится на точках калибровки и уг�
 test("калибровка: точки по очереди, пока лица нет — время стоит, в конце — точность в пикселях", () => {
   const rand = rng(11);
   const cal = new Calibration({ screen: { w: 390, h: 844 } });
-  assert.deepEqual(cal.counter, { n: 1, total: CAL_POINTS.length + CHECK_POINTS.length });
+  assert.deepEqual(cal.counter, { n: 1, total: CAL_POINTS.length + CALIBRATIONS.quick.scan.length + CHECK_POINTS.length });
   let ts = 0;
   // лица нет 2 с — первая точка не проходит сама
   for (; ts < 2000; ts += 33) cal.feed(null, ts);
@@ -66,10 +66,10 @@ test("калибровка: точки по очереди, пока лица н
     }
   }
   assert.ok(cal.done);
-  assert.equal(seen.length, CAL_POINTS.length + CHECK_POINTS.length);
+  assert.equal(seen.length, cal.list.length);
   assert.ok(cal.model.ready);
   assert.ok(cal.errorPx < 30, `ошибка ${cal.errorPx} px`);
-  assert.ok(ts < 25000, "калибровка не должна тянуться");
+  assert.ok(ts < 40000, `калибровка не должна тянуться (${ts} мс)`);
   // магнит: чем точнее взгляд и слабее настройка, тем меньше радиус; «выкл» — только то, что под взглядом
   assert.equal(snapRadius(cal.errorPx), 20);
   assert.equal(snapRadius(200, 3), 150);
@@ -131,7 +131,7 @@ test("запись кадров: точки и коэффициенты сохр
   a.forEach((v, j) => assert.ok(Math.abs(v - b[j]) < 0.02, `признак ${j}: ${v} → ${b[j]}`));   // округление до 1e-4
 });
 
-test("большая калибровка: 33 точки, запись для хранилища и её оценка совпадает с приложением", () => {
+test("большая калибровка: 25 точек, 3 скана, 8 проверочных; запись для хранилища и её оценка совпадает с приложением", () => {
   assert.equal(BIG_POINTS.length, 25);
   assert.equal(BIG_CHECK.length, 8);
   // «змейка»: соседние точки сетки — соседи на экране, глазу не прыгать через весь экран
@@ -140,12 +140,14 @@ test("большая калибровка: 33 точки, запись для х
     assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.3);
   }
   const { cal, ms } = runCalibration({ mode: "big" });
-  assert.ok(cal.done && ms < 60000, `большая калибровка — около минуты (${ms} мс)`);
+  assert.ok(cal.done && ms < 90000, `большая калибровка — около полутора минут (${ms} мс)`);
   const s = JSON.parse(JSON.stringify(cal.toSession({ created: "2026-11-09T12:00:00Z", device: "test" })));
   assert.equal(s.kind, "jarvis-gaze-session");
-  assert.equal(s.points.length, 33);
+  assert.equal(s.points.length, 36);
   assert.equal(s.points.filter((p) => p.check).length, 8);
-  assert.ok(s.frames.length > 33 * 20 && s.frames.every((f) => f.p >= 0 && f.p < 33 && f.lm.length === RAW_LANDMARKS.length * 2));
+  assert.equal(s.points.filter((p) => p.scan).length, 3);
+  assert.equal(s.featureVersion, FEATURE_VERSION);
+  assert.ok(s.frames.length > 33 * 20 && s.frames.every((f) => f.p >= 0 && f.p < 36 && f.lm.length === RAW_LANDMARKS.length * 2));
   assert.ok(JSON.stringify(s).length < 900000, "запись не раздута");
   const ev = evaluateSession(s);
   assert.ok(ev.errorPx < 20, `ошибка ${ev.errorPx}`);
@@ -194,4 +196,67 @@ test("журнал нажатий: оценка моделью калибров�
   const plain = evaluateUsage(session, usage), learned = evaluateUsage(session, usage, { learn: true });
   assert.equal(plain.clicks, 30);
   assert.ok(learned.errorPx < plain.errorPx, `${plain.errorPx} → ${learned.errorPx}`);
+});
+
+// ---------- телефон двигают: поза головы относительно камеры меняется ----------
+test("поза головы по матрице MediaPipe (4×4 по столбцам, см)", () => {
+  const pose = { x: 3, y: -5, z: -30, yaw: 10, pitch: -8, roll: 12 };
+  const { matrix } = face3d(195, 400, pose, { poseNoise: 0 });
+  const h = headPose(matrix);
+  assert.ok(Math.abs(h.x - 3) < 0.01 && Math.abs(h.y + 5) < 0.01 && Math.abs(h.z - 30) < 0.01);
+  assert.ok(Math.abs(h.roll - 12) < 3 && Math.abs(h.yaw - 10) < 3 && Math.abs(h.pitch + 8) < 3, JSON.stringify(h));
+  assert.equal(headPose(null), null);
+  // без матрицы — прежние признаки, с матрицей — с учётом позы
+  const fc = face3d(195, 400, BASE_POSE);
+  assert.equal(gazeFeatures(fc.lm, fc.blend).length, eyeFeatures(fc.lm, fc.blend).length);
+  assert.equal(gazeFeatures(fc.lm, fc.blend, fc.matrix).length, 18);
+  assert.equal(gazeFeatures(fc.lm, fc.blend, [...fc.matrix.slice(0, 14), 3, 1]).length, 17);   // лицо «за камерой» — не верим
+});
+
+test("скан лица: идёт, пока телефоном не поводили по всем осям", () => {
+  const { cal, steps } = runCalibration3d({ mode: "quick" });
+  assert.ok(cal.done);
+  const scan = steps.find((s) => s.scan), after = steps[steps.indexOf(scan) + 1];
+  const ms = after.from - scan.from;
+  assert.ok(ms >= SCAN.minMs && ms < SCAN.maxMs, `скан с движением — ${ms} мс`);
+  assert.ok(cal.poseRange.z[1] - cal.poseRange.z[0] >= SCAN.need.z, JSON.stringify(cal.poseRange));
+  // телефон не двигали — скан ждёт до предела и подсказывает, по каким осям ещё поводить
+  const still = runCalibration3d({ mode: "quick", move: false });
+  const s2 = still.steps.find((s) => s.scan), a2 = still.steps[still.steps.indexOf(s2) + 1];
+  assert.ok(a2.from - s2.from >= SCAN.maxMs, `без движения — ${a2.from - s2.from} мс`);
+  const c = new Calibration({ mode: "quick", points: [[0.5, 0.5]], check: [] });
+  let ts = 0;
+  c.feed(null, ts);
+  for (; c.counter.n === 1; ts += 33) { const fc = face3d(195, 422, BASE_POSE); c.feed(gazeFeatures(fc.lm, fc.blend, fc.matrix), ts, packFrame(fc.lm, fc.blend, fc.matrix)); }
+  for (let k = 0; k < 60; k++, ts += 33) { const fc = face3d(195, 295, { ...BASE_POSE, x: k / 10 }); c.feed(gazeFeatures(fc.lm, fc.blend, fc.matrix), ts, packFrame(fc.lm, fc.blend, fc.matrix)); }
+  assert.ok(c.scanning && c.coverage.x > 0.4 && c.coverage.roll < 0.2, JSON.stringify(c.coverage));
+});
+
+test("телефон сдвинули, наклонили, поднесли ближе — калибровка со сканом не сбивается", () => {
+  const avg = (model) => MOVED_POSES.reduce((s, p) => s + poseError(model, p), 0) / MOVED_POSES.length;
+  const { cal } = runCalibration3d({ mode: "quick" });
+  const ad = cal.adaptive();
+  const same = poseError(ad, BASE_POSE), moved = avg(ad);
+  // прежние признаки (без позы головы) в той же калибровке — для сравнения
+  const old = runCalibration3d({ mode: "quick", features: (lm, b) => eyeFeatures(lm, b) }).cal;
+  const oldMoved = MOVED_POSES.reduce((s, p) => s + poseError(old.model, p, { features: (lm, b) => eyeFeatures(lm, b) }), 0) / MOVED_POSES.length;
+  assert.ok(same < 30, `та же поза: ${same.toFixed(0)} px`);
+  assert.ok(moved < 40, `сдвинули телефон: ${moved.toFixed(0)} px`);
+  assert.ok(moved < oldMoved * 0.75, `с позой головы ${moved.toFixed(0)} px против ${oldMoved.toFixed(0)} px без неё`);
+  assert.ok(cal.errorPx < 40, `проверочные точки после скана: ${cal.errorPx.toFixed(0)} px`);
+  // далеко за пределами калибровки — модель это видит (голограмма подскажет пройти скан заново)
+  assert.equal(ad.outOfRange(headPose(face3d(195, 400, BASE_POSE).matrix)), false);
+  assert.equal(ad.outOfRange(headPose(face3d(195, 400, { ...BASE_POSE, z: -60 }).matrix)), true);
+  const saved = AdaptiveGaze.fromJSON(JSON.parse(JSON.stringify(ad)));
+  assert.equal(saved.featureVersion, FEATURE_VERSION);
+  assert.ok(saved.outOfRange(headPose(face3d(195, 400, { ...BASE_POSE, z: -60 }).matrix)));
+});
+
+test("отчёт по записи 3D-калибровки: устойчивость к движению телефона видна в цифрах", () => {
+  const s = JSON.parse(JSON.stringify(runCalibration3d({ mode: "big" }).cal.toSession()));
+  const ev = evaluateSession(s);
+  assert.ok(ev.movePx !== null && ev.moveNoScanPx !== null, JSON.stringify(ev));
+  assert.ok(ev.movePx < ev.moveNoScanPx, `со сканом ${ev.movePx} px, без скана ${ev.moveNoScanPx} px`);
+  assert.ok(ev.errorPx < 40, JSON.stringify(ev));
+  assert.ok(JSON.stringify(s).length < 1500000, "запись большой калибровки со сканом не раздута");
 });

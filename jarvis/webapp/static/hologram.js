@@ -9,8 +9,8 @@
 // Управление взглядом (MediaPipe Face Landmarker, gaze.js): взгляд — курсор, примагниченный к ближайшей кнопке
 //   или узлу; короткий щипок — нажать то, на что смотрите; щипок и движение — вращать граф или листать заметку.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=11";
-import { DEFAULT_MAGNET, OneEuro2D, eyeFeatures, packFrame, pickTarget, snapRadius } from "./gaze.js?v=11";
+import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=12";
+import { DEFAULT_MAGNET, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=12";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
@@ -586,11 +586,14 @@ export class Hologram {
     const blend = {};
     for (const c of res.faceBlendshapes?.[0]?.categories || []) blend[c.categoryName] = c.score;
     const matrix = res.facialTransformationMatrixes?.[0]?.data || null;
-    const f = eyeFeatures(lm, blend);
+    // признаки с учётом позы головы относительно камеры: телефон сдвинули — взгляд не «съезжает»
+    const f = gazeFeatures(lm, blend, matrix);
     if (lm) z.faceAt = ts;
     // «сырой» кадр — для записи калибровки и журнала нажатий (упаковывается, только когда нужен)
     z.raw = f ? { lm, blend, matrix } : null;
-    this.drawFaceStatus(Boolean(lm), Boolean(f));
+    // телефон увели далеко за пределы того, что было на скане, — точность падает, подскажем пройти его заново
+    const off = Boolean(f && !z.calibration && z.model?.outOfRange?.(headPose(matrix)));
+    this.drawFaceStatus(Boolean(lm), Boolean(f), off);
     if (z.calibration) {
       z.calibration.feed(f, ts, f && z.calibration.record ? packFrame(lm, blend, matrix) : null);
       this.gazeCursor.classList.add("hidden");
@@ -703,17 +706,17 @@ export class Hologram {
     } });
   }
 
-  /** Подпись на окошке камеры сверху: видит ли Jarvis глаза. */
-  drawFaceStatus(face, eyes) {
+  /** Подпись на окошке камеры сверху: видит ли Jarvis глаза и не ушёл ли телефон за пределы скана. */
+  drawFaceStatus(face, eyes, off = false) {
     const g = this.overlay.getContext("2d"), W = this.overlay.width;
-    const text = !face ? "👁 не вижу лицо" : eyes ? "👁 вижу взгляд" : "👁 глаза закрыты";
+    const text = !face ? "👁 не вижу лицо" : !eyes ? "👁 глаза закрыты" : off ? "👁 поза вне скана — ◎" : "👁 вижу взгляд";
     g.save();
     g.scale(-1, 1);
     g.font = "600 15px system-ui, sans-serif";
     const w = g.measureText(text).width + 14;
     g.fillStyle = "rgba(2,10,16,.78)";
     g.fillRect(-W + 6, 6, w, 24);
-    g.fillStyle = face && eyes ? "#ffd59a" : "#ffb347";
+    g.fillStyle = face && eyes && !off ? "#ffd59a" : "#ffb347";
     g.fillText(text, -W + 13, 23);
     g.restore();
   }

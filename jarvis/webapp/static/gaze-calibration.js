@@ -1,9 +1,11 @@
 // Калибровка взгляда поверх голограммы: точки по очереди по всему экрану (по ним учится модель), затем
 // проверочные — по ним видна точность; в конце владелец сам нажимает «ГОТОВО» взглядом и щипком.
-// Быстрая — 13 точек, ~20 с; большая — 33 точки, ~1 мин. Обе записывают «сырые» кадры (точки глаз и лица,
+// Быстрая — 9 точек, скан лица и 4 проверочные, ~35 с; большая — 25 точек, скан и 8 проверочных, ~1,5 мин.
+// Скан лица: смотрите на точку и водите телефоном — модель учится, что движение телефона ≠ перевод взгляда
+// (иначе калибровка верна только в той позе, где её прошли). Обе записывают «сырые» кадры (точки глаз и лица,
 // без фото) — запись уходит в хранилище (Jarvis/Gaze/sessions) для анализа: scripts/gaze_eval.mjs.
 // Логика точек — Calibration в gaze.js, сам взгляд считает голограмма (hologram.js: trackGaze).
-import { Calibration, MAGNET_LEVELS } from "./gaze.js?v=11";
+import { Calibration, MAGNET_LEVELS, SCAN_AXES } from "./gaze.js?v=12";
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -33,9 +35,12 @@ export class GazeCalibration {
     this.el.setAttribute("role", "dialog");
     this.el.setAttribute("aria-label", "Калибровка взгляда");
     this.el.innerHTML = `<div class="gc-dot hidden"><i></i></div><div class="gc-status" aria-live="polite"></div>
+      <div class="gc-scan hidden">${Object.entries(SCAN_AXES).map(([k, name]) =>
+        `<div class="gc-axis" data-axis="${k}"><span>${{ x: "↔", y: "↕", z: "⤢", roll: "⟲" }[k]} ${name}</span><i></i></div>`).join("")}</div>
       <div class="gc-panel panel"></div>`;
     root.append(this.el);
     this.dot = this.el.querySelector(".gc-dot");
+    this.scanBox = this.el.querySelector(".gc-scan");
     this.status = this.el.querySelector(".gc-status");
     this.panel = this.el.querySelector(".gc-panel");
     this.el.addEventListener("click", (e) => {
@@ -57,18 +62,20 @@ export class GazeCalibration {
     this.cal = null;
     if (this.holo.gaze) this.holo.gaze.calibration = null;
     this.dot.classList.add("hidden");
+    this.scanBox.classList.add("hidden");
     this.status.textContent = "";
     this.showPanel(`
       <div class="panel-h"><span class="idx">◈</span> КАЛИБРОВКА ВЗГЛЯДА</div>
       <p><b>Смотрите на точку, пока она не сожмётся</b> — потом она перепрыгнет.</p>
-      <p class="muted">Держите телефон или садитесь к ноутбуку как обычно: лицо целиком в кадре, свет спереди.
-        Голову держать неподвижно не нужно, но и вертеть не стоит.</p>
+      <p><b>Скан лица</b>: когда точка станет янтарной, смотрите на неё и <b>медленно водите телефоном</b> — влево-вправо,
+        вверх-вниз, ближе-дальше, наклоняйте. Тогда калибровка не собьётся, когда телефон в руке сдвинется.</p>
+      <p class="muted">Держите телефон или садитесь к ноутбуку как обычно: лицо целиком в кадре, свет спереди.</p>
       <p class="muted"><b>Большая</b> точнее и записывает данные для анализа и улучшения: точки глаз и лица по кадрам,
         без фото — в хранилище, папка Jarvis/Gaze. Быстрая тоже сохраняется.</p>
       ${this.liveLine()}
       <div class="gc-actions"><button class="btn ghost" data-act="cancel">ОТМЕНА</button>
-        <button class="btn ghost" data-act="quick" data-air>БЫСТРАЯ · 20 с</button>
-        <button class="btn primary" data-act="big" data-air>БОЛЬШАЯ · 1 мин</button></div>`);
+        <button class="btn ghost" data-act="quick" data-air>БЫСТРАЯ · 35 с</button>
+        <button class="btn primary" data-act="big" data-air>БОЛЬШАЯ · 1,5 мин</button></div>`);
     this.say("Калибровка взгляда. Смотрите на точку, пока она не сожмётся.");
   }
 
@@ -111,6 +118,7 @@ export class GazeCalibration {
     this.holo.gaze.calibration = this.cal;
     this.dot.classList.remove("hidden");
     this.lastPoint = null;
+    this.scanSaid = false;
     this.startedAt = performance.now();
     requestAnimationFrame(this.tick);
   }
@@ -124,13 +132,21 @@ export class GazeCalibration {
       this.lastPoint = c.point;
       this.dot.style.transform = `translate(${x * innerWidth}px, ${y * innerHeight}px)`;
       this.dot.classList.toggle("check", c.checking);
+      this.dot.classList.toggle("scan", c.scanning);
+      this.scanBox.classList.toggle("hidden", !c.scanning);
+      this.status.classList.toggle("gc-status-scan", c.scanning);
+      if (c.scanning && !this.scanSaid) { this.scanSaid = true; this.say("Скан лица. Смотрите на точку и медленно водите телефоном."); }
     }
     this.dot.style.setProperty("--p", String(c.progress));
     const { n, total } = c.counter;
     const lost = c.faceSeenAt === null ? ts - this.startedAt > 2500 : c.faceLost(ts);
+    const cov = c.scanning ? c.coverage : null;
+    if (cov) for (const el of this.scanBox.querySelectorAll(".gc-axis")) el.style.setProperty("--p", String(cov[el.dataset.axis]));
+    const left = cov ? Object.keys(SCAN_AXES).filter((k) => cov[k] < 1).map((k) => SCAN_AXES[k]) : [];
     this.status.innerHTML = lost
       ? '<span class="gt-bad">не вижу лицо — посмотрите в камеру, нужен свет спереди</span>'
-      : `${c.checking ? "проверка" : "точка"} ${n}/${total}`;
+      : c.scanning ? `<b>скан лица</b>: смотрите на точку и медленно водите телефоном${left.length ? ` — ещё ${left.join(", ")}` : " — так держать"}`
+        : `${c.checking ? "проверка" : "точка"} ${n}/${total}`;
     requestAnimationFrame(this.tick);
   }
 
@@ -143,6 +159,7 @@ export class GazeCalibration {
     this.holo.setGazeModel(model, errorPx);
     const saving = Promise.resolve(this.onDone(model, errorPx, session));
     this.dot.classList.add("hidden");
+    this.scanBox.classList.add("hidden");
     this.status.textContent = "";
     const px = Math.round(errorPx);
     this.showPanel(`
@@ -153,6 +170,7 @@ export class GazeCalibration {
       <p class="gc-how">👁 взгляд — курсор; ближайшая к нему кнопка или заметка подсвечивается — её и нажмёт щипок<br>
         🤏 короткий щипок (свести и развести пальцы) — нажать<br>
         🤏 щипок и движение — вращать граф или листать заметку, на которую смотрите<br>
+        📱 телефон можно двигать — скан это учёл; надпись «поза вне скана» на камере — пора пройти калибровку снова<br>
         ✊ ✌ 👍 ✋ 👋 — как раньше: закрыть, править, сохранить, сброс, листать</p>
       <p class="muted">Попробуйте сразу: посмотрите на «ГОТОВО» и щипните. Повторить калибровку — кнопка ◎ вверху.</p>
       <div class="gc-actions"><button class="btn ghost" data-act="intro" data-air>ПОВТОРИТЬ</button>

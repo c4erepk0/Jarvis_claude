@@ -45,8 +45,12 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `tests/js/fixtures/hands-hagrid.json` (точки MediaPipe на кадрах HaGRID, тест «реальные руки»); нарисованные
   эталоны проходят почти при любых порогах. Распознанное видно на окошке камеры («вижу: …»); жест, которому сейчас
   нечего делать, показывает подсказку (`noteHint`), а не молчит.
-- `static/gaze.js` — управление взглядом без DOM (тест — `tests/js/gaze.test.mjs`): `eyeFeatures` (радужки, уголки глаз,
-  поворот головы по точкам MediaPipe Face Landmarker + коэффициенты `eyeLook*`), `Calibration` (13 точек, точность в px),
+- `static/gaze.js` — управление взглядом без DOM (тест — `tests/js/gaze.test.mjs`): `gazeFeatures` — признаки с учётом
+  позы головы относительно камеры (матрица MediaPipe 4×4 по столбцам, см): луч из головы до плоскости экрана + поворот
+  глаз × расстояние в осях головы, `FEATURE_VERSION`; без матрицы — `eyeFeatures` (радужки, уголки глаз, коэффициенты
+  `eyeLook*`). `Calibration` — точки, **скан лица** (`SCAN`: смотреть на точку и водить телефоном, пока размах позы
+  по осям не наберётся) и проверочные; точность в px. Проверка устойчивости к движению телефона — 3D-голова
+  `face3d` в `tests/js/gaze-synthetic.mjs` (`MOVED_POSES`): без позы головы и скана ошибка вдвое больше.
   `GazeModel` (гребневая регрессия признаки → доля экрана), `OneEuro2D` (сглаживание), `pickTarget` (магнит к целям).
   `static/gaze-calibration.js` — окно калибровки; модель хранится в localStorage (`jarvis.gaze_model`).
   В голограмме: `startGaze` / `stopGaze` / `setGazeModel`, цели магнита — `AIR_TARGETS` и узлы графа вне панелей;
