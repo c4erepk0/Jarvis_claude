@@ -12,6 +12,16 @@ from . import ru
 from .finance import guess_category, looks_like_income
 
 
+TASK_ADD = (r"^(?:добавь|добавить|создай|создать|запиши|записать|заведи|поставь|новая|новую)\s+(?:мне\s+)?"
+            r"(?:(?:ещё|еще)\s+)?(?:одну\s+)?((?:[а-яё-]+(?:ую|юю)\s+){0,2})(?:задачу|задача|дело|в задачи)"
+            r"(?:[:,]?\s+(.+))?$")
+
+
+def _nominative(word: str) -> str:
+    """Прилагательное из винительного падежа в именительный: «тестовую» → «тестовая», «синюю» → «синяя»."""
+    return (word[:-2] + ("яя" if word.lower().endswith("юю") else "ая")).lower()
+
+
 @dataclass
 class Intent:
     name: str
@@ -111,14 +121,20 @@ def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: st
                                    "priority": None})
 
     # --- задачи ---
-    m = re.match(r"^(?:добавь|создай|запиши|новая|поставь)\s+(?:мне\s+)?(?:задачу|задача|дело|в задачи)[:,]?\s+(.+)$",
-                 t, re.I) or re.match(r"^задача[:,]\s*(.+)$", t, re.I)
-    if m:
-        body = m.group(1)
-        due, body = ru.parse_date(body, ref)
+    # «создай тестовую задачу», «добавь срочную задачу позвонить», «добавь задачу купить молоко завтра»
+    m = re.match(TASK_ADD, t, re.I)
+    m2 = None if m else re.match(r"^задача[:,]\s*(.+)$", t, re.I)
+    if m or m2:
+        adjs = [_nominative(w) for w in (m.group(1).split() if m else []) if w.lower() != "новую"]
+        adj_prio = next((p for p, words in PRIORITY_WORDS.items() for w in adjs if w in words), None)
+        adjs = [w for w in adjs if not any(w in words for words in PRIORITY_WORDS.values())]   # «срочную» — приоритет
+        due, body = ru.parse_date((m.group(2) or "") if m else m2.group(1), ref)
         prio, body = _priority(body)
+        prio = prio or adj_prio
         proj, body = _project_hint(body, projects)
-        return Intent("task_add", {"text": body, "due": due.isoformat() if due else None,
+        if not body.strip() and adjs:
+            body = " ".join(adjs) + " задача"     # «создай тестовую задачу» → «тестовая задача»
+        return Intent("task_add", {"text": body.strip(), "due": due.isoformat() if due else None,
                                    "priority": prio, "project": proj})
     m = re.match(r"^(?:отметь|закрой|заверши|я выполнил|выполнил|выполнила|я сделал|сделал|сделала|готово)"
                  r"(?: задачу| задача)?[:,]?\s+(.+?)(?: как)?(?: выполненн\w*| сделанн\w*)?$", t, re.I)

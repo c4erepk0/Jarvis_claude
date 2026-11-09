@@ -49,6 +49,11 @@ function priorityOf(text) {
   return [null, text];
 }
 
+const TASK_ADD = "^(?:добавь|добавить|создай|создать|запиши|записать|заведи|поставь|новая|новую)\\s+(?:мне\\s+)?"
+  + "(?:(?:ещё|еще)\\s+)?(?:одну\\s+)?((?:[а-яё-]+(?:ую|юю)\\s+){0,2})(?:задачу|задача|дело|в задачи)(?:[:,]?\\s+(.+))?$";
+// прилагательное из винительного падежа в именительный: «тестовую» → «тестовая», «синюю» → «синяя»
+const nominative = (w) => (w.slice(0, -2) + (w.toLowerCase().endsWith("юю") ? "яя" : "ая")).toLowerCase();
+
 const stripLead = (s) => s.replace(rx("^(?:о том,? что|что|про|о|об)\\s+"), "");
 
 export function parse(text, ref, projects = [], wake = "джарвис") {
@@ -81,15 +86,21 @@ export function parse(text, ref, projects = [], wake = "джарвис") {
     return { name: "task_add", args: { text: rest3, due: due || ref, project: proj, priority: null } };
   }
 
-  m = rx("^(?:добавь|создай|запиши|новая|поставь)\\s+(?:мне\\s+)?(?:задачу|задача|дело|в задачи)[:,]?\\s+(.+)$").exec(t)
-    || rx("^задача[:,]\\s*(.+)$").exec(t);
-  if (m) {
-    let [due, body] = parseDate(m[1], ref);
+  // «создай тестовую задачу», «добавь срочную задачу позвонить», «добавь задачу купить молоко завтра»
+  m = rx(TASK_ADD).exec(t);
+  const m2 = m ? null : rx("^задача[:,]\\s*(.+)$").exec(t);
+  if (m || m2) {
+    let adjs = (m ? m[1].split(/\s+/) : []).filter((w) => w && w.toLowerCase() !== "новую").map(nominative);
+    const isPrio = (w) => Object.values(PRIORITY_WORDS).some((words) => words.includes(w));
+    const adjPrio = Object.entries(PRIORITY_WORDS).find(([, words]) => adjs.some((w) => words.includes(w)))?.[0] || null;
+    adjs = adjs.filter((w) => !isPrio(w));   // «срочную» — это приоритет, а не текст
+    let [due, body] = parseDate(m ? (m[2] || "") : m2[1], ref);
     let prio;
     [prio, body] = priorityOf(body);
     let proj;
     [proj, body] = projectHint(body, projects);
-    return { name: "task_add", args: { text: body, due, priority: prio, project: proj } };
+    if (!body.trim() && adjs.length) body = `${adjs.join(" ")} задача`;   // «тестовую» → «тестовая задача»
+    return { name: "task_add", args: { text: body.trim(), due, priority: prio || adjPrio, project: proj } };
   }
   m = rx("^(?:отметь|закрой|заверши|я выполнил|выполнил|выполнила|я сделал|сделал|сделала|готово)(?: задачу| задача)?[:,]?\\s+(.+?)(?: как)?(?: выполненн[а-яё]*| сделанн[а-яё]*)?$").exec(t);
   if (m && !rx("^(?:отчёт|отчет)").test(m[1])) return { name: "task_done", args: { query: m[1].trim() } };

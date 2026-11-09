@@ -3,7 +3,7 @@
 //   щипок (большой + указательный) и движение — вращение; щипок двумя руками — масштаб;
 //   указательный палец — курсор, задержка на узле 1 с — открыть заметку; раскрытая ладонь 1 с — сброс вида.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, classify } from "./gestures.js?v=4";
+import { BONES, classify } from "./gestures.js?v=5";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
