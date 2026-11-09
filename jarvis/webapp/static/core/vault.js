@@ -346,6 +346,7 @@ export class GitHubStore {
       if (item.type !== "blob") continue;
       const parts = item.path.split("/");
       if (IGNORED.has(parts[0]) || !TEXT_EXT.some((e) => item.path.toLowerCase().endsWith(e))) continue;
+      if (parts[1] === "Gaze") continue;      // записи взгляда (Jarvis/Gaze) большие и нужны только для анализа — не грузим
       if (item.size > 2_000_000) continue;
       out.set(item.path, item.sha);
     }

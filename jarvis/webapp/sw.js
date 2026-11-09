@@ -1,7 +1,7 @@
 // Сервис-воркер: оболочка дашборда открывается даже без сети; данные всегда берутся с сервера.
-const CACHE = "jarvis-v10";
-const SHELL = ["./", "static/app.css?v=10", "static/app.js?v=10", "static/reactor.js?v=10", "static/voice.js?v=10",
-  "static/standalone.js?v=10", "static/vault-template.json?v=10", "manifest.webmanifest"];
+const CACHE = "jarvis-v11";
+const SHELL = ["./", "static/app.css?v=11", "static/app.js?v=11", "static/reactor.js?v=11", "static/voice.js?v=11",
+  "static/standalone.js?v=11", "static/vault-template.json?v=11", "manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

@@ -421,6 +421,27 @@ export class Jarvis {
     }
   }
 
+  /** Запись калибровки взгляда или журнала нажатий — как jarvis/gaze.py: проверка и новый файл в Jarvis/Gaze. */
+  async saveGazeRecord(data) {
+    const KINDS = { "jarvis-gaze-session": ["sessions", "frames"], "jarvis-gaze-usage": ["usage", "clicks"] };
+    const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
+    if (!data || typeof data !== "object" || !KINDS[data.kind]) throw bad("это не запись взгляда");
+    const [sub, items] = KINDS[data.kind];
+    if (!Number.isInteger(data.version) || data.version < 1) throw bad("нет версии записи");
+    const rows = data[items];
+    if (!Array.isArray(rows) || !rows.length) throw bad(`пустая запись: нет ${items}`);
+    if (rows.length > 20000) throw bad("слишком длинная запись");
+    const sc = data.screen;
+    if (!sc || !["w", "h"].every((k) => typeof sc[k] === "number" && sc[k] > 0)) throw bad("нет размера экрана");
+    const text = JSON.stringify(data);
+    if (new TextEncoder().encode(text).length > 6 * 2 ** 20) throw bad("слишком большая запись");
+    const d = this.now(), pad = (v) => String(v).padStart(2, "0");
+    const base = `Jarvis/Gaze/${sub}/${isoDay(d)}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    let rel = `${base}.json`;
+    for (let n = 2; this.vault.exists(rel); n++) rel = `${base}-${n}.json`;
+    return this.vault.write(rel, `${text}\n`, `Jarvis: запись взгляда ${rel}`);
+  }
+
   // ---------- те же маршруты /api/…, что у Python-сервера ----------
   async request(method, path, body) {
     const url = new URL(path, "http://local");
@@ -465,6 +486,7 @@ export class Jarvis {
       }
     }
     if (p === "/api/graph") return this.vault.graph();
+    if (p === "/api/gaze" && method === "POST") return { path: await this.saveGazeRecord(body) };
     if (p === "/api/diagnostics") return this.diagnostics();
     if (p === "/api/weather") return { weather: await this.briefing.weather(), rates: await this.briefing.rates() };
     if (p === "/api/voice") { if ("muted" in body) this.muted = Boolean(body.muted); return { muted: this.muted }; }

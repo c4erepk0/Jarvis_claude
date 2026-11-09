@@ -51,6 +51,13 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `static/gaze-calibration.js` — окно калибровки; модель хранится в localStorage (`jarvis.gaze_model`).
   В голограмме: `startGaze` / `stopGaze` / `setGazeModel`, цели магнита — `AIR_TARGETS` и узлы графа вне панелей;
   нажатие — событие `tap` от `GestureTracker` (короткий щипок, сдвиг < `DRAG`); сам взгляд ничего не нажимает.
+  Курсор — там, куда смотрят; магнит (`pickTarget`, сила `MAGNET_LEVELS`, по умолчанию слабый) только выбирает цель.
+  Модель — `AdaptiveGaze`: калибровка + нажатия по целям (`gazeLearn`), хранится в `jarvis.gaze_model`.
+  **Записи взгляда**: калибровки (`Calibration.toSession`, быстрая/большая) и журнал нажатий — «сырые» точки глаз и лица
+  (`packFrame`, без фото) → `POST /api/gaze` (`jarvis/gaze.py`, то же в `core/jarvis.js`) → `Jarvis/Gaze/{sessions,usage}`.
+  Анализ — `scripts/gaze_eval.mjs` (признаки пересчитываются из сырых точек текущей `eyeFeatures`); записи владельца —
+  `tests/js/fixtures/gaze` + `baseline.json`, тест `gaze-sessions.test.mjs` не даёт ухудшить точность на них.
+  Меняете признаки или модель — сравните отчёт до и после, обновите baseline (`--baseline`), только если стало лучше.
 - `jarvis/webapp/static/core/*.js` — **ядро для режима «только iPhone»**: порт Python-ядра (ru, vault,
   tasks, finance, memory, intents, brain, projects, protocols, jarvis). Отвечает на те же `/api/…`, что сервер.
   Память — `GitHubStore` (приватный репозиторий с хранилищем, кэш блобов по sha), Claude — официальный

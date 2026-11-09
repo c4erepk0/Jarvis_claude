@@ -9,8 +9,8 @@
 // Управление взглядом (MediaPipe Face Landmarker, gaze.js): взгляд — курсор, примагниченный к ближайшей кнопке
 //   или узлу; короткий щипок — нажать то, на что смотрите; щипок и движение — вращать граф или листать заметку.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=10";
-import { OneEuro2D, eyeFeatures, pickTarget, snapRadius } from "./gaze.js?v=10";
+import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=11";
+import { DEFAULT_MAGNET, OneEuro2D, eyeFeatures, packFrame, pickTarget, snapRadius } from "./gaze.js?v=11";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
@@ -397,8 +397,9 @@ export class Hologram {
     this.emitGesture({ type: "frame", kind: g.kind, hands: g.hands });
     if (this.gaze) {
       this.trackGaze(v, ts, g);
-      // нажимается то, на что смотрели, когда свели пальцы (взгляд к отпусканию мог уже уйти)
-      if (g.kind === "pinch" && !h.pinch) this.gaze.pressTarget = this.gaze.target;
+      // нажимается то, на что смотрели, когда свели пальцы (взгляд к отпусканию мог уже уйти); тогда же
+      // запоминаем, что видела камера, — для доучивания модели и журнала нажатий
+      if (g.kind === "pinch" && !h.pinch) this.gazePressStart();
     }
     for (const e of this.tracker.update(g, ts)) this.onTracked(e, ts);
     if (ts - h.badgeAt > 300 && ts > h.badgeUntil) this.badge.classList.add("hidden");
@@ -527,27 +528,35 @@ export class Hologram {
   }
 
   // ---------- взгляд ----------
-  /** Включить управление взглядом: камера и руки (жесты — действия) и модель лица. Без model (GazeModel)
-   *  курсора нет, пока не пройдена калибровка (gaze-calibration.js). errorPx — точность калибровки. */
-  async startGaze(video, overlay, { model = null, errorPx = null } = {}) {
+  /** Включить управление взглядом: камера и руки (жесты — действия) и модель лица. Без model (AdaptiveGaze или
+   *  GazeModel) курсора нет, пока не пройдена калибровка (gaze-calibration.js). errorPx — точность калибровки,
+   *  magnet — сила магнита (0…3, gaze.js: MAGNET_LEVELS). */
+  async startGaze(video, overlay, { model = null, errorPx = null, magnet = DEFAULT_MAGNET } = {}) {
     await this.startGestures(video, overlay);
     if (!this.face) {
       this.onStatus("загружаю модель лица…");
       const { tasks, fileset } = await this.visionTasks();
       this.face = await tasks.FaceLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: FACE_MODEL, delegate: "GPU" }, runningMode: "VIDEO", numFaces: 1,
-        outputFaceBlendshapes: true,
+        outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true,
       });
     }
-    this.gaze = { model, radius: snapRadius(errorPx), filter: new OneEuro2D(), target: null, pressTarget: null,
-      point: null, calibration: null, faceAt: 0 };
+    this.gaze = { model, errorPx, magnet, radius: snapRadius(errorPx, magnet), filter: new OneEuro2D(), target: null,
+      pressTarget: null, press: null, point: null, raw: null, recent: [], calibration: null, faceAt: 0 };
     this.onStatus("взгляд — курсор, короткий щипок — нажать, щипок и движение — вращать или листать");
   }
 
   /** Новая калибровка: курсор начинает с чистого листа. */
   setGazeModel(model, errorPx) {
     if (!this.gaze) return;
-    Object.assign(this.gaze, { model, radius: snapRadius(errorPx), filter: new OneEuro2D(), point: null });
+    Object.assign(this.gaze, { model, errorPx, radius: snapRadius(errorPx, this.gaze.magnet), filter: new OneEuro2D(), point: null });
+  }
+
+  /** Сила магнита: 0 — выкл, 1 — слабый, 2 — средний, 3 — сильный. */
+  setGazeMagnet(level) {
+    if (!this.gaze) return;
+    this.gaze.magnet = level;
+    this.gaze.radius = snapRadius(this.gaze.errorPx, level);
   }
 
   stopGaze() {
@@ -565,7 +574,8 @@ export class Hologram {
     this.screenNodes = [];
     this.positions.forEach((p, i) => {
       v.copy(p).applyMatrix4(this.world.matrixWorld).project(this.camera);
-      if (v.z < 1) this.screenNodes.push({ id: this.nodes[i].id, node: true, x: (v.x * 0.5 + 0.5) * innerWidth, y: (-v.y * 0.5 + 0.5) * innerHeight });
+      // узел — светящийся кружок около 28 px: целиком цель, как кнопка, а не точка в его центре
+      if (v.z < 1) this.screenNodes.push({ id: this.nodes[i].id, node: true, x: (v.x * 0.5 + 0.5) * innerWidth, y: (-v.y * 0.5 + 0.5) * innerHeight, w: 28, h: 28 });
     });
   }
 
@@ -575,17 +585,29 @@ export class Hologram {
     const lm = res.faceLandmarks?.[0];
     const blend = {};
     for (const c of res.faceBlendshapes?.[0]?.categories || []) blend[c.categoryName] = c.score;
+    const matrix = res.facialTransformationMatrixes?.[0]?.data || null;
     const f = eyeFeatures(lm, blend);
     if (lm) z.faceAt = ts;
+    // «сырой» кадр — для записи калибровки и журнала нажатий (упаковывается, только когда нужен)
+    z.raw = f ? { lm, blend, matrix } : null;
     this.drawFaceStatus(Boolean(lm), Boolean(f));
-    if (z.calibration) { z.calibration.feed(f, ts); this.gazeCursor.classList.add("hidden"); return; }
+    if (z.calibration) {
+      z.calibration.feed(f, ts, f && z.calibration.record ? packFrame(lm, blend, matrix) : null);
+      this.gazeCursor.classList.add("hidden");
+      return;
+    }
     if (!z.model) return;
+    if (f) {                                           // признаки последних 250 мс — для нажатия
+      z.recent.push({ ts, f });
+      while (z.recent.length && ts - z.recent[0].ts > 250) z.recent.shift();
+    }
     if (!f) {                                          // моргнул — курсор стоит; лица долго нет — прячем
       if (ts - z.faceAt > 800) this.gazeCursor.classList.add("hidden");
       return;
     }
     const p = z.model.predict(f);
     const clamp = (a) => Math.max(0, Math.min(1, a));
+    z.rawPoint = { x: p.x * innerWidth, y: p.y * innerHeight };
     z.point = z.filter.filter({ x: clamp(p.x) * innerWidth, y: clamp(p.y) * innerHeight }, ts);
     if (g.kind === "point") { this.gazeCursor.classList.add("hidden"); return; }   // палец главнее взгляда
     this.gazeAt(z.point);
@@ -617,21 +639,32 @@ export class Hologram {
     if (z.target?.el && z.target.el !== t?.el) z.target.el.classList.remove("gaze-on");
     if (t?.el) t.el.classList.add("gaze-on");
     z.target = t;
-    // на широкой строке (задача во всю панель) курсор остаётся там, куда смотрите, а не прыгает в середину
-    const at = !t ? pt : t.el ? { x: Math.max(t.x - t.w / 2 + 12, Math.min(t.x + t.w / 2 - 12, pt.x)), y: t.y } : t;
+    // курсор — там, куда вы смотрите (он не прыгает на цель), а цель, которую нажмёт щипок, подсвечена
     if (t?.node) this.setMouse(t.x, t.y);              // подпись узла — как при наведении мышью
     else { this.mouse.set(-9, -9); this.hoverAt = null; }
-    this.gazeCursor.style.transform = `translate(${at.x}px, ${at.y}px)`;
+    this.gazeCursor.style.transform = `translate(${pt.x}px, ${pt.y}px)`;
     this.gazeCursor.classList.toggle("lock", Boolean(t));
     this.gazeCursor.classList.remove("hidden");
     this.emitGesture({ type: "gaze", x: pt.x, y: pt.y, target: t ? (t.node ? t.id : "button") : null });
+  }
+
+  gazePressStart() {
+    const z = this.gaze;
+    z.pressTarget = z.target;
+    const fs = z.recent.map((r) => r.f);
+    z.press = fs.length && z.raw && z.rawPoint ? {
+      f: fs[0].map((_, j) => fs.reduce((s, f) => s + f[j], 0) / fs.length),   // среднее за 250 мс — без дрожания
+      raw: packFrame(z.raw.lm, z.raw.blend, z.raw.matrix), pred: { ...z.rawPoint },
+    } : null;
   }
 
   /** Короткий щипок при управлении взглядом: нажать то, на что смотрели, когда свели пальцы. */
   gazeClick(ts) {
     const z = this.gaze;
     const t = z.pressTarget || z.target;
+    const press = z.press;
     z.pressTarget = null;
+    z.press = null;
     if (!t || (t.el && !t.el.isConnected)) {
       this.showBadge("pinch", "посмотрите на кнопку или заметку", 0, ts, false, true, 1200);
       return;
@@ -650,6 +683,24 @@ export class Hologram {
     void this.gazeCursor.offsetWidth;                  // перезапуск анимации нажатия
     this.gazeCursor.classList.add("click");
     this.showBadge("pinch", label, 1, ts, true);
+    if (press && !this.suppressOpen) this.gazeLearn(t, press);
+  }
+
+  /** Нажали по цели — значит, смотрели на неё: модель доучивается, нажатие уходит в журнал (app.js). */
+  gazeLearn(t, press) {
+    // где был взгляд: у узла и небольшой кнопки — их центр; на широкой строке — по вертикали центр строки,
+    // а по горизонтали — куда смотрели (в какую часть строки — неизвестно)
+    const label = t.el && t.w > 120 ? { x: Math.max(t.x - t.w / 2 + 16, Math.min(t.x + t.w / 2 - 16, press.pred.x)), y: t.y }
+      : { x: t.x, y: t.y };
+    const errPx = Math.hypot(press.pred.x - label.x, press.pred.y - label.y);
+    if (errPx > Math.max(160, this.gaze.radius * 3)) return;   // промах вдвое шире магнита — скорее случайное нажатие
+    this.gaze.model.learn?.(press.f, label.x / innerWidth, label.y / innerHeight, errPx);
+    const r1 = (v) => Math.round(v * 10) / 10;
+    this.emitGesture({ type: "gaze-click", record: {
+      t: Date.now(), target: { x: r1(t.x), y: r1(t.y), w: r1(t.w || 0), h: r1(t.h || 0), kind: t.node ? "node" : "button" },
+      label: { x: r1(label.x), y: r1(label.y) }, pred: { x: r1(press.pred.x), y: r1(press.pred.y) }, errPx: Math.round(errPx),
+      magnet: this.gaze.magnet, ...press.raw,
+    } });
   }
 
   /** Подпись на окошке камеры сверху: видит ли Jarvis глаза. */
