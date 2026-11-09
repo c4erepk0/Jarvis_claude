@@ -1,4 +1,6 @@
 """Мозг Jarvis — Claude (Anthropic API) с инструментами для памяти, задач, финансов и проектов.
+Вместо Claude можно подключить GigaChat или YandexGPT (`JARVIS_LLM`, jarvis/llm.py) — разговор, личность
+и инструменты те же, меняется только формат запросов.
 
 Как устроен разговор:
 - история только дописывается (append-only): так работает кэш промпта и сохраняются блоки
@@ -63,6 +65,18 @@ TOOLS: list[dict] = [
      "input_schema": _obj({"path": S}, ["path"])},
     {"name": "note_append", "description": "Дописать текст в конец заметки (создаст её, если нет). Только .md.",
      "input_schema": _obj({"path": S, "text": S}, ["path", "text"])},
+    {"name": "notes_list", "description": "Список заметок Obsidian (пути) — всех или в одной папке.",
+     "input_schema": _obj({"folder": {**S, "description": "папка, например Projects; пусто — все заметки"}})},
+    {"name": "note_show",
+     "description": "Открыть заметку на экране владельца — в голограмме дашборда (там её можно читать и править).",
+     "input_schema": _obj({"path": {**S, "description": "путь или название заметки"}}, ["path"])},
+    {"name": "note_create", "description": "Создать новую заметку .md (если такая уже есть — ошибка).",
+     "input_schema": _obj({"path": {**S, "description": "путь, например Ideas/Новая идея.md"}, "text": S},
+                          ["path", "text"])},
+    {"name": "note_edit",
+     "description": "Точечно поправить заметку: заменить фрагмент find на replace. find — точная копия куска "
+                    "из note_read, встречается в заметке ровно один раз; пустой replace — удалить фрагмент.",
+     "input_schema": _obj({"path": S, "find": S, "replace": S}, ["path", "find", "replace"])},
     {"name": "journal_note", "description": "Короткая запись в сегодняшнюю ежедневную заметку.",
      "input_schema": _obj({"text": S}, ["text"])},
     {"name": "reminder_add", "description": "Напоминание через N минут (голосом на дашборде и в Telegram).",
@@ -103,7 +117,11 @@ PERSONA = """Ты — J.A.R.V.I.S., личный ИИ-ассистент вла�
 Здоровье, Спорт, Развлечения, Одежда, Образование, Бизнес, Подарки, Доход, Прочее.
 - Работа над кодом проектов — через project_delegate: составь ясное техзадание. Внешние действия \
 (задача для @claude, Claude Code, деплой) ждут подтверждения владельца — так и скажи.
-- Каждое сообщение владельца начинается со служебной строки в квадратных скобках: дата, время, источник.
+- Заметки: показать владельцу — note_show (откроется в голограмме); найти — memory_search или notes_list; \
+поправить — note_read, затем note_edit точным фрагментом; дописать — note_append; новая — note_create. \
+Заметки правит и сам владелец в Obsidian — не переписывай их целиком без просьбы.
+- Каждое сообщение владельца начинается со служебной строки в квадратных скобках: дата, время, источник; \
+если там указана открытая в голограмме заметка — «эта заметка», «здесь» означают её.
 
 Профиль владельца:
 {profile}
@@ -125,10 +143,35 @@ class Brain:
         self.notes: list[str] = []
         self.lock = asyncio.Lock()
         self.usage = {"input": 0, "output": 0, "cache_read": 0}
+        self._chat: Any = None   # GigaChat / YandexGPT (jarvis/llm.py), если мозг — не Claude
+
+    @property
+    def backend(self) -> str:
+        """claude | gigachat | yandex; пусто — мозга нет, только команды."""
+        return "claude" if self._client is not None else self.j.cfg.llm_backend
 
     @property
     def available(self) -> bool:
-        return self._client is not None or self.j.cfg.llm_enabled
+        return bool(self.backend)
+
+    @property
+    def title(self) -> str:
+        return {"claude": "Claude", "gigachat": "GigaChat", "yandex": "YandexGPT"}.get(self.backend, "")
+
+    @property
+    def model(self) -> str | None:
+        cfg = self.j.cfg
+        return {"claude": cfg.model, "gigachat": cfg.gigachat_model, "yandex": cfg.yandex_model}.get(self.backend)
+
+    def chat(self):
+        if self._chat is None:
+            from .llm import make_chat
+            self._chat = make_chat(self.j.cfg, self.backend)
+        return self._chat
+
+    async def close(self) -> None:
+        if self._chat is not None:
+            await self._chat.close()
 
     def client(self):
         if self._client is None:
@@ -142,7 +185,7 @@ class Brain:
 
     def tools(self) -> list[dict]:
         tools = list(TOOLS)
-        if self.j.cfg.web_search:
+        if self.j.cfg.web_search and self.backend == "claude":
             tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 3})
         return tools
 
@@ -176,15 +219,17 @@ class Brain:
         if summary:
             self.notes.insert(0, summary)
 
-    def _header(self, source: str) -> str:
+    def _header(self, source: str, note: str | None = None) -> str:
         n = self.j.now()
         head = f"[{n:%Y-%m-%d %H:%M}, {ru.WEEKDAYS[n.weekday()]}; источник: {source}]"
+        if note:
+            head += f"\n[В голограмме открыта заметка: {note}]"
         if self.notes:
             head += "\n[Служебно: " + " ".join(self.notes) + "]"
             self.notes = []
         return head
 
-    async def ask(self, text: str, source: str = "dashboard") -> Reply:
+    async def ask(self, text: str, source: str = "dashboard", note: str | None = None) -> Reply:
         async with self.lock:
             if self.messages and (time.time() - self.last_activity > IDLE_RESET_SECONDS
                                   or self.turns >= self.j.cfg.max_history_turns):
@@ -192,12 +237,15 @@ class Brain:
             if self.system is None:
                 self.system = self.build_system()
             self.last_activity = time.time()
-            self.messages.append({"role": "user", "content": f"{self._header(source)}\n{text}"})
+            self.messages.append({"role": "user", "content": f"{self._header(source, note)}\n{text}"})
             self.turns += 1
             return await self._run(self.messages)
 
     async def analyze_image(self, data: bytes, mime: str, hint: str = "") -> Reply:
         """Фото чека/документа → Claude смотрит и сам вызывает инструменты (расходы, задачи)."""
+        if self.backend != "claude":
+            return Reply(f"Разбирать фото пока умеет только Claude, {self.j.title}. Опишите словами — запишу.",
+                         kind="warn", source="system")
         async with self.lock:
             system = self.system or self.build_system()
             task = hint.strip() or ("Посмотри на изображение. Если это чек или квитанция — запиши расходы через "
@@ -226,9 +274,11 @@ class Brain:
         )
 
     async def _run(self, messages: list[dict], system: str | None = None) -> Reply:
+        system = system or self.system or self.build_system()
+        if self.backend != "claude":
+            return await self._run_chat(messages, system)
         import anthropic
 
-        system = system or self.system or self.build_system()
         confirm = None
         start_len = len(messages)
         for _ in range(MAX_TOOL_ROUNDS):
@@ -264,7 +314,8 @@ class Brain:
                 text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
                 if resp.stop_reason == "max_tokens" and not text:
                     text = "Ответ получился слишком длинным и оборвался."
-                return Reply(text or "Готово, " + self.j.title + ".", source="claude", confirm=confirm)
+                text = text or "Готово, " + self.j.title + "."
+                return Reply(text, speech=ru.speech_text(text), source="claude", confirm=confirm)
             results = []
             for call in calls:
                 content, is_error, pending = await self._run_tool(call.name, call.input or {})
@@ -275,6 +326,44 @@ class Brain:
             messages.append({"role": "user", "content": results})
         return Reply("Слишком много шагов для одной просьбы — остановился. Уточните задачу.", kind="warn",
                      source="claude", confirm=confirm)
+
+    async def _run_chat(self, messages: list[dict], system: str) -> Reply:
+        """Тот же цикл «ответ → инструменты → ответ», но через GigaChat / YandexGPT (jarvis/llm.py).
+        История — в формате этой модели (модель не меняется посреди работы Jarvis)."""
+        from .llm import LLMAuthError, LLMError
+
+        chat = self.chat()
+        confirm = None
+        start_len = len(messages)
+        for _ in range(MAX_TOOL_ROUNDS):
+            try:
+                turn = await chat.complete(system, messages, TOOLS)
+            except LLMAuthError as e:
+                del messages[start_len - 1:]
+                log.error("%s: ключ не принят: %s", chat.title, e)
+                return Reply(f"{chat.title} не принял ключ, {self.j.title}: {e}. Проверьте настройки в .env.",
+                             kind="error", source="system")
+            except LLMError as e:
+                del messages[start_len - 1:]
+                log.error("%s: %s", chat.title, e)
+                return Reply(f"{chat.title} сейчас недоступен: {e}. Команды без ИИ по-прежнему работают.",
+                             kind="warn", source="system")
+            self.usage["input"] += turn.usage[0]
+            self.usage["output"] += turn.usage[1]
+            if turn.refused:
+                del messages[start_len - 1:]   # как и с Claude: отклонённый ход не остаётся в истории
+                return Reply(f"Боюсь, с этим я помочь не могу, {self.j.title}.", kind="warn", source=chat.name)
+            messages.append(turn.message)
+            if not turn.calls:
+                text = turn.text.strip() or f"Готово, {self.j.title}."
+                return Reply(text, speech=ru.speech_text(text), source=chat.name, confirm=confirm)
+            for call_id, name, args in turn.calls:
+                content, is_error, pending = await self._run_tool(name, args)
+                if pending:
+                    confirm = pending
+                messages.append(chat.tool_message(call_id, name, content, is_error))
+        return Reply("Слишком много шагов для одной просьбы — остановился. Уточните задачу.", kind="warn",
+                     source=chat.name, confirm=confirm)
 
     def _count(self, resp) -> None:
         u = getattr(resp, "usage", None)
@@ -308,9 +397,19 @@ class Brain:
             elif name == "memory_search":
                 res = j.act_search(str(args["query"]), 8)
             elif name == "note_read":
-                text = j.vault.read(str(args["path"]))
-                res = {"path": args["path"], "content": text[:MAX_TOOL_RESULT],
-                       "truncated": len(text) > MAX_TOOL_RESULT}
+                path = str(args["path"])
+                path = path if j.vault.exists(path) else (j.vault.find_note(path) or path)   # можно и по названию
+                text = j.vault.read(path)
+                res = {"path": path, "content": text[:MAX_TOOL_RESULT], "truncated": len(text) > MAX_TOOL_RESULT}
+            elif name == "notes_list":
+                files = j.vault.list_files(str(args.get("folder") or "").strip("/"), exts={".md", ".txt"})
+                res = {"count": len(files), "notes": files[:300], "truncated": len(files) > 300}
+            elif name == "note_show":
+                res = await j.act_open_note(str(args["path"]))
+            elif name == "note_create":
+                res = await j.act_save_note(str(args["path"]), str(args["text"]), None)
+            elif name == "note_edit":
+                res = await j.act_edit_note(str(args["path"]), str(args["find"]), str(args.get("replace") or ""))
             elif name == "note_append":
                 path = str(args["path"])
                 if not path.endswith(".md"):

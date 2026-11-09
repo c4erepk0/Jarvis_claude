@@ -220,3 +220,26 @@ def greeting(hour: int) -> str:
     if 18 <= hour < 23:
         return "Добрый вечер"
     return "Доброй ночи"
+
+
+def speech_text(text: str) -> str:
+    """Текст для голоса: модели любят markdown (**жирный**, списки, ссылки) — читать его вслух не нужно.
+    То же — speechText в core/ru.js."""
+    t = re.sub(r"```.*?```", " ", text or "", flags=re.S)
+    t = re.sub(r"!?\[\[([^\]|]+)\|([^\]]+)\]\]", r"\2", t)
+    t = re.sub(r"!?\[\[([^\]]+)\]\]", r"\1", t)
+    t = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", t)
+    t = re.sub(r"^\s{0,3}#{1,6}\s+", "", t, flags=re.M)
+    t = re.sub(r"^\s*>\s?(?:\[![^\]]*\]\s*)?", "", t, flags=re.M)
+    t = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?", "", t, flags=re.M)
+    t = re.sub(r"(\*\*|__|~~|==)(.+?)\1", r"\2", t)
+    t = re.sub(r"(?<![\w*])[*_]([^*_\n]+)[*_](?![\w*])", r"\1", t)
+    t = t.replace("`", "")
+    parts: list[str] = []
+    for line in (ln.strip() for ln in t.splitlines()):
+        if not line or re.fullmatch(r"[-*_=|: ]{3,}", line):
+            continue
+        if parts and not re.search(r"[.!?…:;,]$", parts[-1]):
+            parts[-1] += "."
+        parts.append(line)
+    return " ".join(parts)

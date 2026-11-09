@@ -1,0 +1,141 @@
+# Jarvis на своём сервере (VPS) — постоянная ссылка за 150–500 ₽ в месяц
+
+Сервер работает круглосуточно: терминал на телефоне больше не нужен, ссылка не меняется,
+оповещения и утренний брифинг в Telegram приходят сами. Всё ставится одной командой с iPhone.
+
+## 1. Какой сервер взять
+
+| | |
+|---|---|
+| ОС | **Ubuntu 24.04** (или Debian 12). Не 22.04 — там слишком старый Python |
+| Мощность | 1 vCPU, 1 ГБ RAM, диск от 10 ГБ. Если позже на тот же сервер — IPAStore, берите 2 ГБ |
+| Сеть | публичный IPv4 (обычно включён в тариф) — без него не будет HTTPS-ссылки |
+| Оплата | российской картой, удобно посуточно |
+
+Ориентир цен на минимальный тариф по агрегаторам VPS (2026, сверяйте на сайте хостера — цены и акции
+меняются): VDSina — от ~150–240 ₽, Beget — от ~210 ₽, Aeza — около 600 ₽ (Амстердам); Timeweb Cloud
+и другие — смотрите на сайте. Тариф 1 vCPU / 1 ГБ в 500 ₽ укладывается.
+
+Что учесть при выборе площадки:
+- **Доступ к сервисам.** В конце установки скрипт показывает, что доступно с этого сервера: GitHub,
+  Telegram, голос edge-tts, погода, курсы ЦБ. Если что-то с крестиком — у голоса есть замена
+  (`TTS_ENGINE=browser` — голос iPhone), для остального можно взять сервер в другой локации у того же хостера.
+- **Claude.** Anthropic официально не обслуживает Россию; это зависит от аккаунта и оплаты, а не от того,
+  где стоит сервер. Без ключа Jarvis работает на командах: задачи, траты, бюджет, протоколы, напоминания,
+  брифинг, статус проектов и задачи для @claude на GitHub.
+
+## 2. Установка с iPhone (≈5 минут)
+
+1. Закажите VPS с Ubuntu 24.04. В письме или в панели хостера будут **IP-адрес** и **пароль root**.
+2. В терминале на iPhone подключитесь к серверу:
+   ```
+   ssh root@IP-АДРЕС
+   ```
+   На вопрос `Are you sure you want to continue connecting` ответьте `yes`, затем вставьте пароль
+   (при вводе он не отображается — это нормально).
+3. Уже на сервере выполните одну команду — она скрыто спросит токен GitHub (тот же, что в `.env` на телефоне;
+   нужно право Contents: read на `Jarvis_claude`), скачает установщик и запустит его:
+   ```
+   read -rsp "Токен GitHub: " GITHUB_TOKEN && echo && export GITHUB_TOKEN JARVIS_REF=main && curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/c4erepk0/Jarvis_claude/contents/scripts/vps.sh?ref=$JARVIS_REF" -o vps.sh && bash vps.sh install
+   ```
+4. Установщик задаст пару вопросов — везде можно просто нажать Enter:
+   - репозиторий памяти Obsidian — по умолчанию `c4erepk0/jarvis-vault`;
+   - ключ Claude API — Enter, если ключа нет;
+   - токен Telegram-бота и ваш Telegram ID — для оповещений (можно добавить позже).
+5. В конце появится рамка со ссылкой вида `https://203-0-113-7.sslip.io` и кодом входа. Откройте ссылку
+   в Safari, введите код → «Поделиться» → «На экран „Домой“».
+
+Домен покупать не нужно: адрес `<ip>.sslip.io` бесплатно указывает на ваш сервер, а сертификат HTTPS
+(Let's Encrypt) Caddy получает и продлевает сам. Свой домен можно подключить в любой момент (раздел 4).
+
+## 3. Что ставит установщик
+
+- Python-окружение и код Jarvis в `/opt/jarvis` (отдельный пользователь `jarvis`, без входа в систему).
+- Службу `jarvis` (systemd): запускается при загрузке, перезапускается при сбое.
+- Caddy — HTTPS снаружи; сам Jarvis слушает только `127.0.0.1`, напрямую из интернета к нему не попасть.
+- `.env` с правами 600: код входа (создаётся сам), токен GitHub, репозиторий памяти, ключи.
+- Файл подкачки 1 ГБ, если памяти меньше 1,5 ГБ.
+- Память: Jarvis скачивает хранилище из `jarvis-vault` и синхронизирует его каждые 20 секунд —
+  те же заметки, что в Obsidian на iPhone (плагин Obsidian Git).
+
+Повторный запуск `install` безопасен: настройки, код входа и память сохраняются.
+
+## 4. Обслуживание (по ssh)
+
+```bash
+bash /opt/jarvis/scripts/vps.sh update    # новая версия из GitHub + перезапуск
+bash /opt/jarvis/scripts/vps.sh status    # работает ли, адрес, код входа, последние строки журнала
+bash /opt/jarvis/scripts/vps.sh logs      # журнал в реальном времени (выход — Ctrl+C)
+bash /opt/jarvis/scripts/vps.sh check     # какие внешние сервисы доступны с сервера
+
+nano /opt/jarvis/.env && systemctl restart jarvis   # поменять настройки (ключи, Telegram, голос…)
+```
+
+Свой домен: создайте у регистратора A-запись на IP сервера и выполните
+`JARVIS_DOMAIN=jarvis.example.ru bash /opt/jarvis/scripts/vps.sh install`.
+
+### Обновлять одной командой прямо из терминала на iPhone
+
+Один раз вставьте в терминал на iPhone (не на сервере), подставив IP своего сервера в двух местах.
+Команда создаст SSH-ключ (пароль root спросит последний раз) и добавит короткие команды:
+`ju` — обновить Jarvis, `jstat` — состояние, `jlog` — журнал (выход Ctrl+C), `jssh` — зайти на сервер.
+```bash
+D=/home/termiux; [ -d "$D" ] || D=$HOME; mkdir -p "$D/.ssh" && chmod 700 "$D/.ssh"
+command -v ssh-keygen >/dev/null || apt-get install -y openssh-client >/dev/null
+[ -f "$D/.ssh/jarvis_ed25519" ] || ssh-keygen -t ed25519 -N "" -q -f "$D/.ssh/jarvis_ed25519"
+cat > "$D/jarvis.sh" <<EOF
+# Jarvis на сервере: ju — обновить, jstat — состояние, jlog — журнал (выход Ctrl+C), jssh — зайти на сервер
+J_SSH="ssh -t -i $D/.ssh/jarvis_ed25519 -o UserKnownHostsFile=$D/.ssh/known_hosts -o ConnectTimeout=15 root@IP-СЕРВЕРА"
+ju()    { \$J_SSH 'bash /opt/jarvis/scripts/vps.sh update'; }
+jstat() { \$J_SSH 'bash /opt/jarvis/scripts/vps.sh status'; }
+jlog()  { \$J_SSH 'bash /opt/jarvis/scripts/vps.sh logs'; }
+jssh()  { \$J_SSH; }
+EOF
+grep -qF "$D/jarvis.sh" ~/.bashrc 2>/dev/null || echo ". $D/jarvis.sh" >> ~/.bashrc
+. "$D/jarvis.sh"
+ssh -o UserKnownHostsFile="$D/.ssh/known_hosts" root@IP-СЕРВЕРА 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo "✓ ключ добавлен"' < "$D/.ssh/jarvis_ed25519.pub"
+```
+`/home/termiux` — папка, которая переживает перезапуск терминала; ключ и команды хранятся там. Если после
+перезапуска терминал пишет `ju: command not found`, выполните `. /home/termiux/jarvis.sh`.
+Пароль root в команды не записывается: вход — по ключу.
+
+## 5. Если не открывается
+
+- **Порты 80 и 443.** У некоторых хостеров в панели есть файрвол / «группа безопасности» — откройте в ней
+  80 и 443 (TCP). Порт 80 нужен для выдачи сертификата.
+- **Сертификат ещё выдаётся.** Первый раз это до пары минут — обновите страницу.
+- **Подробности:** `journalctl -u caddy -n 50 --no-pager` (HTTPS) и `bash /opt/jarvis/scripts/vps.sh status` (Jarvis).
+- Если Let's Encrypt не выдаёт сертификат на `sslip.io` (такое бывает при большой нагрузке на общий домен) —
+  подключите бесплатный поддомен DuckDNS или свой домен (раздел 4).
+
+## 6. Если Telegram недоступен с сервера
+
+Признак — в журнале (`bash /opt/jarvis/scripts/vps.sh status`) строка «Telegram недоступен: нет ответа (таймаут)»,
+а в проверке установщика — «✗ Telegram». Проверить вручную:
+```bash
+curl -sS -m 15 -o /dev/null -w "Telegram: HTTP %{http_code} за %{time_total} с\n" https://api.telegram.org || echo "Telegram: нет связи"
+```
+Jarvis при этом работает: дашборд, голос и память не зависят от Telegram, оповещения не тормозят остальное,
+а попытки переподключиться идут всё реже (до раза в 5 минут) и не засоряют журнал.
+
+Оповещения тогда можно получать через **GitHub Actions** — серверы GitHub достают до Telegram:
+раз в 15 минут они проверяют память (`jarvis-vault`) и присылают напоминания, утренний брифинг и упавшие
+сборки проектов. Команды из Telegram (`/tasks`, `/money`…) в этом режиме не работают — только оповещения.
+
+1. GitHub → репозиторий `Jarvis_claude` → Settings → Secrets and variables → Actions:
+   - вкладка **Variables** → `VAULT_REPO` = `c4erepk0/jarvis-vault`;
+   - вкладка **Secrets** → `VAULT_TOKEN` (токен GitHub с правом Contents: read/write на `jarvis-vault`),
+     `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID`.
+2. На сервере выключите Telegram, чтобы он не пытался зря (и не было дублей, если связь появится):
+   ```bash
+   sed -i 's/^TELEGRAM_BOT_TOKEN=.*/TELEGRAM_BOT_TOKEN=/' /opt/jarvis/.env && systemctl restart jarvis
+   ```
+3. Проверка: Actions → «Jarvis — оповещения» → Run workflow. Подробно — `docs/iphone.md`, раздел 4.
+
+Минуты Actions: у приватного репозитория на бесплатном тарифе — 2000 минут в месяц; запуск раз в 15 минут
+укладывается примерно в 1500. Если не хватает — сделайте реже (строка `cron` в `.github/workflows/jarvis-cron.yml`).
+
+## 7. После переезда на сервер
+
+Остановите Jarvis в терминале на iPhone (Ctrl+C): иначе два Jarvis будут присылать одинаковые
+оповещения в Telegram. Память у них общая (`jarvis-vault`), поэтому ничего не потеряется.

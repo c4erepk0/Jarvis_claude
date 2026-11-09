@@ -12,7 +12,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from .core import Jarvis
-from .vault import VaultError
+from .vault import VaultConflict, VaultError, content_version
 
 log = logging.getLogger("jarvis.web")
 WEBAPP = Path(__file__).parent / "webapp"
@@ -82,8 +82,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
         if (path.startswith("/api/") or path == "/ws") and path not in PUBLIC and not auth.allowed(request):
             return web.json_response({"error": "нужен вход", "login": True}, status=401)
         if request.method in ("POST", "PUT", "DELETE") and path.startswith("/api/") and auth.enabled:
-            origin = request.headers.get("Origin")
-            if origin and origin.split("://", 1)[-1] != request.host:
+            if not same_origin(request):
                 return web.json_response({"error": "чужой источник запроса"}, status=403)
         try:
             resp = await handler(request)
@@ -134,15 +133,16 @@ def build_app(jarvis: Jarvis) -> web.Application:
         return ok({"auth": auth.enabled, "logged_in": auth.allowed(request)})
 
     async def login(request):
-        ip = request.remote or "?"
-        if not auth.throttle(ip):
+        if not auth.throttle(client_ip(request)):
             return ok({"error": "слишком много попыток, подождите 5 минут"}, 429)
         data = await body(request)
-        if auth.enabled and not auth.check_code(str(data.get("code", ""))):
+        # код часто копируют из терминала вместе с пробелом или переводом строки в конце
+        if auth.enabled and not auth.check_code(str(data.get("code", "")).strip()):
             await asyncio.sleep(0.7)
             return ok({"error": "неверный код"}, 403)
         resp = ok()
-        secure = request.secure or request.headers.get("X-Forwarded-Proto") == "https"
+        secure = request.secure or request.headers.get("X-Forwarded-Proto") == "https" \
+            or '"https"' in request.headers.get("Cf-Visitor", "")
         resp.set_cookie(COOKIE, auth.make(), max_age=SESSION_DAYS * 86400, httponly=True, samesite="Strict",
                         secure=secure, path="/")
         return resp
@@ -159,7 +159,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
     async def command(request):
         data = await body(request)
         reply = await j.handle(str(data.get("text", ""))[:4000], source=str(data.get("source") or "dashboard"),
-                               client=str(data.get("client") or "") or None)
+                               client=str(data.get("client") or "") or None, note=str(data.get("note") or "") or None)
         return ok(reply.as_dict())
 
     async def tasks_get(request):
@@ -238,9 +238,19 @@ def build_app(jarvis: Jarvis) -> web.Application:
         return ok(await j.act_remember(str(d.get("fact", ""))))
 
     async def note_get(request):
-        path = request.query.get("path", "")
-        text = j.vault.read(path)
-        return ok({"path": path, "content": text[:200_000]})
+        return ok(j.act_read_note(request.query.get("path", "")))
+
+    async def note_save(request):
+        """PUT — правка (base — версия, с которой начали править), POST — новая заметка."""
+        d = await body(request)
+        base = str(d.get("base") or "") or None if request.method == "PUT" else None
+        if request.method == "PUT" and not base:
+            raise ValueError("не указана версия заметки (base)")
+        try:
+            return ok(await j.act_save_note(str(d.get("path", "")), str(d.get("content", "")), base))
+        except VaultConflict as e:
+            current = None if e.current is None else {"content": e.current, "version": content_version(e.current)}
+            return ok({"error": str(e), "conflict": True, "current": current}, 409)
 
     async def graph(_):
         loop = asyncio.get_running_loop()
@@ -273,8 +283,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
         return ok({"ok": res})
 
     async def scan(request):
-        if not j.brain.available:
-            return ok({"error": "Анализ фото работает с ключом Claude API (ANTHROPIC_API_KEY)."}, 503)
+        if j.brain.backend != "claude":
+            return ok({"error": "Анализ фото пока работает только с Claude API (ANTHROPIC_API_KEY)."}, 503)
         reader = await request.multipart()
         image, mime, hint = None, "", ""
         async for part in reader:
@@ -295,8 +305,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
 
     async def ws_handler(request):
         if auth.enabled:
-            origin = request.headers.get("Origin")
-            if origin and origin.split("://", 1)[-1] != request.host:
+            if not same_origin(request):
                 raise web.HTTPForbidden()
         ws = web.WebSocketResponse(heartbeat=25)
         await ws.prepare(request)
@@ -344,6 +353,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/memory", memory_get)
     r.add_post("/api/memory", memory_add)
     r.add_get("/api/note", note_get)
+    r.add_put("/api/note", note_save)
+    r.add_post("/api/note", note_save)
     r.add_get("/api/graph", graph)
     r.add_get("/api/diagnostics", diag)
     r.add_get("/api/weather", weather)
@@ -353,6 +364,27 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_post("/api/scan", scan)
     r.add_get("/ws", ws_handler)
     return app
+
+
+def client_ip(request: web.Request) -> str:
+    """Адрес посетителя. За Caddy или туннелем (запрос пришёл с этого же сервера) настоящий адрес —
+    в X-Forwarded-For, иначе лимит попыток входа был бы общим для всех и чужой перебор блокировал бы владельца."""
+    remote = request.remote or "?"
+    if remote in ("127.0.0.1", "::1"):
+        forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if forwarded:
+            return forwarded
+    return remote
+
+
+def same_origin(request: web.Request) -> bool:
+    """Запрос с нашей же страницы? За туннелем (Cloudflare, localhost.run) Host бывает внутренним —
+    тогда сверяемся с X-Forwarded-Host."""
+    origin = request.headers.get("Origin")
+    if not origin:
+        return True
+    host = origin.split("://", 1)[-1]
+    return host in {request.host, request.headers.get("X-Forwarded-Host", "")}
 
 
 def _required(name: str):

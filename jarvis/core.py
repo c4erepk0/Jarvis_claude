@@ -13,6 +13,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from . import diagnostics, intents, ru
@@ -25,7 +26,7 @@ from .memory import Memory
 from .projects import Projects
 from .reminders import Reminders
 from .tasks import TaskBook
-from .vault import Vault, VaultError
+from .vault import Vault, VaultError, content_version
 from .voice import Voice
 
 log = logging.getLogger("jarvis.core")
@@ -82,6 +83,7 @@ class Jarvis:
         self.pending: dict[str, PendingAction] = {}
         self.notifiers: list[Notifier] = []
         self.focus_until: float | None = None
+        self.git = None                 # GitSync, если хранилище живёт в GitHub-репозитории
         from .brain import Brain
         from .protocols import Protocols
         self.brain = Brain(self, client=llm)
@@ -105,6 +107,7 @@ class Jarvis:
         return [p.name for p in self.projects.list()]
 
     async def close(self) -> None:
+        await self.brain.close()
         await self.github.close()
         await self.projects.close()
         await self.briefing.close()
@@ -280,6 +283,44 @@ class Jarvis:
     def act_search(self, query: str, limit: int = 6) -> list[dict]:
         return [h.as_dict() for h in self.vault.search(query, limit)]
 
+    # ---------- заметки в голограмме ----------
+    def act_read_note(self, path: str) -> dict:
+        text = self.vault.read(path)
+        rel = self.vault.rel(self.vault.resolve(path))
+        return {"path": rel, "title": self.vault.title_of(rel), "content": text[:NOTE_LIMIT],
+                "version": content_version(text), "truncated": len(text) > NOTE_LIMIT,
+                "editable": len(text) <= NOTE_LIMIT and Path(rel).suffix.lower() in (".md", ".txt")}
+
+    async def act_open_note(self, query: str) -> dict:
+        """Показать заметку на экране — в голограмме на всех открытых дашбордах."""
+        path = self.vault.find_note(query)
+        if not path:
+            raise ValueError(f"не нашёл заметку «{query}»")
+        await self.hub.emit("open_note", {"path": path}, log_it=False)
+        return {"path": path, "title": self.vault.title_of(path)}
+
+    async def act_save_note(self, path: str, text: str, base: str | None) -> dict:
+        """Правка из голограммы: base — версия, с которой начали править (None — новая заметка)."""
+        path = (path or "").strip()
+        if path and not Path(path).suffix:
+            path += ".md"
+        if Path(path).suffix.lower() not in (".md", ".txt"):
+            raise VaultError("в голограмме правятся только заметки .md и .txt")
+        rel = self.vault.save(path, text.replace("\r\n", "\n"), base)
+        await self.log(f"Заметка «{self.vault.title_of(rel)}» {'изменена' if base else 'создана'} в голограмме",
+                       journal=False)
+        await self.changed("notes")
+        return {"path": rel, "version": content_version(self.vault.read(rel))}
+
+    async def act_edit_note(self, path: str, find: str, replace: str) -> dict:
+        """Точечная правка для мозга: заменить фрагмент, который встречается в заметке ровно один раз."""
+        text = self.vault.read(path)
+        count = text.count(find) if find else 0
+        if count != 1:
+            raise ValueError("фрагмент не найден — сначала прочитай заметку (note_read)" if not count else
+                             f"фрагмент встречается {count} раз — возьми фрагмент длиннее, чтобы он был единственным")
+        return await self.act_save_note(path, text.replace(find, replace, 1), content_version(text))
+
     async def act_note(self, text: str) -> dict:
         when = self.now()
         path = self.memory.journal_path(when)
@@ -319,7 +360,9 @@ class Jarvis:
         return self.ask_confirm("deploy", f"Деплой {proj.name} ({proj.deploy_workflow})", {"project": proj.name})
 
     # ---------- главный вход ----------
-    async def handle(self, text: str, source: str = "dashboard", depth: int = 0, client: str | None = None) -> Reply:
+    async def handle(self, text: str, source: str = "dashboard", depth: int = 0, client: str | None = None,
+                     note: str | None = None) -> Reply:
+        """note — заметка, открытая сейчас в голограмме: «эта заметка» в просьбе — она."""
         text = (text or "").strip()
         if not text:
             return Reply("Слушаю вас, " + self.title + ".")
@@ -339,11 +382,12 @@ class Jarvis:
             reply = Reply(f"Не вышло, {self.title}: {e}", kind="error")
         if reply is None:
             if self.brain.available:
-                reply = await self.brain.ask(text, source)
+                reply = await self.brain.ask(text, source, note=note)
             else:
                 reply = Reply(
-                    f"Без подключения к Claude я понимаю только команды, {self.title}. Скажите «что ты умеешь» — "
-                    f"перечислю. Чтобы я понимал свободную речь, добавьте ANTHROPIC_API_KEY в .env.",
+                    f"Без подключения к модели я понимаю только команды, {self.title}. Скажите «что ты умеешь» — "
+                    f"перечислю. Чтобы я понимал свободную речь, подключите GigaChat, YandexGPT или Claude "
+                    f"(ключ в .env, см. docs/brain.md).",
                     kind="warn")
         if reply.confirm is None:
             pending = self.latest_pending()
@@ -411,6 +455,9 @@ class Jarvis:
             item = self.ask_confirm("forget", f"Удалить из памяти факты про «{a['query']}»", {"query": a["query"]})
             return Reply(f"Удалить из памяти всё про «{a['query']}»? Подтвердите.", kind="warn",
                          confirm=item.as_dict())
+        if it.name == "note_open":
+            res = await self.act_open_note(a["query"])
+            return Reply(f"Открываю «{res['title']}» в голограмме, {t}.", kind="ok", data={"open_note": res["path"]})
         if it.name == "recall":
             return self._recall_reply(a.get("query", ""))
         if it.name == "note":
@@ -496,7 +543,7 @@ class Jarvis:
         n = self.now()
         st: dict[str, Any] = {
             "now": n.isoformat(), "title": self.title, "name": self.cfg.user_name,
-            "llm": self.brain.available, "model": self.cfg.model if self.brain.available else None,
+            "llm": self.brain.available, "brain": self.brain.title or None, "model": self.brain.model,
             "voice": {"engine": self.cfg.tts_engine, "server": self.voice.server_side, "muted": self.voice.muted,
                       "wake_word": self.cfg.wake_word},
             "tasks": {"summary": self.tasks.summary(ref), "today": self.act_list_tasks("today"),
@@ -512,6 +559,8 @@ class Jarvis:
             "events": self.hub.recent(),
             "telegram": self.cfg.telegram_enabled,
             "vault": str(self.vault.root),
+            "vault_git": ({"remote": self.git.remote.split("github.com/")[-1].removesuffix(".git"),
+                           "last_sync": self.git.last_sync, "error": self.git.last_error} if self.git else None),
         }
         if with_projects:
             st["projects_status"] = await self.act_project_status()
@@ -555,11 +604,14 @@ def project_line(s: dict) -> str:
     return (" ".join(bits[:1]) + " " + ", ".join(bits[1:]) + ".") if len(bits) > 1 else f"{s['name']}: нет данных."
 
 
+NOTE_LIMIT = 200_000   # больше — показываем, но не даём править (чтобы не обрезать заметку при сохранении)
+
 HELP = """Вот что я умею, {t}:
 • «{wake}, доброе утро» — брифинг: погода, задачи, финансы, проекты, курс.
 • «Добавь задачу написать оферту для IPAStore в пятницу, срочно» · «задачи на сегодня» · «выполнил …».
 • «Потратил 450 на кофе» · «получил 50 000 зарплата» · «сколько я потратил в этом месяце».
 • «Напомни через 20 минут позвонить» · «запомни, что …» · «найди в заметках …» · «заметка: …».
+• «Открой заметку IPAStore» — покажу её в голограмме; там же её можно поправить.
 • «Статус проектов» · «поручи IPAStore: добавить экспорт в CSV» (задача для @claude) ·
   «поручи локально Jarvis: …» (Claude Code на этом компьютере) · «задеплой IPAStore».
 • Протоколы: Утро, Фокус, Итоги дня, Неделя, Диагностика, Чистый лист, Вечеринка, Тишина и ваши из Obsidian.

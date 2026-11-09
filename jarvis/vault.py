@@ -28,6 +28,25 @@ class VaultError(ValueError):
     """Недопустимый путь или операция с хранилищем."""
 
 
+class VaultConflict(VaultError):
+    """Заметку изменили (в Obsidian, синхронизацией) после того, как её открыли для правки."""
+
+    def __init__(self, rel: str, current: str | None, message: str = ""):
+        super().__init__(message or (f"заметку «{rel}» уже изменили — возможно, в Obsidian" if current is not None
+                                     else f"заметки «{rel}» больше нет"))
+        self.rel, self.current = rel, current
+
+
+def content_version(text: str) -> str:
+    """Версия содержимого: длина + FNV-1a (32 бита) от UTF-8. Так же считает core/vault.js —
+    по ней редактор понимает, что заметку успели изменить, пока она была открыта."""
+    data = text.encode("utf-8")
+    h = 0x811C9DC5
+    for b in data:
+        h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF
+    return f"{len(data)}-{h:08x}"
+
+
 # ---------- frontmatter (минимальное подмножество YAML, без зависимостей) ----------
 
 def _parse_scalar(raw: str) -> Any:
@@ -208,6 +227,37 @@ class Vault:
 
     def note(self, rel: str) -> tuple[dict[str, Any], str]:
         return parse_frontmatter(self.read(rel))
+
+    def save(self, rel: str, text: str, base: str | None) -> str:
+        """Сохранить правку из редактора. base — версия, с которой начали править (content_version);
+        None — создать новую заметку. Если заметку с тех пор изменили или она уже есть — VaultConflict,
+        ничего не записано: правки владельца в Obsidian не затираются."""
+        current = self.read(rel) if self.exists(rel) else None
+        if base is None:
+            if current is not None:
+                raise VaultConflict(rel, current, f"заметка «{rel}» уже есть")
+        elif current is None or content_version(current) != base:
+            raise VaultConflict(rel, current)
+        return self.write(rel, text)
+
+    def find_note(self, query: str) -> str | None:
+        """Заметка по пути, названию или словам: «IPAStore», «Projects/IPAStore.md», «оферта»."""
+        q = (query or "").strip().strip("«»\"'").strip()
+        if not q:
+            return None
+        for cand in (q, q + ".md"):
+            if self.exists(cand):
+                return self.resolve(cand).relative_to(self.root).as_posix()
+        files = self.list_files()
+        low = q.lower().replace("ё", "е")
+        by_title = [f for f in files if self.title_of(f).lower().replace("ё", "е") == low]
+        if by_title:
+            return by_title[0]
+        partial = [f for f in files if low in self.title_of(f).lower().replace("ё", "е")]
+        if partial:
+            return min(partial, key=len)
+        hits = self.search(q, 1)
+        return hits[0].path if hits else None
 
     # ---------- обход ----------
     def list_files(self, folder: str = "", exts: set[str] | None = None) -> list[str]:

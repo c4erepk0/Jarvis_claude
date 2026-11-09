@@ -22,7 +22,7 @@ def test_auth_and_api(tmp_path):
             # Bearer-токен для скриптов
             r = await c.get("/api/state", headers={"Authorization": "Bearer 4815162342"})
             assert r.status == 200
-            r = await c.post("/api/login", json={"code": "4815162342"})
+            r = await c.post("/api/login", json={"code": " 4815162342\n"})   # скопирован из терминала
             assert r.status == 200 and "jarvis_session" in r.cookies
             state = await (await c.get("/api/state")).json()
             assert state["title"] == "сэр" and state["llm"] is False and state["protocols"]
@@ -107,5 +107,19 @@ def test_websocket_live_sync(tmp_path):
                 raise AssertionError("нет ответа по WebSocket")
             await ws.close()
         watch.cancel()
+        await j.close()
+    asyncio.run(run())
+
+
+def test_login_throttle_is_per_visitor_behind_proxy(tmp_path):
+    """За Caddy все запросы приходят с 127.0.0.1: перебор с чужого адреса не должен блокировать владельца."""
+    async def run():
+        j = make_jarvis(tmp_path, access_code="4815162342", secret="s" * 32)
+        async with TestClient(TestServer(build_app(j))) as c:
+            evil = {"X-Forwarded-For": "203.0.113.66"}
+            codes = [(await c.post("/api/login", json={"code": "nope"}, headers=evil)).status for _ in range(9)]
+            assert codes[-1] == 429
+            r = await c.post("/api/login", json={"code": "4815162342"}, headers={"X-Forwarded-For": "198.51.100.7"})
+            assert r.status == 200
         await j.close()
     asyncio.run(run())

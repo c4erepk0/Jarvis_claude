@@ -1,7 +1,7 @@
 // Мозг на iPhone: Claude через официальный JS SDK прямо из браузера (ключ хранится только на телефоне).
 // Как и на сервере: история только дописывается, системный промпт и инструменты неизменны в разговоре,
 // время — в начале сообщения, отказ модели не остаётся в истории, включён фолбэк fallbacks: "default".
-import { WEEKDAYS } from "./ru.js";
+import { WEEKDAYS, speechText } from "./ru.js";
 
 export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const IDLE_RESET_MS = 30 * 60 * 1000;
@@ -30,6 +30,15 @@ export const TOOLS = [
   { name: "note_read", description: "Прочитать заметку Obsidian по пути.", input_schema: obj({ path: S }, ["path"]) },
   { name: "note_append", description: "Дописать текст в конец заметки (создаст её). Только .md.",
     input_schema: obj({ path: S, text: S }, ["path", "text"]) },
+  { name: "notes_list", description: "Список заметок Obsidian (пути) — всех или в одной папке.",
+    input_schema: obj({ folder: { ...S, description: "папка, например Projects; пусто — все заметки" } }) },
+  { name: "note_show", description: "Открыть заметку на экране владельца — в голограмме (там её можно читать и править).",
+    input_schema: obj({ path: { ...S, description: "путь или название заметки" } }, ["path"]) },
+  { name: "note_create", description: "Создать новую заметку .md (если такая уже есть — ошибка).",
+    input_schema: obj({ path: { ...S, description: "путь, например Ideas/Новая идея.md" }, text: S }, ["path", "text"]) },
+  { name: "note_edit", description: "Точечно поправить заметку: заменить фрагмент find на replace. find — точная копия куска "
+    + "из note_read, встречается в заметке ровно один раз; пустой replace — удалить фрагмент.",
+    input_schema: obj({ path: S, find: S, replace: S }, ["path", "find", "replace"]) },
   { name: "journal_note", description: "Короткая запись в сегодняшнюю ежедневную заметку.",
     input_schema: obj({ text: S }, ["text"]) },
   { name: "reminder_add", description: "Напоминание через N минут (голосом и в Telegram).",
@@ -59,7 +68,8 @@ const PERSONA = `Ты — J.A.R.V.I.S., личный ИИ-ассистент в�
 - Задачи, деньги, статусы проектов бери только из инструментов, ничего не выдумывай.
 - Деньги — в рублях; расход — отрицательная сумма. Категории: Еда, Кафе, Транспорт, Подписки, Связь, Дом, Здоровье, Спорт, Развлечения, Одежда, Образование, Бизнес, Подарки, Доход, Прочее.
 - Работа над кодом — через project_delegate с ясным техзаданием. Внешние действия ждут подтверждения владельца — так и скажи.
-- Каждое сообщение владельца начинается со служебной строки в квадратных скобках: дата, время, источник.
+- Заметки: показать владельцу — note_show (откроется в голограмме); найти — memory_search или notes_list; поправить — note_read, затем note_edit точным фрагментом; дописать — note_append; новая — note_create. Заметки правит и сам владелец в Obsidian — не переписывай их целиком без просьбы.
+- Каждое сообщение владельца начинается со служебной строки в квадратных скобках: дата, время, источник; если там указана открытая в голограмме заметка — «эта заметка», «здесь» означают её.
 
 Профиль владельца:
 {profile}
@@ -99,10 +109,11 @@ export class Brain {
       .replace("{projects}", this.j.projects.list().map((p) => p.name + (p.repo ? ` (repo ${p.repo})` : "")).join(", ") || "нет");
   }
 
-  header(source) {
+  header(source, note = null) {
     const n = this.j.now();
     let h = `[${this.j.today()} ${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}, `
       + `${WEEKDAYS[(n.getDay() + 6) % 7]}; источник: ${source}]`;
+    if (note) h += `\n[В голограмме открыта заметка: ${note}]`;
     if (this.notes.length) { h += `\n[Служебно: ${this.notes.join(" ")}]`; this.notes = []; }
     return h;
   }
@@ -113,7 +124,7 @@ export class Brain {
     return said.length ? `Ранее в разговоре владелец говорил: ${said.slice(-8).join(" | ")}` : "";
   }
 
-  ask(text, source = "iphone") {
+  ask(text, source = "iphone", note = null) {
     const run = this.busy.then(async () => {
       if (this.messages.length && (Date.now() - this.last > IDLE_RESET_MS || this.turns >= 40)) {
         const s = this.summary();
@@ -122,7 +133,7 @@ export class Brain {
       }
       if (!this.system) this.system = this.buildSystem();
       this.last = Date.now();
-      this.messages.push({ role: "user", content: `${this.header(source)}\n${text}` });
+      this.messages.push({ role: "user", content: `${this.header(source, note)}\n${text}` });
       this.turns++;
       return this.run(this.messages, this.system);
     });
@@ -174,7 +185,8 @@ export class Brain {
       const calls = resp.content.filter((b) => b.type === "tool_use");
       if (resp.stop_reason !== "tool_use" || !calls.length) {
         const text = resp.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
-        return { text: text || `Готово, ${this.j.title}.`, kind: "info", source: "claude", confirm };
+        const out = text || `Готово, ${this.j.title}.`;
+        return { text: out, speech: speechText(out), kind: "info", source: "claude", confirm };
       }
       const results = [];
       for (const call of calls) {
@@ -204,10 +216,20 @@ export class Brain {
         case "memory_remember": res = await j.actRemember(String(need("fact"))); break;
         case "memory_search": res = j.vault.search(String(need("query")), 8); break;
         case "note_read": {
-          const text = j.vault.read(String(need("path")));
-          res = { path: a.path, content: text.slice(0, MAX_RESULT), truncated: text.length > MAX_RESULT };
+          let path = String(need("path"));
+          if (!j.vault.exists(path)) path = j.vault.findNote(path) || path;   // можно и по названию
+          const text = j.vault.read(path);
+          res = { path, content: text.slice(0, MAX_RESULT), truncated: text.length > MAX_RESULT };
           break;
         }
+        case "notes_list": {
+          const files = j.vault.list(String(a.folder || "").replace(/^\/+|\/+$/g, ""), [".md", ".txt"]);
+          res = { count: files.length, notes: files.slice(0, 300), truncated: files.length > 300 };
+          break;
+        }
+        case "note_show": res = j.actOpenNote(String(need("path"))); break;
+        case "note_create": res = await j.actSaveNote(String(need("path")), String(need("text")), null); break;
+        case "note_edit": res = await j.actEditNote(String(need("path")), String(need("find")), String(a.replace ?? "")); break;
         case "note_append": {
           const path = String(need("path"));
           if (!path.endsWith(".md")) throw new Error("дописывать можно только .md заметки");

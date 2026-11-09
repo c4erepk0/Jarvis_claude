@@ -18,6 +18,9 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/core.py` — класс `Jarvis`: все действия `act_*`, очередь подтверждений, `handle()` — главный вход.
 - `jarvis/intents.py` — локальный разбор русских команд; `jarvis/ru.py` — даты, суммы, склонения.
 - `jarvis/brain.py` — Claude: инструменты, append-only история, `fallbacks="default"`, отказ (`refusal`).
+- `jarvis/llm.py` — тот же мозг на GigaChat / YandexGPT (`JARVIS_LLM`): перевод формата функций, OAuth GigaChat,
+  сертификат Минцифры (`jarvis/certs/`) — только для запросов GigaChat. Тест — `tests/test_llm.py`, инструкция —
+  `docs/brain.md`. В JS-ядро для iPhone не перенесено намеренно: из браузера к этим API не обратиться.
 - `jarvis/protocols.py` — протоколы (встроенные + `Jarvis/Protocols.md`).
 - `jarvis/vault.py` — безопасные пути, атомарная запись, frontmatter, поиск, граф, наблюдение за изменениями.
 - `jarvis/tasks.py` (формат Obsidian Tasks) · `jarvis/finance.py` (таблицы по месяцам, копейки) · `jarvis/memory.py`.
@@ -25,12 +28,25 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/web.py` — REST + WebSocket + вход; `jarvis/hub.py` — шина событий; `jarvis/watchers.py` — фоновые датчики.
 - `jarvis/voice.py` (TTS), `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
 - `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`.
+- `static/note-panel.js` — заметка в голограмме: просмотр, правка, новая, [[ссылки]], галочки задач; рендер —
+  `static/markdown.js` (сначала экранирование, тест — `tests/js/markdown.test.mjs`). Сохранение — с версией
+  (`content_version` / `contentVersion`, одинаковые в Python и JS): PUT /api/note с `base`, при чужой правке — 409.
+  Голограмма: `highlight`, `focus`, `setInset`; событие `open_note` открывает заметку на всех дашбордах.
+- `static/gestures.js` — распознавание жестов по точкам руки MediaPipe и эталонные позы; `static/gesture-coach.js` —
+  шаги обучения жестам (без DOM, тест — `tests/js/gestures.test.mjs`); `static/gesture-tutorial.js` — окно обучения.
+  Голограмма сообщает распознанное через `holo.gestureListeners` (`frame`, `rotate`, `zoom`, `reset`, `dwell`, `select`).
 - `jarvis/webapp/static/core/*.js` — **ядро для режима «только iPhone»**: порт Python-ядра (ru, vault,
   tasks, finance, memory, intents, brain, projects, protocols, jarvis). Отвечает на те же `/api/…`, что сервер.
   Память — `GitHubStore` (приватный репозиторий с хранилищем, кэш блобов по sha), Claude — официальный
   JS SDK с CDN (`dangerouslyAllowBrowser`, ключ только на устройстве). `static/standalone.js` — настройки,
   выбор склада, засев хранилища. **Меняете логику или формат заметок в Python — меняйте и здесь** (и наоборот).
 - `jarvis/cron.py` + `.github/workflows/jarvis-cron.yml` — оповещения в Telegram без сервера (раз в 15 мин).
+- `jarvis/gitsync.py` — хранилище в GitHub-репозитории для сервера (`VAULT_GIT`): clone, слияние `*.md merge=union`,
+  push; токен — только в заголовке команды, не в .git/config.
+- `jarvis/tunnel.py` — `python -m jarvis --tunnel` / `bash start.sh --tunnel`: Cloudflare Quick Tunnel →
+  localhost.run → pinggy; код входа создаётся сам. За туннелем Origin сверяется и с `X-Forwarded-Host`.
+- `scripts/vps.sh` — установка на VPS (Ubuntu 24.04 / Debian 12): systemd-служба `jarvis`, Caddy с HTTPS
+  на `<ip>.sslip.io`, `install|update|status|logs|check`; тест — `tests/test_vps.py`, инструкция — `docs/hosting.md`.
 - `.github/workflows/pages.yml` — публикация дашборда для iPhone на GitHub Pages.
 - `static/vault-template.json` — генерируется `scripts/build_template.py` из `vault-template/` (CI проверяет).
   **При изменении css/js поднимайте `?v=N` в `index.html`, `app.js` и `sw.js` (CACHE)**.

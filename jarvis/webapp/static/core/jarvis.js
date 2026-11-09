@@ -2,7 +2,7 @@
 // Отвечает на те же запросы /api/…, что и Python-сервер, поэтому интерфейс (app.js) один на оба режима.
 import { MONTHS_GEN, WEEKDAYS, greeting, humanDate, isoDay, money, plural, weekdayIndex } from "./ru.js";
 import { parse } from "./intents.js";
-import { Vault } from "./vault.js";
+import { Vault, VaultError, checkPath, contentVersion } from "./vault.js";
 import { TaskBook } from "./tasks.js";
 import { Ledger } from "./finance.js";
 import { Memory, hhmm } from "./memory.js";
@@ -11,12 +11,14 @@ import { Briefing } from "./briefing.js";
 import { Brain } from "./brain.js";
 import { Protocols } from "./protocols.js";
 
+const NOTE_LIMIT = 200000;   // больше — показываем, но не даём править (чтобы не обрезать заметку при сохранении)
 const ACKS = ["Слушаюсь, {t}.", "Сделано, {t}.", "Готово, {t}.", "Как скажете, {t}.", "Будет исполнено, {t}."];
 export const HELP = `Вот что я умею, {t}:
 • «Джарвис, доброе утро» — брифинг: погода, задачи, финансы, проекты, курс.
 • «Добавь задачу написать оферту для IPAStore в пятницу, срочно» · «задачи на сегодня» · «выполнил …».
 • «Потратил 450 на кофе» · «получил 50 000 зарплата» · «сколько я потратил в этом месяце».
 • «Напомни через 20 минут позвонить» · «запомни, что …» · «найди в заметках …» · «заметка: …».
+• «Открой заметку IPAStore» — покажу её в голограмме; там же её можно поправить.
 • «Статус проектов» · «поручи IPAStore: добавить экспорт в CSV» (задача для @claude) · «задеплой IPAStore».
 • Протоколы: Утро, Фокус, Итоги дня, Неделя, Диагностика, Чистый лист, Вечеринка, Тишина и ваши из Obsidian.
 • С ключом Claude — свободный разговор, поиск в интернете и разбор фото чеков.`;
@@ -177,6 +179,39 @@ export class Jarvis {
     if (!r.duplicate) { await this.log(`Запомнил: ${r.text}`, false); this.changed("memory"); }
     return r;
   }
+  // ---------- заметки в голограмме ----------
+  actReadNote(path) {
+    const text = this.vault.read(path);
+    const rel = checkPath(path);
+    return { path: rel, title: rel.split("/").pop().replace(/\.[^.]+$/, ""), content: text.slice(0, NOTE_LIMIT),
+      version: contentVersion(text), truncated: text.length > NOTE_LIMIT,
+      editable: text.length <= NOTE_LIMIT && /\.(md|txt)$/i.test(rel) };
+  }
+  actOpenNote(query) {
+    const path = this.vault.findNote(query);
+    if (!path) throw new Error(`не нашёл заметку «${query}»`);
+    this.emit("open_note", { path });
+    return { path, title: path.split("/").pop().replace(/\.[^.]+$/, "") };
+  }
+  async actSaveNote(path, text, base) {
+    path = String(path || "").trim();
+    if (path && !/\.[^/.]+$/.test(path)) path += ".md";
+    if (!/\.(md|txt)$/i.test(path)) throw new VaultError("в голограмме правятся только заметки .md и .txt");
+    const rel = await this.vault.save(path, String(text).replace(/\r\n/g, "\n"), base ?? null);
+    await this.log(`Заметка «${rel.split("/").pop().replace(/\.[^.]+$/, "")}» ${base ? "изменена" : "создана"} в голограмме`, false);
+    this.changed("notes");
+    return { path: rel, version: contentVersion(this.vault.read(rel)) };
+  }
+  async actEditNote(path, find, replace) {
+    const text = this.vault.read(path);
+    const count = find ? text.split(find).length - 1 : 0;
+    if (count !== 1) {
+      throw new Error(!count ? "фрагмент не найден — сначала прочитай заметку (note_read)"
+        : `фрагмент встречается ${count} раз — возьми фрагмент длиннее, чтобы он был единственным`);
+    }
+    return this.actSaveNote(path, text.replace(find, () => replace), contentVersion(text));
+  }
+
   async actNote(text) {
     const path = this.memory.journalPath(this.today());
     await this.vault.appendToSection(path, "Заметки", `- ${this.hhmm()} ${text.trim()}`, { header: `# ${this.today()}\n\n` });
@@ -205,7 +240,8 @@ export class Jarvis {
   }
 
   // ---------- главный вход ----------
-  async handle(text, source = "iphone", depth = 0) {
+  // note — заметка, открытая сейчас в голограмме: «эта заметка» в просьбе — она.
+  async handle(text, source = "iphone", depth = 0, note = null) {
     text = String(text || "").trim();
     if (!text) return { text: `Слушаю вас, ${this.title}.` };
     const it = parse(text, this.today(), this.projectNames(), this.settings.wakeWord || "джарвис");
@@ -222,7 +258,7 @@ export class Jarvis {
       reply = { text: `Не вышло, ${this.title}: ${e.message}`, kind: "error" };
     }
     if (!reply) {
-      reply = this.brain.available ? await this.brain.ask(text, source)
+      reply = this.brain.available ? await this.brain.ask(text, source, note)
         : { text: `Без ключа Claude я понимаю только команды, ${this.title}. Скажите «что ты умеешь» — перечислю. Ключ добавляется в настройках (⚙).`, kind: "warn" };
     }
     reply.kind = reply.kind || "info";
@@ -270,6 +306,10 @@ export class Jarvis {
       case "forget": {
         const item = this.askConfirm("forget", `Удалить из памяти факты про «${a.query}»`, { query: a.query });
         return { text: `Удалить из памяти всё про «${a.query}»? Подтвердите.`, kind: "warn", confirm: item };
+      }
+      case "note_open": {
+        const r = this.actOpenNote(a.query);
+        return { text: `Открываю «${r.title}» в голограмме, ${t}.`, kind: "ok", data: { open_note: r.path } };
       }
       case "recall": return this.recallReply(a.query);
       case "note": { const r = await this.actNote(a.text); return { text: `Записал в журнал, ${t}.`, kind: "ok", data: r }; }
@@ -389,7 +429,7 @@ export class Jarvis {
     let m;
     if (p === "/api/session") return { auth: false, logged_in: true, standalone: true };
     if (p === "/api/state") return this.state();
-    if (p === "/api/command") return this.handle(String(body.text || "").slice(0, 4000), body.source || "iphone");
+    if (p === "/api/command") return this.handle(String(body.text || "").slice(0, 4000), body.source || "iphone", 0, body.note || null);
     if (p === "/api/tasks" && method === "GET") return this.actListTasks(q.view || "today", q.project || null);
     if (p === "/api/tasks") return this.actAddTask(String(body.text || ""), body.due || null, body.priority || null, body.project || null);
     if ((m = /^\/api\/tasks\/(.+)\/status$/.exec(p))) {
@@ -412,7 +452,18 @@ export class Jarvis {
     if ((m = /^\/api\/cancel\/(.+)$/.exec(p))) return this.cancel(m[1]);
     if (p === "/api/memory" && method === "GET") return q.q ? { hits: this.vault.search(q.q, 12) } : { facts: this.memory.facts(), profile: this.memory.profile() };
     if (p === "/api/memory") return this.actRemember(String(body.fact || ""));
-    if (p === "/api/note") return { path: q.path, content: this.vault.read(q.path).slice(0, 200000) };
+    if (p === "/api/note" && method === "GET") return this.actReadNote(q.path || "");
+    if (p === "/api/note") {
+      // PUT — правка (base — версия, с которой начали править), POST — новая заметка; конфликт — 409, как у сервера
+      if (method === "PUT" && !body.base) throw Object.assign(new Error("не указана версия заметки (base)"), { status: 400 });
+      try {
+        return await this.actSaveNote(body.path, String(body.content ?? ""), method === "PUT" ? body.base : null);
+      } catch (e) {
+        if (e.status !== 409) throw e;
+        const current = e.current == null ? null : { content: e.current, version: contentVersion(e.current) };
+        throw Object.assign(new Error(e.message), { status: 409, data: { error: e.message, conflict: true, current } });
+      }
+    }
     if (p === "/api/graph") return this.vault.graph();
     if (p === "/api/diagnostics") return this.diagnostics();
     if (p === "/api/weather") return { weather: await this.briefing.weather(), rates: await this.briefing.rates() };

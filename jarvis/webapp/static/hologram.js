@@ -1,12 +1,16 @@
 // Голограмма памяти: 3D-граф заметок Obsidian (узлы — заметки, нити — [[ссылки]]).
+// Открытая заметка подсвечивается вместе со связями, граф поворачивается к ней (focus), вид сдвигается,
+// чтобы узел не прятался под панелью заметки (setInset).
 // Управление мышью/пальцами или жестами рук перед камерой (MediaPipe Hand Landmarker):
 //   щипок (большой + указательный) и движение — вращение; щипок двумя руками — масштаб;
 //   указательный палец — курсор, задержка на узле 1 с — открыть заметку; раскрытая ладонь 1 с — сброс вида.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
+import { BONES, classify } from "./gestures.js?v=7";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const HAND_MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+const EDGE = [0x3e / 255, 0xe8 / 255, 0xff / 255];   // цвет нитей-связей
 const PALETTE = [0x3ee8ff, 0x5dffb0, 0xffb347, 0xb48cff, 0xff6b9a, 0x7fd4ff, 0xe6ff6b, 0xff8f5a];
 
 function glowSprite() {
@@ -22,17 +26,20 @@ function glowSprite() {
   return new THREE.CanvasTexture(c);
 }
 
-function layout(nodes, links) {
+function layout(nodes, links, prev = new Map()) {
   const groups = [...new Set(nodes.map((n) => n.group))];
   const centers = new Map(groups.map((g, i) => {
     const phi = Math.acos(1 - (2 * (i + 0.5)) / groups.length), th = Math.PI * (1 + Math.sqrt(5)) * i;
     const r = groups.length > 1 ? 34 : 0;
     return [g, new THREE.Vector3(r * Math.sin(phi) * Math.cos(th), r * Math.cos(phi), r * Math.sin(phi) * Math.sin(th))];
   }));
-  const pos = nodes.map((n) => centers.get(n.group).clone().add(new THREE.Vector3().randomDirection().multiplyScalar(6 + Math.random() * 10)));
+  // известные узлы остаются на своих местах — после правки или новой заметки граф не «разлетается»
+  const pos = nodes.map((n) => (prev.get(n.id)?.clone()
+    || centers.get(n.group).clone().add(new THREE.Vector3().randomDirection().multiplyScalar(6 + Math.random() * 10))));
   const index = new Map(nodes.map((n, i) => [n.id, i]));
   const edges = links.map((l) => [index.get(l.source), index.get(l.target)]).filter(([a, b]) => a !== undefined && b !== undefined);
-  for (let it = 0; it < 90; it++) {
+  const rounds = nodes.every((n) => prev.has(n.id)) ? 0 : prev.size ? 30 : 90;
+  for (let it = 0; it < rounds; it++) {
     const f = pos.map(() => new THREE.Vector3());
     for (let i = 0; i < pos.length; i++) {
       for (let k = 0; k < 24; k++) {
@@ -63,6 +70,11 @@ export class Hologram {
     this.tags.className = "holo-tags";
     root.prepend(this.tags);
     this.tagEls = [];
+    this.cursor = document.createElement("div");
+    this.cursor.className = "holo-cursor hidden";
+    root.append(this.cursor);
+    this.gestureListeners = new Set();   // обучение жестам слушает, что распознано
+    this.suppressOpen = false;           // во время обучения выбор узла не открывает заметку
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.domElement.className = "three";
@@ -74,6 +86,10 @@ export class Hologram {
     this.world = new THREE.Group();
     this.scene.add(this.world);
     this.decor();
+    this.marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowSprite(), color: 0xffffff, transparent: true,
+      opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending }));
+    this.marker.visible = false;
+    this.world.add(this.marker);
     this.ray = new THREE.Raycaster();
     this.ray.params.Points.threshold = 2.2;
     this.mouse = new THREE.Vector2(-9, -9);
@@ -115,8 +131,13 @@ export class Hologram {
 
   setData({ nodes, links }) {
     if (this.points) { this.world.remove(this.points); this.world.remove(this.lines); }
+    const prev = new Map((this.nodes || []).map((n, i) => [n.id, this.positions[i]]));
     this.nodes = nodes;
-    const { pos, edges, groups } = layout(nodes, links);
+    const { pos, edges, groups } = layout(nodes, links, prev);
+    this.byId = new Map(nodes.map((n, i) => [n.id, i]));
+    this.neighbors = new Map(nodes.map((n) => [n.id, new Set()]));
+    for (const [a, b] of edges) { this.neighbors.get(nodes[a].id).add(nodes[b].id); this.neighbors.get(nodes[b].id).add(nodes[a].id); }
+    this.edges = edges;
     const colors = [], positions = [], sizes = [];
     nodes.forEach((n, i) => {
       const col = new THREE.Color(PALETTE[groups.indexOf(n.group) % PALETTE.length]);
@@ -127,16 +148,19 @@ export class Hologram {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    this.baseColors = Float32Array.from(colors);
     const size = nodes.length < 50 ? 7 : nodes.length < 200 ? 5 : 4;
     this.points = new THREE.Points(g, new THREE.PointsMaterial({ size, map: glowSprite(), vertexColors: true,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
     this.world.add(this.points);
-    const lp = [];
+    const lp = [], lc = [];
     for (const [a, b] of edges) lp.push(pos[a].x, pos[a].y, pos[a].z, pos[b].x, pos[b].y, pos[b].z);
     const lg = new THREE.BufferGeometry();
     lg.setAttribute("position", new THREE.Float32BufferAttribute(lp, 3));
-    this.lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x3ee8ff, transparent: true, opacity: 0.22,
-      blending: THREE.AdditiveBlending }));
+    for (let k = 0; k < edges.length * 2; k++) lc.push(...EDGE.map((c) => c * 0.55));
+    lg.setAttribute("color", new THREE.Float32BufferAttribute(lc, 3));
+    this.lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.4,
+      blending: THREE.AdditiveBlending, depthWrite: false }));
     this.world.add(this.lines);
     this.positions = pos;
     this.tags.innerHTML = "";
@@ -146,8 +170,54 @@ export class Hologram {
       this.tags.append(el);
       return el;
     }) : [];
-    if (nodes.length < 50) this.target.z = 90;
+    if (nodes.length < 50 && !prev.size) this.target.z = 90;
+    this.highlight(this.selected && this.byId.has(this.selected) ? this.selected : null);
     this.onStatus(`${nodes.length} заметок · ${edges.length} связей`);
+  }
+
+  /** Подсветить заметку и её связи (остальное приглушается); null — снять подсветку. */
+  highlight(id) {
+    this.selected = id && this.byId?.has(id) ? id : null;
+    if (!this.points) return;
+    const i0 = this.selected ? this.byId.get(this.selected) : -1;
+    const near = this.selected ? this.neighbors.get(this.selected) : null;
+    const col = this.points.geometry.attributes.color;
+    this.nodes.forEach((n, i) => {
+      const k = !near || i === i0 || near.has(n.id) ? 1 : 0.16;
+      for (let c = 0; c < 3; c++) col.array[i * 3 + c] = i === i0 ? 1 : this.baseColors[i * 3 + c] * k;
+    });
+    col.needsUpdate = true;
+    const lc = this.lines.geometry.attributes.color;
+    this.edges.forEach(([a, b], e) => {
+      const k = !near ? 0.55 : a === i0 || b === i0 ? 1.4 : 0.08;
+      for (let v = 0; v < 6; v++) lc.array[e * 6 + v] = EDGE[v % 3] * k;
+    });
+    lc.needsUpdate = true;
+    this.tagEls.forEach((el, i) => {
+      el.classList.toggle("sel", i === i0);
+      el.classList.toggle("dim", Boolean(near) && i !== i0 && !near.has(this.nodes[i].id));
+    });
+    this.marker.visible = i0 >= 0;
+    if (i0 >= 0) this.marker.position.copy(this.positions[i0]);
+  }
+
+  /** Плавно повернуть граф так, чтобы заметка оказалась впереди, по центру. */
+  focus(id) {
+    const i = this.byId?.get(id);
+    if (i === undefined) return;
+    const p = this.positions[i];
+    let ry = Math.atan2(-p.x, p.z);                         // после поворота по Y узел — на оси Z
+    const z1 = -p.x * Math.sin(ry) + p.z * Math.cos(ry);
+    ry += Math.round((this.world.rotation.y - ry) / (2 * Math.PI)) * 2 * Math.PI;   // ближайший путь, без «пропеллера»
+    const rx = Math.max(-1.2, Math.min(1.2, Math.atan2(p.y, z1)));
+    this.target = { rx, ry, z: Math.max(70, Math.min(160, z1 + 45)) };
+    this.spin = 0;
+  }
+
+  /** Часть экрана занята панелью заметки — центр вида сдвигается в свободную часть. */
+  setInset({ right = 0, bottom = 0 } = {}) {
+    this.inset = { right, bottom };
+    this.resize();
   }
 
   bindPointer() {
@@ -190,6 +260,9 @@ export class Hologram {
     const w = innerWidth, h = innerHeight;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
+    const { right = 0, bottom = 0 } = this.inset || {};
+    if (right || bottom) this.camera.setViewOffset(w, h, right / 2, bottom / 2, w, h);
+    else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
   }
 
@@ -201,6 +274,7 @@ export class Hologram {
     this.camera.position.z += (this.target.z - this.camera.position.z) * 0.08;
     this.camera.lookAt(0, 0, 0);
     this.rings.forEach((r, i) => { r.rotation.z = ts * 0.0001 * (i % 2 ? -1 : 1); });
+    if (this.marker.visible) this.marker.scale.setScalar(7 + Math.sin(ts / 260) * 1.2);
     const n = this.hovered();
     if (n && this.hoverAt) {
       this.label.textContent = n.title;
@@ -224,14 +298,24 @@ export class Hologram {
   }
 
   // ---------- жесты ----------
+  /** Кнопка «Жесты»: включить или выключить. */
   async enableGestures(video, overlay) {
     if (this.hands) { this.disableGestures(); return false; }
+    await this.startGestures(video, overlay);
+    return true;
+  }
+
+  /** Включить камеру и распознавание рук (если уже включено — ничего не делает). */
+  async startGestures(video, overlay) {
+    if (this.hands) return;
     this.onStatus("загружаю модель рук…");
-    const { FilesetResolver, HandLandmarker } = await import(VISION_URL);
-    const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
-    this.landmarker = await HandLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: HAND_MODEL, delegate: "GPU" }, runningMode: "VIDEO", numHands: 2,
-    });
+    if (!this.landmarker) {
+      const { FilesetResolver, HandLandmarker } = await import(VISION_URL);
+      const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
+      this.landmarker = await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: HAND_MODEL, delegate: "GPU" }, runningMode: "VIDEO", numHands: 2,
+      });
+    }
     this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: 640, height: 480 } });
     video.srcObject = this.stream;
     await video.play();
@@ -241,12 +325,14 @@ export class Hologram {
     video.classList.remove("hidden"); overlay.classList.remove("hidden");
     this.hands = { last: -1, pinch: null, pinch2: null, palmSince: 0, dwell: null };
     this.onStatus("жесты включены: щипок — вращать, две руки — масштаб, палец — выбрать, ладонь — сброс");
-    return true;
   }
+
+  emitGesture(evt) { this.gestureListeners.forEach((fn) => fn(evt)); }
 
   disableGestures() {
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
     this.stream = null; this.hands = null;
+    this.cursor.classList.add("hidden");
     if (this.video) this.video.classList.add("hidden");
     if (this.overlay) this.overlay.classList.add("hidden");
   }
@@ -258,53 +344,66 @@ export class Hologram {
     const res = this.landmarker.detectForVideo(v, ts);
     const hands = res.landmarks || [];
     this.drawHands(hands);
-    const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-    const pinching = (lm) => dist(lm[4], lm[8]) < 0.055;
-    const extended = (lm, tip, pip) => lm[tip].y < lm[pip].y - 0.02;
-    const openPalm = (lm) => [[8, 6], [12, 10], [16, 14], [20, 18]].every(([t, p]) => extended(lm, t, p)) && !pinching(lm);
-    const pointing = (lm) => extended(lm, 8, 6) && !extended(lm, 12, 10) && !extended(lm, 16, 14) && !pinching(lm);
+    const g = classify(hands);
+    this.emitGesture({ type: "frame", kind: g.kind, hands: g.hands });
+    if (g.kind !== "point") this.cursor.classList.add("hidden");
 
-    if (hands.length === 2 && pinching(hands[0]) && pinching(hands[1])) {
-      const d = dist(hands[0][9], hands[1][9]);
-      if (h.pinch2 !== null) this.zoom((h.pinch2 - d) * 400);
-      h.pinch2 = d; h.pinch = null;
+    if (g.kind === "pinch2") {
+      if (h.pinch2 !== null) {
+        const amount = (h.pinch2 - g.d) * 400;
+        this.zoom(amount);
+        this.emitGesture({ type: "zoom", amount });
+      }
+      h.pinch2 = g.d; h.pinch = null;
       return;
     }
     h.pinch2 = null;
-    const lm = hands[0];
-    if (!lm) { h.pinch = null; h.palmSince = 0; h.dwell = null; return; }
-    if (pinching(lm)) {
-      const p = { x: 1 - lm[9].x, y: lm[9].y };
-      if (h.pinch) this.rotate((p.x - h.pinch.x) * 6, (p.y - h.pinch.y) * 4);
-      h.pinch = p; h.dwell = null;
+    if (g.kind === "none") { h.pinch = null; h.palmSince = 0; h.dwell = null; return; }
+    if (g.kind === "pinch") {
+      if (h.pinch) {
+        const dy = (g.x - h.pinch.x) * 6, dx = (g.y - h.pinch.y) * 4;
+        this.rotate(dy, dx);
+        this.emitGesture({ type: "rotate", amount: Math.abs(dy) + Math.abs(dx) });
+      }
+      h.pinch = { x: g.x, y: g.y }; h.dwell = null;
       return;
     }
     h.pinch = null;
-    if (openPalm(lm)) {
+    if (g.kind === "palm") {
       h.palmSince = h.palmSince || ts;
-      if (ts - h.palmSince > 1000) { this.reset(); h.palmSince = ts + 1500; }
+      if (ts - h.palmSince > 1000) { this.reset(); h.palmSince = ts + 1500; this.emitGesture({ type: "reset" }); }
       return;
     }
     h.palmSince = 0;
-    if (pointing(lm)) {
-      const x = (1 - lm[8].x) * innerWidth, y = lm[8].y * innerHeight;
+    if (g.kind === "point") {
+      const x = g.x * innerWidth, y = g.y * innerHeight;
       this.setMouse(x, y);
       const n = this.hovered();
+      let progress = 0;
       if (n) {
         if (!h.dwell || h.dwell.id !== n.id) h.dwell = { id: n.id, since: ts };
-        else if (ts - h.dwell.since > 1000) { this.onOpen(n.id); h.dwell = { id: n.id, since: ts + 3000 }; }
+        progress = Math.max(0, Math.min(1, (ts - h.dwell.since) / 1000));
+        if (ts - h.dwell.since > 1000) {
+          if (!this.suppressOpen) this.onOpen(n.id);
+          this.emitGesture({ type: "select", id: n.id });
+          h.dwell = { id: n.id, since: ts + 3000 };
+          progress = 1;
+        }
+        this.emitGesture({ type: "dwell", progress, id: n.id });
       } else h.dwell = null;
+      this.cursor.style.transform = `translate(${x}px, ${y}px)`;
+      this.cursor.style.setProperty("--p", String(progress));
+      this.cursor.classList.toggle("on", Boolean(n));
+      this.cursor.classList.remove("hidden");
     }
   }
 
   drawHands(hands) {
     const g = this.overlay.getContext("2d"), W = this.overlay.width, H = this.overlay.height;
     g.clearRect(0, 0, W, H);
-    const bones = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12],
-      [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
     g.strokeStyle = "rgba(62,232,255,.9)"; g.fillStyle = "#eaffff"; g.lineWidth = 2;
     for (const lm of hands) {
-      for (const [a, b] of bones) { g.beginPath(); g.moveTo(lm[a].x * W, lm[a].y * H); g.lineTo(lm[b].x * W, lm[b].y * H); g.stroke(); }
+      for (const [a, b] of BONES) { g.beginPath(); g.moveTo(lm[a].x * W, lm[a].y * H); g.lineTo(lm[b].x * W, lm[b].y * H); g.stroke(); }
       for (const p of lm) { g.beginPath(); g.arc(p.x * W, p.y * H, 2.5, 0, Math.PI * 2); g.fill(); }
     }
   }

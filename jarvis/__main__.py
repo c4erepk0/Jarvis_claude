@@ -1,18 +1,23 @@
 """Запуск: `python -m jarvis` (или `make run`)."""
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
+import secrets
 import shutil
 import signal
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from aiohttp import web
 
 from .config import load_config
 from .core import Jarvis
+from .gitsync import GitSync, GitSyncError
 from .telegram import Telegram
+from .tunnel import ORDER, Tunnel
 from .watchers import Watchers
 from .web import build_app
 
@@ -36,14 +41,62 @@ def seed_vault(vault: Path) -> bool:
     return True
 
 
-async def main() -> None:
+def ensure_access_code(cfg, env_file: Path = Path(".env")):
+    """Для доступа из интернета (туннель) нужен код входа: если его нет — создаём и сохраняем в .env."""
+    if cfg.access_code:
+        return cfg, False
+    code = secrets.token_urlsafe(8)
+    try:
+        with env_file.open("a", encoding="utf-8") as f:
+            f.write(f"\n# создано автоматически для доступа через туннель\nJARVIS_ACCESS_CODE={code}\n")
+    except OSError:
+        pass
+    return replace(cfg, access_code=code), True
+
+
+def banner(url: str, code: str, created: bool = False, again: bool = False) -> str:
+    bar = "═" * 58
+    head = "  ⚠️  Ссылка сменилась — старая больше не работает.\n" if again else ""
+    return (f"\n{bar}\n{head}  Откройте в Safari:  {url}\n  Код входа:         {code}"
+            f"{'  (сохранён в .env)' if created else ''}\n"
+            "  Не набирайте localhost — Safari его не видит; только эту ссылку.\n"
+            "  Терминал держите открытым: если iOS его усыпит, ссылка отдаст «no tunnel»,\n"
+            "  а после возврата в терминал Jarvis поднимет новую и покажет её здесь.\n"
+            f"  Затем «Поделиться» → «На экран „Домой“».\n{bar}\n")
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    p = argparse.ArgumentParser(prog="python -m jarvis", description="J.A.R.V.I.S.")
+    p.add_argument("--tunnel", nargs="?", const="auto", choices=["auto", "cloudflare", "localhostrun", "pinggy"],
+                   help="открыть по https-ссылке в Safari/с телефона через бесплатный туннель")
+    return p.parse_args(argv)
+
+
+async def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     cfg = load_config()
+    created_code = False
+    if args.tunnel:
+        cfg, created_code = ensure_access_code(cfg)
     if not cfg.is_local_only and not cfg.access_code:
         sys.exit("JARVIS_HOST открыт в сеть, но JARVIS_ACCESS_CODE не задан — дашборд с вашими финансами "
                  "был бы доступен всем. Задайте код входа в .env.")
+    git = None
+    if cfg.vault_git:
+        git = GitSync(cfg.vault_path, cfg.vault_git, cfg.github_token, cfg.vault_git_interval)
+        try:
+            log.info("Память: %s", await git.prepare())
+        except GitSyncError as e:
+            sys.exit(f"Не удалось скачать хранилище из {cfg.vault_git}:\n{e}\n"
+                     "Проверьте VAULT_GIT и GITHUB_TOKEN (право Contents: read/write на этот репозиторий).")
     if seed_vault(cfg.vault_path):
         log.info("Создано стартовое хранилище Obsidian: %s", cfg.vault_path.resolve())
+    if git:
+        try:
+            await git.sync()
+        except GitSyncError as e:
+            log.warning("Первая синхронизация с GitHub не удалась: %s", e)
     jarvis = Jarvis(cfg)
     watchers = Watchers(jarvis)
     telegram = None
@@ -57,10 +110,40 @@ async def main() -> None:
     site = web.TCPSite(runner, cfg.host, cfg.port)
     await site.start()
     watchers.start()
-    poller = asyncio.create_task(telegram.poll()) if telegram else None
+    background = []
+    if git:
+        jarvis.git = git
+        background.append(asyncio.create_task(git.loop(), name="git"))
+    if telegram:
+        background.append(asyncio.create_task(telegram.poll(), name="telegram"))
     shown = "localhost" if cfg.is_local_only else cfg.host
-    log.info("J.A.R.V.I.S. онлайн: http://%s:%s  · память: %s · мозг: %s · голос: %s", shown, cfg.port,
-             jarvis.vault.root, cfg.model if jarvis.brain.available else "только команды", cfg.tts_engine)
+    log.info("J.A.R.V.I.S. онлайн: http://%s:%s  · память: %s%s · мозг: %s · голос: %s", shown, cfg.port,
+             jarvis.vault.root, f" ⇄ {cfg.vault_git}" if git else "",
+             cfg.model if jarvis.brain.available else "только команды", cfg.tts_engine)
+    tunnel = None
+    if args.tunnel:
+        order = ORDER if args.tunnel == "auto" else (args.tunnel,)
+        tunnel = Tunnel(cfg.port, cfg.data_dir / "tools", order)
+        url = await tunnel.start()
+
+        async def announce(url: str, again: bool = False) -> None:
+            print(banner(url, cfg.access_code, created_code, again), flush=True)
+            try:
+                (cfg.data_dir / "tunnel_url.txt").write_text(url + "\n", encoding="utf-8")
+            except OSError:
+                pass
+            if again and telegram:
+                try:
+                    await telegram.notify(f"Новая ссылка на Jarvis: {url}", "info")
+                except Exception:  # noqa: BLE001
+                    log.warning("Не удалось отправить новую ссылку в Telegram")
+
+        if url:
+            await announce(url)
+        else:
+            log.error("Туннель не поднялся ни одним способом — подробности в %s",
+                      cfg.data_dir / "tools" / "tunnel.log")
+        background.append(asyncio.create_task(tunnel.watch(lambda u: announce(u, True)), name="tunnel"))
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -73,8 +156,15 @@ async def main() -> None:
         await stop.wait()
     finally:
         log.info("Отключаюсь, %s.", cfg.user_title)
-        if poller:
-            poller.cancel()
+        for task in background:
+            task.cancel()
+        if git:
+            try:
+                await git.sync()   # отправить последние изменения
+            except Exception:  # noqa: BLE001
+                pass
+        if tunnel:
+            await tunnel.stop()
         await watchers.stop()
         if telegram:
             await telegram.close()

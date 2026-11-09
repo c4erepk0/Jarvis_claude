@@ -1,8 +1,8 @@
 // J.A.R.V.I.S. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=3";
-import { Voice } from "./voice.js?v=3";
+import { Reactor } from "./reactor.js?v=7";
+import { Voice } from "./voice.js?v=7";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -38,7 +38,7 @@ const voice = new Voice({
 async function api(path, { method = "GET", body, form } = {}) {
   if (local) {
     try { return await local.request(method, path, body || {}); }
-    catch (e) { throw new Error(e.message || String(e)); }
+    catch (e) { throw Object.assign(new Error(e.message || String(e)), { status: e.status, data: e.data }); }
   }
   const opts = { method, credentials: "same-origin", headers: {} };
   if (form) opts.body = form;
@@ -46,7 +46,7 @@ async function api(path, { method = "GET", body, form } = {}) {
   const r = await fetch(path, opts);
   if (r.status === 401) { showLogin(); throw new Error("нужен вход"); }
   const data = r.status === 204 ? null : await r.json().catch(() => null);
-  if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
+  if (!r.ok) throw Object.assign(new Error((data && data.error) || `HTTP ${r.status}`), { status: r.status, data });
   return data;
 }
 
@@ -59,7 +59,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Jarvis работает прямо на телефоне
-    SA = await import("./standalone.js?v=3");
+    SA = await import("./standalone.js?v=7");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -161,8 +161,13 @@ function connect() {
 function handleEvent(e) {
     const d = e.data || {};
     switch (e.type) {
-      case "refresh": refreshSoon(d.what); break;
+      case "refresh":
+        refreshSoon(d.what);
+        if (d.what === "notes" || d.what === "memory") notes?.refresh();
+        break;
+      case "open_note": openNote(d.path); break;
       case "vault":
+        notes?.refresh();
         chip("#chip-sync", "on", true);
         addLog({ type: "log", ts: e.ts, data: { text: `Obsidian: изменено заметок — ${d.count}` } });
         break;
@@ -187,7 +192,8 @@ function handleEvent(e) {
 }
 const TOOL_NAMES = { memory_search: "ищу в памяти", tasks_list: "смотрю задачи", task_add: "записываю задачу",
   money_add: "записываю операцию", finance_report: "считаю финансы", projects_status: "проверяю проекты",
-  memory_remember: "запоминаю", note_read: "читаю заметку", web_search: "ищу в интернете", project_delegate: "готовлю поручение" };
+  memory_remember: "запоминаю", note_read: "читаю заметку", web_search: "ищу в интернете", project_delegate: "готовлю поручение",
+  notes_list: "смотрю заметки", note_show: "открываю заметку", note_create: "создаю заметку", note_edit: "правлю заметку" };
 const toolName = (n) => TOOL_NAMES[n] || n;
 
 // ---------- диалог ----------
@@ -198,7 +204,8 @@ async function send(text, { source = "dashboard" } = {}) {
   $("#heard").textContent = text;
   setMode("thinking");
   try {
-    const r = await api("/api/command", { method: "POST", body: { text, source, client: CLIENT } });
+    const note = notes?.path && !$("#holo").classList.contains("hidden") ? notes.path : undefined;
+    const r = await api("/api/command", { method: "POST", body: { text, source, client: CLIENT, note } });
     showReply(r);
   } catch (e) {
     showReply({ text: `Связь потеряна: ${e.message}`, kind: "error", speech: "" });
@@ -261,7 +268,7 @@ function chip(sel, cls, flash = false) {
 }
 function renderChips() {
   chip("#chip-brain", S.llm ? "on" : "warn");
-  $("#chip-brain").title = S.llm ? `Claude: ${S.model}` : "Claude не подключён — только команды";
+  $("#chip-brain").title = S.llm ? `${S.brain || "Claude"}: ${S.model}` : "Модель не подключена — только команды";
   chip("#chip-voice", voice.muted ? "warn" : "on");
   chip("#chip-tg", S.telegram ? "on" : "");
 }
@@ -628,10 +635,12 @@ function modal(title, html) {
 function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modal-close").addEventListener("click", closeModal);
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal" || e.target.closest("[data-close]")) closeModal(); });
+// Заметки открываются в голограмме: узел подсвечивается, граф поворачивается к нему, рядом — панель заметки.
 async function openNote(path) {
   try {
-    const n = await api(`/api/note?path=${encodeURIComponent(path)}`);
-    modal(path, `<pre>${esc(n.content)}</pre>`);
+    await openHolo();
+    const panel = await notePanel();
+    await panel.open(path);
   } catch (err) { toast(err.message, "error"); }
 }
 
@@ -699,7 +708,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "/" && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
     e.preventDefault(); $("#cmd").focus();
   }
-  if (e.key === "Escape") { closeModal(); }
+  if (e.key === "Escape") { if (notes?.isOpen && notes.mode === "view") notes.close(); else closeModal(); }
 });
 
 // вкладки на телефоне
@@ -722,28 +731,94 @@ tick(); setInterval(tick, 1000);
 
 // ---------- голограмма ----------
 let holo = null;
-$("#btn-holo").addEventListener("click", async () => {
-  $("#holo").classList.remove("hidden");
-  try {
-    const { Hologram } = await import("./hologram.js?v=3");
-    if (!holo) holo = new Hologram($("#holo"), { onOpen: openNote, onStatus: (s) => { $("#holo-stats").textContent = s; } });
-    else { holo.running = true; requestAnimationFrame(holo.loop); }
-    holo.setData(await api("/api/graph"));
-  } catch (err) {
-    $("#holo-stats").textContent = `голограмма недоступна: ${err.message}`;
+let notes = null;          // панель заметки в голограмме (note-panel.js)
+let holoTitles = new Map();   // название заметки (строчными) → путь — для [[ссылок]]
+
+async function loadGraph() {
+  const g = await api("/api/graph");
+  holoTitles = new Map(g.nodes.map((n) => [n.title.toLowerCase(), n.id]));
+  holo.setData(g);
+}
+
+async function openHolo() {
+  const el = $("#holo");
+  const wasHidden = el.classList.contains("hidden");
+  el.classList.remove("hidden");
+  if (!holo) {
+    const { Hologram } = await import("./hologram.js?v=7");
+    holo = new Hologram(el, { onOpen: openNote, onStatus: (s) => { $("#holo-stats").textContent = s; } });
+    await loadGraph();
+  } else if (wasHidden) {
+    holo.running = true;
+    requestAnimationFrame(holo.loop);
+    await loadGraph();
   }
+}
+
+// Панель заметки занимает часть экрана: справа на компьютере, снизу на телефоне — центр голограммы сдвигается.
+function panelInset() {
+  return matchMedia("(max-width: 760px)").matches ? { bottom: Math.round(innerHeight * 0.58) }
+    : { right: Math.min(540, Math.round(innerWidth * 0.44)) + 24 };
+}
+
+async function notePanel() {
+  if (notes) return notes;
+  const { NotePanel } = await import("./note-panel.js?v=7");
+  notes = new NotePanel($("#holo"), {
+    api, toast,
+    resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
+    today: () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; },
+    onShow: (path) => { holo?.setInset(panelInset()); holo?.highlight(path); holo?.focus(path); },
+    onClose: () => { holo?.highlight(null); holo?.setInset({}); },
+    onCreated: () => loadGraph(),
+  });
+  addEventListener("resize", () => { if (notes?.isOpen) holo?.setInset(panelInset()); });
+  return notes;
+}
+
+$("#btn-holo").addEventListener("click", async () => {
+  try { await openHolo(); } catch (err) { $("#holo-stats").textContent = `голограмма недоступна: ${err.message}`; }
+});
+$("#holo-new").addEventListener("click", async () => {
+  try { (await notePanel()).startCreate(); } catch (err) { toast(err.message, "error"); }
 });
 $("#holo-close").addEventListener("click", () => {
+  if (notes && !notes.close()) return;          // несохранённые правки — спросили, владелец передумал
   $("#holo").classList.add("hidden");
+  if (tutorial) tutorial.close();
   if (holo) { holo.running = false; holo.disableGestures(); $("#holo-gestures").classList.remove("primary"); }
 });
+
+// Первоначальное обучение жестам: показывается при первом включении, повторить — кнопка «?».
+let tutorial = null;
+async function startCamera() {
+  await holo.startGestures($("#holo-video"), $("#holo-hands"));
+  $("#holo-gestures").classList.add("primary");
+}
+async function openTutorial() {
+  if (!holo) return;
+  try {
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=7");
+    tutorial ??= new GestureTutorial({
+      root: $("#holo"), holo, startCamera,
+      say: (text) => { if (!voice.muted) voice.say(text); },
+      onFinish: () => store.set("gestures_trained", true),
+      onError: (err) => toast(`Жесты недоступны: ${err.message}`, "error"),
+    });
+    if (!tutorial.active) tutorial.open();
+  } catch (err) { toast(`Обучение недоступно: ${err.message}`, "error"); }
+}
 $("#holo-gestures").addEventListener("click", async () => {
   if (!holo) return;
+  voice.unlock();
+  if (!holo.hands && !store.get("gestures_trained", false)) { openTutorial(); return; }
   try {
     const on = await holo.enableGestures($("#holo-video"), $("#holo-hands"));
     $("#holo-gestures").classList.toggle("primary", on);
+    if (!on && tutorial) tutorial.close();
   } catch (err) { toast(`Жесты недоступны: ${err.message}`, "error"); }
 });
+$("#holo-train").addEventListener("click", () => { voice.unlock(); openTutorial(); });
 
 $("#btn-settings").addEventListener("click", () => { if (SA) openSettings(false); });
 
