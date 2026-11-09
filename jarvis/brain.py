@@ -1,4 +1,6 @@
 """Мозг Jarvis — Claude (Anthropic API) с инструментами для памяти, задач, финансов и проектов.
+Вместо Claude можно подключить GigaChat или YandexGPT (`JARVIS_LLM`, jarvis/llm.py) — разговор, личность
+и инструменты те же, меняется только формат запросов.
 
 Как устроен разговор:
 - история только дописывается (append-only): так работает кэш промпта и сохраняются блоки
@@ -125,10 +127,35 @@ class Brain:
         self.notes: list[str] = []
         self.lock = asyncio.Lock()
         self.usage = {"input": 0, "output": 0, "cache_read": 0}
+        self._chat: Any = None   # GigaChat / YandexGPT (jarvis/llm.py), если мозг — не Claude
+
+    @property
+    def backend(self) -> str:
+        """claude | gigachat | yandex; пусто — мозга нет, только команды."""
+        return "claude" if self._client is not None else self.j.cfg.llm_backend
 
     @property
     def available(self) -> bool:
-        return self._client is not None or self.j.cfg.llm_enabled
+        return bool(self.backend)
+
+    @property
+    def title(self) -> str:
+        return {"claude": "Claude", "gigachat": "GigaChat", "yandex": "YandexGPT"}.get(self.backend, "")
+
+    @property
+    def model(self) -> str | None:
+        cfg = self.j.cfg
+        return {"claude": cfg.model, "gigachat": cfg.gigachat_model, "yandex": cfg.yandex_model}.get(self.backend)
+
+    def chat(self):
+        if self._chat is None:
+            from .llm import make_chat
+            self._chat = make_chat(self.j.cfg, self.backend)
+        return self._chat
+
+    async def close(self) -> None:
+        if self._chat is not None:
+            await self._chat.close()
 
     def client(self):
         if self._client is None:
@@ -142,7 +169,7 @@ class Brain:
 
     def tools(self) -> list[dict]:
         tools = list(TOOLS)
-        if self.j.cfg.web_search:
+        if self.j.cfg.web_search and self.backend == "claude":
             tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 3})
         return tools
 
@@ -198,6 +225,9 @@ class Brain:
 
     async def analyze_image(self, data: bytes, mime: str, hint: str = "") -> Reply:
         """Фото чека/документа → Claude смотрит и сам вызывает инструменты (расходы, задачи)."""
+        if self.backend != "claude":
+            return Reply(f"Разбирать фото пока умеет только Claude, {self.j.title}. Опишите словами — запишу.",
+                         kind="warn", source="system")
         async with self.lock:
             system = self.system or self.build_system()
             task = hint.strip() or ("Посмотри на изображение. Если это чек или квитанция — запиши расходы через "
@@ -226,9 +256,11 @@ class Brain:
         )
 
     async def _run(self, messages: list[dict], system: str | None = None) -> Reply:
+        system = system or self.system or self.build_system()
+        if self.backend != "claude":
+            return await self._run_chat(messages, system)
         import anthropic
 
-        system = system or self.system or self.build_system()
         confirm = None
         start_len = len(messages)
         for _ in range(MAX_TOOL_ROUNDS):
@@ -275,6 +307,43 @@ class Brain:
             messages.append({"role": "user", "content": results})
         return Reply("Слишком много шагов для одной просьбы — остановился. Уточните задачу.", kind="warn",
                      source="claude", confirm=confirm)
+
+    async def _run_chat(self, messages: list[dict], system: str) -> Reply:
+        """Тот же цикл «ответ → инструменты → ответ», но через GigaChat / YandexGPT (jarvis/llm.py).
+        История — в формате этой модели (модель не меняется посреди работы Jarvis)."""
+        from .llm import LLMAuthError, LLMError
+
+        chat = self.chat()
+        confirm = None
+        start_len = len(messages)
+        for _ in range(MAX_TOOL_ROUNDS):
+            try:
+                turn = await chat.complete(system, messages, TOOLS)
+            except LLMAuthError as e:
+                del messages[start_len - 1:]
+                log.error("%s: ключ не принят: %s", chat.title, e)
+                return Reply(f"{chat.title} не принял ключ, {self.j.title}: {e}. Проверьте настройки в .env.",
+                             kind="error", source="system")
+            except LLMError as e:
+                del messages[start_len - 1:]
+                log.error("%s: %s", chat.title, e)
+                return Reply(f"{chat.title} сейчас недоступен: {e}. Команды без ИИ по-прежнему работают.",
+                             kind="warn", source="system")
+            self.usage["input"] += turn.usage[0]
+            self.usage["output"] += turn.usage[1]
+            if turn.refused:
+                del messages[start_len - 1:]   # как и с Claude: отклонённый ход не остаётся в истории
+                return Reply(f"Боюсь, с этим я помочь не могу, {self.j.title}.", kind="warn", source=chat.name)
+            messages.append(turn.message)
+            if not turn.calls:
+                return Reply(turn.text.strip() or f"Готово, {self.j.title}.", source=chat.name, confirm=confirm)
+            for call_id, name, args in turn.calls:
+                content, is_error, pending = await self._run_tool(name, args)
+                if pending:
+                    confirm = pending
+                messages.append(chat.tool_message(call_id, name, content, is_error))
+        return Reply("Слишком много шагов для одной просьбы — остановился. Уточните задачу.", kind="warn",
+                     source=chat.name, confirm=confirm)
 
     def _count(self, resp) -> None:
         u = getattr(resp, "usage", None)

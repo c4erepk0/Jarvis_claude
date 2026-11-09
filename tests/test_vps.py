@@ -49,3 +49,20 @@ def test_script_is_valid_and_has_help():
     assert "update" in vps("help")
     bad = subprocess.run(["bash", str(SCRIPT), "deploy-everything"], capture_output=True, text=True)
     assert bad.returncode != 0 and "Неизвестная команда" in bad.stderr
+
+
+def test_brain_settings_written_to_env(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("JARVIS_ACCESS_CODE=x\nJARVIS_LLM=\nGIGACHAT_AUTH_KEY=\n")
+    vps("_brain-env", str(env), "1", GIGACHAT_AUTH_KEY="S0VZOlNFQ1JFVA==")
+    text = env.read_text()
+    assert "JARVIS_LLM=gigachat" in text and "GIGACHAT_AUTH_KEY=S0VZOlNFQ1JFVA==" in text
+    assert "GIGACHAT_SCOPE=GIGACHAT_API_PERS" in text and text.count("JARVIS_LLM=") == 1
+
+    vps("_brain-env", str(env), "2", YANDEX_API_KEY="AQVN-key", YANDEX_FOLDER_ID="b1gfolder")
+    text = env.read_text()
+    assert "JARVIS_LLM=yandex" in text and "YANDEX_FOLDER_ID=b1gfolder" in text and "YANDEX_API_KEY=AQVN-key" in text
+
+    bad = subprocess.run(["bash", str(SCRIPT), "_brain-env", str(env), "2"], capture_output=True, text=True,
+                         env={**os.environ, "YANDEX_API_KEY": "k"}, stdin=subprocess.DEVNULL)
+    assert bad.returncode != 0 and "ID каталога" in bad.stderr

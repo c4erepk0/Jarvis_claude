@@ -1,8 +1,8 @@
 // J.A.R.V.I.S. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=5";
-import { Voice } from "./voice.js?v=5";
+import { Reactor } from "./reactor.js?v=6";
+import { Voice } from "./voice.js?v=6";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -59,7 +59,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Jarvis работает прямо на телефоне
-    SA = await import("./standalone.js?v=5");
+    SA = await import("./standalone.js?v=6");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -261,7 +261,7 @@ function chip(sel, cls, flash = false) {
 }
 function renderChips() {
   chip("#chip-brain", S.llm ? "on" : "warn");
-  $("#chip-brain").title = S.llm ? `Claude: ${S.model}` : "Claude не подключён — только команды";
+  $("#chip-brain").title = S.llm ? `${S.brain || "Claude"}: ${S.model}` : "Модель не подключена — только команды";
   chip("#chip-voice", voice.muted ? "warn" : "on");
   chip("#chip-tg", S.telegram ? "on" : "");
 }
@@ -725,7 +725,7 @@ let holo = null;
 $("#btn-holo").addEventListener("click", async () => {
   $("#holo").classList.remove("hidden");
   try {
-    const { Hologram } = await import("./hologram.js?v=5");
+    const { Hologram } = await import("./hologram.js?v=6");
     if (!holo) holo = new Hologram($("#holo"), { onOpen: openNote, onStatus: (s) => { $("#holo-stats").textContent = s; } });
     else { holo.running = true; requestAnimationFrame(holo.loop); }
     holo.setData(await api("/api/graph"));
@@ -748,7 +748,7 @@ async function startCamera() {
 async function openTutorial() {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=5");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=6");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },

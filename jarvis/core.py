@@ -106,6 +106,7 @@ class Jarvis:
         return [p.name for p in self.projects.list()]
 
     async def close(self) -> None:
+        await self.brain.close()
         await self.github.close()
         await self.projects.close()
         await self.briefing.close()
@@ -343,8 +344,9 @@ class Jarvis:
                 reply = await self.brain.ask(text, source)
             else:
                 reply = Reply(
-                    f"Без подключения к Claude я понимаю только команды, {self.title}. Скажите «что ты умеешь» — "
-                    f"перечислю. Чтобы я понимал свободную речь, добавьте ANTHROPIC_API_KEY в .env.",
+                    f"Без подключения к модели я понимаю только команды, {self.title}. Скажите «что ты умеешь» — "
+                    f"перечислю. Чтобы я понимал свободную речь, подключите GigaChat, YandexGPT или Claude "
+                    f"(ключ в .env, см. docs/brain.md).",
                     kind="warn")
         if reply.confirm is None:
             pending = self.latest_pending()
@@ -497,7 +499,7 @@ class Jarvis:
         n = self.now()
         st: dict[str, Any] = {
             "now": n.isoformat(), "title": self.title, "name": self.cfg.user_name,
-            "llm": self.brain.available, "model": self.cfg.model if self.brain.available else None,
+            "llm": self.brain.available, "brain": self.brain.title or None, "model": self.brain.model,
             "voice": {"engine": self.cfg.tts_engine, "server": self.voice.server_side, "muted": self.voice.muted,
                       "wake_word": self.cfg.wake_word},
             "tasks": {"summary": self.tasks.summary(ref), "today": self.act_list_tasks("today"),

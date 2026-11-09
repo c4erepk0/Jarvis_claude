@@ -75,7 +75,7 @@ def test_command_flow_writes_obsidian(tmp_path):
         assert j.reminders.upcoming()[0]["text"] == "проверить почту"
 
         r = await j.handle("расскажи анекдот")
-        assert r.kind == "warn" and "ANTHROPIC_API_KEY" in r.text
+        assert r.kind == "warn" and "GigaChat" in r.text and "docs/brain.md" in r.text
 
         convo = j.vault.read(f"Jarvis/Conversations/{j.today().isoformat()}.md")
         assert "минус 28000 продукты" in convo and "**Jarvis:**" in convo

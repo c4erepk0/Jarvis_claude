@@ -51,7 +51,7 @@ class BlobCache {
 }
 
 export async function vaultTemplate() {
-  const r = await fetch("static/vault-template.json?v=5");
+  const r = await fetch("static/vault-template.json?v=6");
   return r.ok ? r.json() : {};
 }
 

@@ -273,8 +273,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
         return ok({"ok": res})
 
     async def scan(request):
-        if not j.brain.available:
-            return ok({"error": "Анализ фото работает с ключом Claude API (ANTHROPIC_API_KEY)."}, 503)
+        if j.brain.backend != "claude":
+            return ok({"error": "Анализ фото пока работает только с Claude API (ANTHROPIC_API_KEY)."}, 503)
         reader = await request.multipart()
         image, mime, hint = None, "", ""
         async for part in reader:

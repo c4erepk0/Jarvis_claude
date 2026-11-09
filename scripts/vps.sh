@@ -6,6 +6,7 @@
 #   bash vps.sh status    — работает ли, адрес, код входа, последние строки журнала
 #   bash vps.sh logs      — журнал в реальном времени (выход — Ctrl+C)
 #   bash vps.sh check     — какие внешние сервисы доступны с этого сервера
+#   bash vps.sh brain     — подключить «мозг»: GigaChat (Сбер) или YandexGPT (Яндекс), docs/brain.md
 #
 # Запускать от root. Вопросы можно не задавать — переменные окружения: GITHUB_TOKEN, VAULT_GIT,
 # ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_ID, JARVIS_DOMAIN (свой домен вместо <ip>.sslip.io),
@@ -255,9 +256,12 @@ wait_https() {
 
 check_net() {
   say "🌐 Доступ с этого сервера:"
-  local name url code hint
-  while IFS='|' read -r name url hint; do
-    code=$(curl -s -o /dev/null --max-time 8 -w '%{http_code}' "$url" 2>/dev/null || true)
+  local name url code hint ca
+  while IFS='|' read -r name url hint ca; do
+    local -a extra=()
+    # GigaChat работает на сертификате Минцифры — проверяем им, как и сам Jarvis (jarvis/llm.py)
+    [ -z "$ca" ] || [ ! -f "$APP_DIR/$ca" ] || extra=(--cacert "$APP_DIR/$ca")
+    code=$(curl -s -o /dev/null --max-time 8 -w '%{http_code}' "${extra[@]}" "$url" 2>/dev/null || true)
     if [ -n "$code" ] && [ "$code" != "000" ]; then say "   ✓ $name"; else say "   ✗ $name — $hint"; fi
   done <<'EOF'
 GitHub (код, память, проекты)|https://api.github.com|без него не скачать код и не синхронизировать память
@@ -265,7 +269,56 @@ Telegram (оповещения)|https://api.telegram.org|оповещения �
 Голос edge-tts|https://speech.platform.bing.com|поставьте TTS_ENGINE=browser в .env — будет говорить голос iPhone
 Погода (open-meteo)|https://api.open-meteo.com/v1/forecast?latitude=55.75&longitude=37.62&current=temperature_2m|в брифинге не будет погоды
 Курсы ЦБ|https://www.cbr-xml-daily.ru/daily_json.js|в брифинге не будет курсов
+Мозг GigaChat|https://ngw.devices.sberbank.ru:9443/api/v2/oauth|GigaChat не подключить с этого сервера|jarvis/certs/russian_trusted_root_ca.pem
+Мозг YandexGPT|https://ai.api.cloud.yandex.net/v1/models|YandexGPT не подключить с этого сервера
 EOF
+}
+
+# Записать в .env настройки мозга. Выбор и ключи — из переменных окружения (так проверяется
+# в tests/test_vps.py) или вопросами в терминале.
+brain_env() {
+  local file=$1 choice=${2:-}
+  ask choice "Какой мозг подключить? 1 — GigaChat (Сбер), 2 — YandexGPT (Яндекс): "
+  case "$choice" in
+    1|g*|G*)
+      ask GIGACHAT_AUTH_KEY "Ключ авторизации GigaChat (ввод скрыт): " secret
+      [ -n "${GIGACHAT_AUTH_KEY:-}" ] || die "Нужен «Ключ авторизации» из личного кабинета GigaChat API (docs/brain.md)."
+      ask GIGACHAT_SCOPE "Тип доступа [Enter — GIGACHAT_API_PERS, для физлиц]: "
+      set_env "$file" JARVIS_LLM gigachat
+      set_env "$file" GIGACHAT_AUTH_KEY "$GIGACHAT_AUTH_KEY"
+      set_env "$file" GIGACHAT_SCOPE "${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}"
+      [ -z "${GIGACHAT_MODEL:-}" ] || set_env "$file" GIGACHAT_MODEL "$GIGACHAT_MODEL" ;;
+    2|y*|Y*)
+      ask YANDEX_API_KEY "API-ключ Yandex AI Studio (ввод скрыт): " secret
+      ask YANDEX_FOLDER_ID "ID каталога (начинается с b1g…): "
+      [ -n "${YANDEX_API_KEY:-}" ] && [ -n "${YANDEX_FOLDER_ID:-}" ] \
+        || die "Нужны API-ключ и ID каталога из Yandex AI Studio (docs/brain.md)."
+      set_env "$file" JARVIS_LLM yandex
+      set_env "$file" YANDEX_API_KEY "$YANDEX_API_KEY"
+      set_env "$file" YANDEX_FOLDER_ID "$YANDEX_FOLDER_ID"
+      [ -z "${YANDEX_MODEL:-}" ] || set_env "$file" YANDEX_MODEL "$YANDEX_MODEL" ;;
+    *) die "Ответьте 1 (GigaChat) или 2 (YandexGPT)." ;;
+  esac
+}
+
+cmd_brain() {
+  need_root brain
+  [ -f "$ENV_FILE" ] || die "Jarvis не установлен в $APP_DIR — сначала: bash $0 install"
+  brain_env "$ENV_FILE" "${JARVIS_LLM:-}"
+  say "⚙️  Перезапускаю Jarvis…"
+  systemctl restart jarvis
+  wait_local
+  say "🧠 Проверка: спрашиваю Jarvis «Представься одной фразой»…"
+  local code reply
+  code=$(get_env "$ENV_FILE" JARVIS_ACCESS_CODE)
+  reply=$(curl -sS --max-time 120 -H "Authorization: Bearer $code" -H "Content-Type: application/json" \
+    -d '{"text": "Представься одной фразой."}' "http://127.0.0.1:$PORT/api/command" 2>&1 || true)
+  say "   $(printf '%s' "$reply" | python3 -c 'import json, sys
+try:
+    print(json.load(sys.stdin).get("text", ""))
+except ValueError:
+    print("не удалось разобрать ответ")')"
+  say "Если выше ошибка — подробности: bash $0 logs. Инструкция: $APP_DIR/docs/brain.md"
 }
 
 banner() {
@@ -353,12 +406,14 @@ case "${1:-install}" in
   status) cmd_status ;;
   logs) exec journalctl -u jarvis -f ;;
   check) check_net ;;
+  brain) cmd_brain ;;
   # для тестов
   _sslip) sslip_domain "$2" ;;
   _set-env) set_env "$2" "$3" "$4" ;;
   _get-env) get_env "$2" "$3" ;;
   _render-unit) render_unit ;;
   _render-caddy) render_caddy "$2" ;;
+  _brain-env) brain_env "$2" "${3:-}" ;;
   -h|--help|help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) die "Неизвестная команда «$1». Есть: install, update, status, logs, check." ;;
+  *) die "Неизвестная команда «$1». Есть: install, update, status, logs, check, brain." ;;
 esac

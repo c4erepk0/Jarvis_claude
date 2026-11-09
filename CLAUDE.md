@@ -18,6 +18,9 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/core.py` — класс `Jarvis`: все действия `act_*`, очередь подтверждений, `handle()` — главный вход.
 - `jarvis/intents.py` — локальный разбор русских команд; `jarvis/ru.py` — даты, суммы, склонения.
 - `jarvis/brain.py` — Claude: инструменты, append-only история, `fallbacks="default"`, отказ (`refusal`).
+- `jarvis/llm.py` — тот же мозг на GigaChat / YandexGPT (`JARVIS_LLM`): перевод формата функций, OAuth GigaChat,
+  сертификат Минцифры (`jarvis/certs/`) — только для запросов GigaChat. Тест — `tests/test_llm.py`, инструкция —
+  `docs/brain.md`. В JS-ядро для iPhone не перенесено намеренно: из браузера к этим API не обратиться.
 - `jarvis/protocols.py` — протоколы (встроенные + `Jarvis/Protocols.md`).
 - `jarvis/vault.py` — безопасные пути, атомарная запись, frontmatter, поиск, граф, наблюдение за изменениями.
 - `jarvis/tasks.py` (формат Obsidian Tasks) · `jarvis/finance.py` (таблицы по месяцам, копейки) · `jarvis/memory.py`.

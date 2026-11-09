@@ -78,6 +78,7 @@ bash start.sh          # macOS: двойной клик по start.command, Wind
 в Obsidian как хранилище (или укажите своё в `VAULT_PATH`).
 
 Дальше по желанию в `.env`:
+- `GIGACHAT_AUTH_KEY` или `YANDEX_API_KEY` + `YANDEX_FOLDER_ID` — мозг на GigaChat или YandexGPT (доступны в России, [docs/brain.md](docs/brain.md); на сервере — `bash /opt/jarvis/scripts/vps.sh brain`);
 - `ANTHROPIC_API_KEY` — свободная речь, поиск, фото (модель `claude-opus-5-5`, `JARVIS_EFFORT=low` для
   быстрых голосовых ответов);
 - `GITHUB_TOKEN` — статус приватных репозиториев, задачи для @claude, деплой;
