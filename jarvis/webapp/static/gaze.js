@@ -40,33 +40,35 @@ export function eyeFeatures(lm, blend = {}) {
 }
 
 /** Версия признаков: модель, обученная на других признаках, не годится — калибровать заново. */
-export const FEATURE_VERSION = 2;
+export const FEATURE_VERSION = 3;
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-/** Признаки взгляда с учётом положения головы относительно камеры (матрица MediaPipe 4×4 по столбцам, см).
- *  Телефон сдвинули или наклонили — голова относительно камеры другая, и прежняя калибровка «съезжала».
- *  Здесь всё переводится в плоскость экрана (она же плоскость камеры, z = 0): куда упирается луч «вперёд из
- *  головы» (Hx, Hy) плюс поворот глаз, умноженный на расстояние до экрана, в осях головы (r — вправо, u — вверх).
- *  Модель сверху — линейная: она лишь переводит сантиметры этой плоскости в пиксели экрана, поэтому калибровка
- *  в одной позе переносится на другие. Нет матрицы — прежние признаки (eyeFeatures). */
-export function gazeFeatures(lm, blend = {}, matrix = null) {
+/** Признаки взгляда — только глаза, без положения головы (v3). Подобраны на калибровках владельца
+ *  (Jarvis/Gaze, 3 сессии на iPhone): по горизонтали с точкой экрана связаны радужки и eyeLook (корреляция ~0,97
+ *  во всех сессиях), по вертикали — они же и открытость глаз (0,97–0,99). Поза головы тоже коррелировала с точкой,
+ *  но в каждой сессии по-своему (вплоть до смены знака): человек чуть двигает головой и телефоном, переводя взгляд,
+ *  и модель училась на этом совпадении — в новой сессии промах был 300–500 px. Сдвиг от другой позы и света
+ *  убирают привязка (3 точки) и поправка по каждому щипку (AdaptiveGaze), а не признаки головы. Поворот лица
+ *  по точкам кадра (нос против краёв лица) по своей оси — помогает: в работе 71 → 64 px, после смены позы 98 → 84.
+ *  Возвращает [eh, bh, yaw, ev, bv, open, blink, wide, pitch]: первые 3 — для x, остальные — для y (SPLIT). */
+export function gazeFeatures(lm, blend = {}) {
   const e = eyeFeatures(lm, blend);
-  if (!e || !matrix || matrix.length < 16) return e;
-  const m = matrix;
-  const r = [m[0], m[1], m[2]], u = [m[4], m[5], m[6]], f = [m[8], m[9], m[10]], t = [m[12], m[13], m[14]];
-  if (!(t[2] < -5) || !(f[2] > 0.2)) return e;            // поза неправдоподобна (лицо за камерой, отвернулся)
-  const d = -t[2];
-  const lam = d / f[2];
-  const hx = t[0] + lam * f[0], hy = t[1] + lam * f[1];   // куда смотрит голова, см от камеры
-  const eh = (e[0] + e[2]) / 2, ev = (e[1] + e[3]) / 2;   // радужки: вдоль глаза и поперёк
+  if (!e) return null;
   const b = (k) => blend[k] ?? 0;
-  const bh = (b("eyeLookOutLeft") - b("eyeLookInLeft") + b("eyeLookInRight") - b("eyeLookOutRight")) / 2;
-  const bv = (b("eyeLookUpLeft") + b("eyeLookUpRight") - b("eyeLookDownLeft") - b("eyeLookDownRight")) / 2;
-  return [hx, hy,
-    d * eh * r[0], d * eh * r[1], d * ev * u[0], d * ev * u[1],     // поворот глаз по радужкам
-    d * bh * r[0], d * bh * r[1], d * bv * u[0], d * bv * u[1],     // и по коэффициентам взгляда
-    d * r[0], d * r[1], d * u[0], d * u[1],                         // постоянный сдвиг взгляда (у каждого свой)
-    r[0], r[1], u[0], u[1]];                                        // глаза — не в центре головы
+  const open = (dist(lm[159], lm[145]) / (dist(lm[33], lm[133]) || 1e-6) + dist(lm[386], lm[374]) / (dist(lm[263], lm[362]) || 1e-6)) / 2;
+  return [
+    (e[0] + e[2]) / 2,                                                                       // радужки вдоль глаза
+    (b("eyeLookOutLeft") - b("eyeLookInLeft") + b("eyeLookInRight") - b("eyeLookOutRight")) / 2,  // eyeLook по горизонтали
+    e[4],                                                                                    // поворот лица влево-вправо
+    (e[1] + e[3]) / 2,                                                                       // радужки поперёк глаза
+    (b("eyeLookUpLeft") + b("eyeLookUpRight") - b("eyeLookDownLeft") - b("eyeLookDownRight")) / 2,
+    Number.isFinite(open) ? open : 0,                                                        // глаз открыт шире, глядя вверх
+    (b("eyeBlinkLeft") + b("eyeBlinkRight")) / 2, (b("eyeWideLeft") + b("eyeWideRight")) / 2,
+    e[5],                                                                                    // наклон лица вверх-вниз
+  ];
 }
+/** Какие признаки gazeFeatures идут в горизонталь, какие — в вертикаль. */
+export const SPLIT = { x: [0, 1, 2], y: [3, 4, 5, 6, 7, 8] };
 
 // ---------- модель: гребневая регрессия признаки → экран (в долях экрана 0…1) ----------
 function solve(A, b) {
@@ -132,6 +134,51 @@ export class GazeModel {
   }
 }
 
+/** Модель по осям: x — по своим признакам, y — по своим (SPLIT). Меньше признаков на ось — меньше подгонки под
+ *  шум: при 9 точках калибровки модель на всех 17 признаках угадывала новые точки хуже. Признаки другой длины —
+ *  обычная GazeModel на всех (старые записи, тесты). Тот же интерфейс, что у GazeModel. */
+export class SplitModel {
+  constructor({ lambda = 1, split = SPLIT } = {}) {
+    this.lambda = lambda;
+    this.split = split;
+    this.samples = [];
+    this.mx = null; this.my = null; this.full = null;
+  }
+
+  add(f, x, y, w = 1) { this.samples.push([f, x, y, w]); }
+  get ready() { return Boolean(this.mx || this.full); }
+  pick(f, axis) { return this.split[axis].map((i) => f[i]); }
+
+  fit() {
+    if (this.samples.length < 3) throw new Error("мало точек калибровки");
+    const len = this.samples[0][0].length;
+    if (len !== FEATURE_LEN) {
+      this.full = new GazeModel({ lambda: this.lambda });
+      this.samples.forEach(([f, x, y, w]) => this.full.add(f, x, y, w));
+      this.full.fit();
+      return this;
+    }
+    this.mx = new GazeModel({ lambda: this.lambda }); this.my = new GazeModel({ lambda: this.lambda });
+    for (const [f, x, y, w] of this.samples) { this.mx.add(this.pick(f, "x"), x, 0, w); this.my.add(this.pick(f, "y"), y, 0, w); }
+    this.mx.fit(); this.my.fit();
+    return this;
+  }
+
+  predict(f) {
+    if (this.full) return this.full.predict(f);
+    return { x: this.mx.predict(this.pick(f, "x")).x, y: this.my.predict(this.pick(f, "y")).x };
+  }
+
+  toJSON() { return { lambda: this.lambda, split: this.split, mx: this.mx, my: this.my, full: this.full }; }
+  static fromJSON(o) {
+    const m = new SplitModel({ lambda: o.lambda, split: o.split || SPLIT });
+    if (o.full) m.full = GazeModel.fromJSON(o.full);
+    else { m.mx = GazeModel.fromJSON(o.mx); m.my = GazeModel.fromJSON(o.my); }
+    return m;
+  }
+}
+const FEATURE_LEN = 9;
+
 // ---------- сглаживание: фильтр One Euro (Casiez и др., 2012) ----------
 // Когда взгляд стоит — сильно сглаживает дрожание, когда прыгает на другую цель — почти не запаздывает.
 export class OneEuro {
@@ -190,17 +237,19 @@ export const CHECK_POINTS = [[0.3, 0.3], [0.7, 0.3], [0.7, 0.7], [0.3, 0.7]];
 const GRID = [0.06, 0.28, 0.5, 0.72, 0.94];
 export const BIG_POINTS = GRID.flatMap((y, r) => (r % 2 ? [...GRID].reverse() : GRID).map((x) => [x, y]));
 export const BIG_CHECK = [[0.2, 0.4], [0.4, 0.2], [0.6, 0.8], [0.8, 0.6], [0.35, 0.65], [0.65, 0.35], [0.15, 0.85], [0.85, 0.15]];
-// Скан лица: смотрите на точку и водите телефоном — модель учится отличать «телефон сдвинули» от «перевели
-// взгляд». Без скана калибровка верна только в той позе, в которой её прошли.
-// Точки скана — в разных частях экрана: так модель видит, как движение телефона сказывается на взгляде и вверху,
-// и внизу. Длительность важнее числа точек: на симуляции 2 точки по 6–7 с дают при сдвиге телефона ~30 px против ~60.
+/** Привязка: 3 точки, ~6 с — при каждом включении взгляда. Убирает сдвиг, с которым модель переходит в новую
+ *  сессию (другой свет, поза, как открыты глаза): на записях владельца промах 176 → ~60 px. Модель не переучивается. */
+export const ANCHOR_POINTS = [[0.5, 0.3], [0.25, 0.72], [0.75, 0.72]];
+// Темп: точка плавно переезжает, затем ждём, пока взгляд устоится (не меньше settleMs, не больше settleMaxMs),
+// и только потом пишем sampleMs. Прежние 0,6 с ожидания владельцу казались «точка очень быстро перемещается».
+const PACE = { settleMs: 1000, settleMaxMs: 1700, sampleMs: 900 };
 export const CALIBRATIONS = {
-  quick: { points: CAL_POINTS, scan: [[0.5, 0.25], [0.5, 0.75]], check: CHECK_POINTS, settleMs: 650, sampleMs: 850 },
-  big: { points: BIG_POINTS, scan: [[0.5, 0.2], [0.2, 0.6], [0.8, 0.8]], check: BIG_CHECK, settleMs: 600, sampleMs: 1000 },
+  quick: { points: CAL_POINTS, check: CHECK_POINTS, ...PACE },
+  big: { points: BIG_POINTS, check: BIG_CHECK, ...PACE },
+  anchor: { points: ANCHOR_POINTS, check: [], ...PACE, fit: false },
 };
-/** Скан: сколько поводить телефоном (размах позы головы относительно камеры), сколько он длится и как весит. */
-export const SCAN = { need: { x: 8, y: 8, z: 12, roll: 20 }, minMs: 6000, maxMs: 16000, noPoseMs: 5000, weight: 1, maxFrames: 150 };
-export const SCAN_AXES = { x: "влево-вправо", y: "вверх-вниз", z: "ближе-дальше", roll: "наклон" };
+/** Взгляд устоялся: за последние кадры радужки почти не сдвигались (доля ширины глаза). */
+const STEADY = { frames: 6, spread: 0.008 };
 
 /** Поза головы относительно камеры по матрице MediaPipe: сдвиг (см), расстояние (см), повороты (градусы). */
 export function headPose(m) {
@@ -211,25 +260,26 @@ export function headPose(m) {
 }
 
 export class Calibration {
-  /** screen — { w, h } в px (для точности в пикселях); settleMs — глаз доводится до точки, sampleMs — замер;
-   *  record — сохранять «сырые» кадры (packFrame) для анализа: toSession() отдаёт их одной записью. */
-  constructor({ screen = { w: 390, h: 844 }, mode = "quick", points, scan, check, settleMs, sampleMs, lambda = 1, record = false,
-    maxPerPoint = 30, scanOpts = SCAN } = {}) {
+  /** screen — { w, h } в px (для точности в пикселях); mode — quick | big | anchor (привязка: модель не учится,
+   *  собираются примеры для AdaptiveGaze.anchor); record — сохранять «сырые» кадры (packFrame) для анализа. */
+  constructor({ screen = { w: 390, h: 844 }, mode = "quick", points, check, settleMs, settleMaxMs, sampleMs, lambda = 1,
+    record = false, maxPerPoint = 30 } = {}) {
     const preset = CALIBRATIONS[mode] || CALIBRATIONS.quick;
-    points ??= preset.points; scan ??= preset.scan; check ??= preset.check;
-    settleMs ??= preset.settleMs; sampleMs ??= preset.sampleMs;
-    Object.assign(this, { screen, mode, settleMs, sampleMs, lambda, record, maxPerPoint, scanOpts });
+    points ??= preset.points; check ??= preset.check;
+    settleMs ??= preset.settleMs; settleMaxMs ??= preset.settleMaxMs ?? settleMs; sampleMs ??= preset.sampleMs;
+    Object.assign(this, { screen, mode, settleMs, settleMaxMs, sampleMs, lambda, record, maxPerPoint });
+    this.fitModel = preset.fit !== false;
     this.frames = [];       // записанные кадры: { t, p (номер точки), lm, b, m }
     this.perPoint = 0;
     this.t0 = null;
-    this.list = [...points.map((p) => ({ p, check: false })), ...scan.map((p) => ({ p, check: false, scan: true })),
-      ...check.map((p) => ({ p, check: true }))];
-    this.fitCount = points.length + scan.length;
-    this.span = null;       // размах позы на текущем скане: { x: [min, max], … }
+    this.list = [...points.map((p) => ({ p, check: false })), ...check.map((p) => ({ p, check: true }))];
+    this.fitCount = points.length;
     this.poseRange = null;  // в каких позах прошла калибровка — вне их точность падает
-    this.model = new GazeModel({ lambda });
+    this.model = new SplitModel({ lambda });
     this.i = 0;
     this.time = 0;          // сколько точку уже видели (идёт, только пока лицо в кадре)
+    this.sampleFrom = null; // с какого момента точки пишем замер (взгляд устоялся)
+    this.recent = [];       // последние признаки — устоялся ли взгляд
     this.last = null;
     this.got = [];          // предсказания на текущей проверочной точке
     this.errors = [];
@@ -239,27 +289,25 @@ export class Calibration {
   get done() { return this.i >= this.list.length; }
   get point() { return this.done ? null : this.list[this.i].p; }
   get checking() { return !this.done && this.list[this.i].check; }
-  get scanning() { return !this.done && Boolean(this.list[this.i].scan); }
+  /** Идёт ли замер (взгляд устоялся) — точка в это время сжимается. */
+  get sampling() { return !this.done && this.sampleFrom !== null; }
+  /** 0…0,3 — ждём взгляд, 0,3…1 — замер. */
   get progress() {
-    if (!this.scanning) return Math.min(1, this.time / (this.settleMs + this.sampleMs));
-    const o = this.scanOpts, c = this.coverage;
-    return c ? Math.min(1, Math.min(c.total, 1) * 0.85 + 0.15 * Math.min(1, this.time / (o.minMs + this.settleMs)))
-      : Math.min(1, this.time / (o.noPoseMs + this.settleMs));
-  }
-  /** Насколько поводили телефоном на скане: по каждой оси 0…1 и в среднем (null — поза головы неизвестна). */
-  get coverage() {
-    if (!this.span) return null;
-    const out = {};
-    for (const [k, need] of Object.entries(this.scanOpts.need)) out[k] = Math.min(1, (this.span[k][1] - this.span[k][0]) / need);
-    out.total = Object.keys(this.scanOpts.need).reduce((s, k) => s + out[k], 0) / Object.keys(this.scanOpts.need).length;
-    return out;
+    if (this.sampleFrom === null) return Math.min(0.3, (0.3 * this.time) / this.settleMs);
+    return Math.min(1, 0.3 + (0.7 * (this.time - this.sampleFrom)) / this.sampleMs);
   }
   get counter() { return { n: Math.min(this.i + 1, this.list.length), total: this.list.length }; }
   /** Средняя ошибка на проверочных точках, px. */
   get errorPx() { return this.errors.length ? this.errors.reduce((s, e) => s + e, 0) / this.errors.length : null; }
   faceLost(ts, ms = 800) { return this.faceSeenAt === null ? false : ts - this.faceSeenAt > ms; }
 
-  /** Кадр с камеры: f — eyeFeatures (null — лица не видно, время точки стоит); raw — packFrame того же кадра. */
+  steady() {
+    const r = this.recent;
+    if (r.length < STEADY.frames) return false;
+    return [0, 2].every((j) => Math.max(...r.map((f) => f[j])) - Math.min(...r.map((f) => f[j])) < STEADY.spread);
+  }
+
+  /** Кадр с камеры: f — gazeFeatures (null — лица не видно или моргнул, время точки стоит); raw — packFrame. */
   feed(f, ts, raw = null) {
     if (this.done) return;
     if (this.t0 === null) this.t0 = ts;
@@ -270,7 +318,9 @@ export class Calibration {
     if (!f) return;
     this.faceSeenAt = ts;
     this.time += dt;
-    const { p, check, scan } = this.list[this.i];
+    this.recent.push(f);
+    if (this.recent.length > STEADY.frames) this.recent.shift();
+    const { p, check } = this.list[this.i];
     const pose = raw?.m ? headPose(raw.m) : null;
     if (pose) {
       this.poseRange ??= {};
@@ -279,29 +329,17 @@ export class Calibration {
         r[0] = Math.min(r[0], pose[k]); r[1] = Math.max(r[1], pose[k]);
       }
     }
-    if (this.time >= this.settleMs) {
-      if (check) this.got.push(this.model.predict(f));
-      else this.model.add(f, p[0], p[1], scan ? this.scanOpts.weight : 1);
-      if (scan && pose) {
-        this.span ??= {};
-        for (const k of Object.keys(this.scanOpts.need)) {
-          const r = this.span[k] ??= [pose[k], pose[k]];
-          r[0] = Math.min(r[0], pose[k]); r[1] = Math.max(r[1], pose[k]);
-        }
-      }
-      const cap = scan ? this.scanOpts.maxFrames : this.maxPerPoint;
-      if (this.record && raw && this.perPoint < cap) {
-        this.frames.push({ t: Math.round(ts - this.t0), p: this.i, ...raw });
-        this.perPoint += 1;
-      }
+    if (this.sampleFrom === null) {
+      if (this.time < this.settleMs || (!this.steady() && this.time < this.settleMaxMs)) return;
+      this.sampleFrom = this.time;
     }
-    if (scan) {
-      // скан идёт, пока не поводили телефоном по всем осям (но не меньше minMs и не дольше maxMs)
-      const o = this.scanOpts, c = this.coverage, t = this.time - this.settleMs;
-      const enough = c ? t >= o.minMs && c.total >= 0.999 : t >= o.noPoseMs;
-      if (!enough && t < o.maxMs) return;
-      this.span = null;
-    } else if (this.time < this.settleMs + this.sampleMs) return;
+    if (check) this.got.push(this.model.predict(f));
+    else this.model.add(f, p[0], p[1]);
+    if (this.record && raw && this.perPoint < this.maxPerPoint) {
+      this.frames.push({ t: Math.round(ts - this.t0), p: this.i, ...raw });
+      this.perPoint += 1;
+    }
+    if (this.time - this.sampleFrom < this.sampleMs) return;
     if (check) {
       const m = this.got.reduce((s, q) => ({ x: s.x + q.x / this.got.length, y: s.y + q.y / this.got.length }), { x: 0, y: 0 });
       this.errors.push(Math.hypot((m.x - p[0]) * this.screen.w, (m.y - p[1]) * this.screen.h));
@@ -309,11 +347,13 @@ export class Calibration {
     }
     this.i += 1;
     this.time = 0;
+    this.sampleFrom = null;
+    this.recent = [];
     this.perPoint = 0;
-    if (this.i === this.fitCount) this.model.fit();
+    if (this.i === this.fitCount && this.fitModel) this.model.fit();
   }
 
-  /** Модель, которая доучивается в работе, — на кадрах этой калибровки (не больше 400, равномерно). */
+  /** Модель для работы — на кадрах этой калибровки (не больше 400, равномерно). */
   adaptive(opts = {}) {
     const all = this.model.samples;
     const step = Math.max(1, Math.ceil(all.length / 400));
@@ -321,53 +361,97 @@ export class Calibration {
       lambda: this.lambda, range: this.poseRange, ...opts });
   }
 
+  /** Примеры привязки: [признаки, x, y] — для AdaptiveGaze.anchor. */
+  get anchorSamples() { return this.model.samples.map(([f, x, y]) => [f, x, y]); }
+
   /** Запись калибровки для хранилища (Jarvis/Gaze/sessions): точки, «сырые» кадры, итог. */
   toSession({ created = new Date().toISOString(), device = "" } = {}) {
     return {
       kind: "jarvis-gaze-session", version: 1, created, device, mode: this.mode,
       screen: { w: Math.round(this.screen.w), h: Math.round(this.screen.h) },
-      settleMs: this.settleMs, sampleMs: this.sampleMs, lambda: this.lambda,
-      landmarks: RAW_LANDMARKS, blend: BLEND_KEYS,
-      featureVersion: FEATURE_VERSION, scan: this.scanOpts,
-      points: this.list.map(({ p, check, scan }) => ({ x: p[0], y: p[1], check, ...(scan ? { scan: true } : {}) })),
+      settleMs: this.settleMs, settleMaxMs: this.settleMaxMs, sampleMs: this.sampleMs, lambda: this.lambda,
+      landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, featureVersion: FEATURE_VERSION,
+      points: this.list.map(({ p, check }) => ({ x: p[0], y: p[1], check })),
       frames: this.frames,
       result: { errorPx: this.errorPx === null ? null : Math.round(this.errorPx * 10) / 10, errors: this.errors.map((e) => Math.round(e)) },
     };
   }
 }
 
-// ---------- доучивание в работе ----------
-/** Модель, которая доучивается на нажатиях: нажали щипком по цели — значит, смотрели на неё; такой пример
- *  весит как несколько кадров калибровки. Хранятся последние limit нажатий — поза и свет со временем меняются.
- *  Заодно считает точность в работе: насколько взгляд промахивался мимо целей последних нажатий. */
+// ---------- точность в работе ----------
+/** Поправка после нажатия: какая доля промаха убирается сразу. Подобрано на записях владельца (поток нажатий
+ *  в другой сессии): 0 — 176 px, 0,4 — 65, 0,6 — 62, 0,8 — 62; после смены позы 0,6 — 98 px против 551. */
+export const LIVE_ALPHA = 0.6;
+
+/** Модель в работе: калибровка + поправка сдвига. Нажали щипком по цели — значит, смотрели на неё: промах
+ *  (цель минус взгляд) сразу сдвигает курсор на долю alpha. Сдвиг от новой сессии убирает привязка (anchor).
+ *  Модель на нажатиях не переучивается: на записях владельца поправка сдвига работала лучше и устойчивее.
+ *  Заодно считает точность в работе — промах взгляда на последних нажатиях. */
 export class AdaptiveGaze {
-  /** range — в каких позах головы прошла калибровка (headPose: min/max по осям); featureVersion — признаки. */
-  constructor({ base = [], usage = [], lambda = 1, usageWeight = 6, limit = 60, range = null, featureVersion = FEATURE_VERSION } = {}) {
-    Object.assign(this, { base, usage, lambda, usageWeight, limit, range, featureVersion });
+  /** range — в каких позах головы прошла калибровка (headPose: min/max); bias — поправка, доли экрана. */
+  constructor({ base = [], usage = [], lambda = 1, limit = 60, range = null, bias = null, alpha = LIVE_ALPHA,
+    featureVersion = FEATURE_VERSION } = {}) {
+    Object.assign(this, { base, usage, lambda, limit, range, alpha, featureVersion });
+    this.bias = bias ? { ...bias } : { x: 0, y: 0 };
     this.refit();
   }
 
-  /** Поза далеко за пределами калибровки — точность падает: голограмма подскажет пройти скан заново. */
-  outOfRange(pose, slack = { x: 4, y: 4, z: 8, roll: 12 }) {
-    if (!pose || !this.range) return false;
-    return Object.entries(slack).some(([k, s]) => this.range[k] && (pose[k] < this.range[k][0] - s || pose[k] > this.range[k][1] + s));
-  }
-
   refit() {
-    const m = new GazeModel({ lambda: this.lambda });
+    const m = new SplitModel({ lambda: this.lambda });
     for (const [f, x, y, w] of this.base) m.add(f, x, y, w ?? 1);
-    for (const [f, x, y] of this.usage) m.add(f, x, y, this.usageWeight);
     this.model = m.samples.length >= 3 ? m.fit() : null;
   }
 
   get ready() { return Boolean(this.model); }
-  predict(f) { return this.model.predict(f); }
+  predict(f) { const p = this.model.predict(f); return { x: p.x + this.bias.x, y: p.y + this.bias.y }; }
 
-  /** Нажатие по цели: f — признаки, когда свели пальцы; x, y — где цель (доли экрана); errPx — промах взгляда. */
-  learn(f, x, y, errPx = null) {
+  /** Поза ушла за пределы калибровки — точность падает: голограмма подскажет пройти привязку. */
+  outOfRange(pose, slack = { y: 5, z: 7, pitch: 6, roll: 10 }) {
+    if (!pose || !this.range) return false;
+    return Object.entries(slack).some(([k, s]) => this.range[k] && (pose[k] < this.range[k][0] - s || pose[k] > this.range[k][1] + s));
+  }
+
+  extendRange(pose) {
+    if (!pose || !this.range) return;
+    for (const k of Object.keys(this.range)) {
+      const r = this.range[k];
+      if (pose[k] !== undefined) { r[0] = Math.min(r[0], pose[k]); r[1] = Math.max(r[1], pose[k]); }
+    }
+  }
+
+  /** Нажатие по цели: f — признаки, когда свели пальцы; x, y — где цель (доли экрана); errPx — промах взгляда;
+   *  pose — поза головы (после поправки в этой позе подсказка «поза изменилась» больше не нужна). */
+  learn(f, x, y, errPx = null, pose = null) {
+    const p = this.predict(f);
+    this.bias.x += this.alpha * (x - p.x);
+    this.bias.y += this.alpha * (y - p.y);
     this.usage.push([f.map(r4), r4(x), r4(y), errPx === null ? null : Math.round(errPx)]);
     if (this.usage.length > this.limit) this.usage.shift();
-    this.refit();
+    this.extendRange(pose);
+  }
+
+  /** Привязка по нескольким точкам: samples — [признаки, x, y]; сдвиг = средний промах модели по точкам;
+   *  range — позы головы на привязке (Calibration.poseRange): в них подсказка «поза другая» не нужна.
+   *  Возвращает поправку { x, y } в долях экрана. */
+  anchor(samples, range = null) {
+    const by = new Map();
+    for (const [f, x, y] of samples) {
+      const key = `${x},${y}`;
+      if (!by.has(key)) by.set(key, { x, y, px: [], py: [] });
+      const p = this.model.predict(f), g = by.get(key);
+      g.px.push(p.x); g.py.push(p.y);
+    }
+    const pts = [...by.values()];
+    if (!pts.length) return this.bias;
+    this.bias = { x: mean(pts.map((g) => g.x - mean(g.px))), y: mean(pts.map((g) => g.y - mean(g.py))) };
+    if (range) {
+      this.range ??= {};
+      for (const [k, [lo, hi]] of Object.entries(range)) {
+        const r = this.range[k] ??= [lo, hi];
+        r[0] = Math.min(r[0], lo); r[1] = Math.max(r[1], hi);
+      }
+    }
+    return this.bias;
   }
 
   /** Средний промах взгляда по последним n нажатиям, px (null — нажатий ещё не было). */
@@ -377,8 +461,8 @@ export class AdaptiveGaze {
   }
 
   toJSON() {
-    return { featureVersion: this.featureVersion, lambda: this.lambda, usageWeight: this.usageWeight, limit: this.limit,
-      range: this.range, base: this.base, usage: this.usage };
+    return { featureVersion: this.featureVersion, lambda: this.lambda, limit: this.limit, alpha: this.alpha,
+      range: this.range, bias: { x: r4(this.bias.x), y: r4(this.bias.y) }, base: this.base, usage: this.usage };
   }
   static fromJSON(o) { return new AdaptiveGaze(o); }
 }
@@ -392,6 +476,7 @@ export const RAW_LANDMARKS = [...RIGHT_EYE, ...LEFT_EYE, 468, 469, 470, 471, 472
   1, 4, 6, 10, 152, 168, 234, 454];
 export const BLEND_KEYS = ["eyeBlinkLeft", "eyeBlinkRight", ...LOOK, "eyeSquintLeft", "eyeSquintRight", "eyeWideLeft", "eyeWideRight"];
 function r4(v) { return Math.round(v * 1e4) / 1e4; }
+function mean(a) { return a.reduce((s, v) => s + v, 0) / (a.length || 1); }
 
 /** Кадр в компактном виде: точки (x, y подряд), коэффициенты глаз, матрица положения головы 4×4 (если есть). */
 export function packFrame(lm, blend = {}, matrix = null) {
@@ -408,7 +493,8 @@ export function unpackFrame(fr, { landmarks = RAW_LANDMARKS, blend = BLEND_KEYS 
 }
 
 // ---------- оценка записанной калибровки ----------
-/** Примеры записи: признаки пересчитываются из «сырых» точек текущей gazeFeatures (или features из opts). */
+/** Примеры записи: признаки пересчитываются из «сырых» точек текущей gazeFeatures (или features из opts).
+ *  Кадры скана (старые записи, до v3) помечены scan — в обучение и проверку они не идут. */
 export function sessionSamples(session, { features = gazeFeatures } = {}) {
   const out = [];
   for (const fr of session.frames) {
@@ -417,58 +503,59 @@ export function sessionSamples(session, { features = gazeFeatures } = {}) {
     const pt = session.points[fr.p];
     if (f && pt) out.push({ f, x: pt.x, y: pt.y, check: pt.check, scan: Boolean(pt.scan), point: fr.p, t: fr.t });
   }
-  const len = out.length ? Math.max(...out.map((r) => r.f.length)) : 0;   // кадры без позы головы — другие признаки
-  return out.filter((r) => r.f.length === len);
+  return out;
 }
 
-const mean = (a) => a.reduce((s, v) => s + v, 0) / (a.length || 1);
+const groupByPoint = (rows) => { const g = new Map(); rows.forEach((r) => { if (!g.has(r.point)) g.set(r.point, []); g.get(r.point).push(r); }); return [...g.values()]; };
 
 /** Учимся на точках калибровки, проверяем на проверочных (как в приложении) и «по одной точке на проверку»
- *  (каждая точка калибровки по очереди убирается из обучения) — так видно и точность, и устойчивость.
- *  Ошибка — по среднему предсказанию на точке, px; jitterPx — разброс предсказаний внутри точки. */
-export function evaluateSession(session, { lambda = 1, features = gazeFeatures } = {}) {
-  const S = sessionSamples(session, { features });
+ *  (каждая точка калибровки по очереди убирается из обучения). Ошибка — по среднему предсказанию на точке, px;
+ *  jitterPx — разброс предсказаний внутри точки; livePx — проверочные точки как поток нажатий щипком: после
+ *  каждого — поправка сдвига (AdaptiveGaze.learn), так считается точность в работе. */
+export function evaluateSession(session, { lambda = 1, features = gazeFeatures, alpha = LIVE_ALPHA } = {}) {
+  const S = sessionSamples(session, { features }).filter((r) => !r.scan);
   const { w, h } = session.screen;
-  const sw = session.scan?.weight ?? SCAN.weight;
-  const fitOn = (rows) => { const m = new GazeModel({ lambda }); rows.forEach((r) => m.add(r.f, r.x, r.y, r.scan ? sw : 1)); return m.fit(); };
+  const fitOn = (rows) => { const m = new SplitModel({ lambda }); rows.forEach((r) => m.add(r.f, r.x, r.y)); return m.fit(); };
   const pointError = (m, rows) => {
     const preds = rows.map((r) => m.predict(r.f));
     const mx = mean(preds.map((q) => q.x)), my = mean(preds.map((q) => q.y));
     return { err: Math.hypot((mx - rows[0].x) * w, (my - rows[0].y) * h),
       jitter: mean(preds.map((q) => Math.hypot((q.x - mx) * w, (q.y - my) * h))) };
   };
-  const byPoint = (rows) => { const g = new Map(); rows.forEach((r) => { if (!g.has(r.point)) g.set(r.point, []); g.get(r.point).push(r); }); return [...g.values()]; };
   const train = S.filter((r) => !r.check), test = S.filter((r) => r.check);
-  const grid = train.filter((r) => !r.scan), scan = train.filter((r) => r.scan);
-  if (byPoint(grid).length < 4) return { frames: S.length, points: byPoint(train).length, errorPx: null, looPx: null, jitterPx: null, perPoint: [] };
-  const m = fitOn(train);
-  const perPoint = byPoint(test).map((rows) => ({ x: rows[0].x, y: rows[0].y, ...pointError(m, rows) }));
-  const loo = byPoint(grid).map((rows) => pointError(fitOn(train.filter((r) => r.point !== rows[0].point)), rows).err);
   const round = (v) => (v === null || Number.isNaN(v) ? null : Math.round(v * 10) / 10);
-  // устойчивость к движению телефона: учимся на первой половине каждого скана, проверяем на второй (другие позы);
-  // и без скана вовсе — так видно, что он даёт
-  const frameErr = (model, rows) => mean(rows.map((r) => { const q = model.predict(r.f); return Math.hypot((q.x - r.x) * w, (q.y - r.y) * h); }));
-  let movePx = null, moveNoScanPx = null;
-  if (scan.length) {
-    const halves = byPoint(scan).map((rows) => { const s = [...rows].sort((a, b) => a.t - b.t); const k = Math.floor(s.length / 2); return [s.slice(0, k), s.slice(k)]; });
-    movePx = round(frameErr(fitOn([...grid, ...halves.flatMap((x) => x[0])]), halves.flatMap((x) => x[1])));
-    moveNoScanPx = round(frameErr(fitOn(grid), scan));
+  if (groupByPoint(train).length < 4) return { frames: S.length, points: groupByPoint(train).length, errorPx: null, looPx: null, jitterPx: null, livePx: null, perPoint: [] };
+  const m = fitOn(train);
+  const perPoint = groupByPoint(test).map((rows) => ({ x: rows[0].x, y: rows[0].y, ...pointError(m, rows) }));
+  const loo = groupByPoint(train).map((rows) => pointError(fitOn(train.filter((r) => r.point !== rows[0].point)), rows).err);
+  let livePx = null;
+  if (perPoint.length > 1) {
+    const ad = new AdaptiveGaze({ base: train.map((r) => [r.f, r.x, r.y]), lambda, alpha });
+    const errs = [];
+    groupByPoint(test).forEach((rows, k) => {
+      const mid = rows.slice(Math.floor(rows.length / 3), Math.floor(rows.length / 3) + 6);   // ~250 мс, как при щипке
+      const f = mid[0].f.map((_, j) => mean(mid.map((r) => r.f[j])));
+      const p = ad.predict(f);
+      if (k > 0) errs.push(Math.hypot((p.x - rows[0].x) * w, (p.y - rows[0].y) * h));
+      ad.learn(f, rows[0].x, rows[0].y);
+    });
+    livePx = round(mean(errs));
   }
   return {
-    frames: S.length, points: byPoint(train).length + byPoint(test).length,
+    frames: S.length, points: groupByPoint(train).length + groupByPoint(test).length,
     errorPx: perPoint.length ? round(mean(perPoint.map((q) => q.err))) : null,
     looPx: round(mean(loo)),
-    jitterPx: round(mean([...perPoint.map((q) => q.jitter), ...byPoint(grid).map((rows) => pointError(m, rows).jitter)])),
-    movePx, moveNoScanPx,
+    jitterPx: round(mean([...perPoint.map((q) => q.jitter), ...groupByPoint(train).map((rows) => pointError(m, rows).jitter)])),
+    livePx,
     perPoint: perPoint.map((q) => ({ x: q.x, y: q.y, err: Math.round(q.err), jitter: Math.round(q.jitter) })),
   };
 }
 
-/** Проверка нажатий из журнала (Jarvis/Gaze/usage) моделью калибровки: насколько взгляд промахивался мимо цели. */
-export function evaluateUsage(session, usage, { lambda = 1, features = gazeFeatures, learn = false, usageWeight = 6 } = {}) {
-  const sw = session.scan?.weight ?? SCAN.weight;
-  const base = sessionSamples(session, { features }).filter((r) => !r.check).map((r) => [r.f, r.x, r.y, r.scan ? sw : 1]);
-  const ad = new AdaptiveGaze({ base, lambda, usageWeight });
+/** Проверка нажатий из журнала (Jarvis/Gaze/usage) моделью калибровки: насколько взгляд промахивался мимо цели;
+ *  learn — как в приложении: после каждого нажатия поправка сдвига. */
+export function evaluateUsage(session, usage, { lambda = 1, features = gazeFeatures, learn = false, alpha = LIVE_ALPHA } = {}) {
+  const base = sessionSamples(session, { features }).filter((r) => !r.check && !r.scan).map((r) => [r.f, r.x, r.y]);
+  const ad = new AdaptiveGaze({ base, lambda, alpha });
   const { w, h } = usage.screen;
   const errs = [];
   for (const c of usage.clicks) {
@@ -478,7 +565,7 @@ export function evaluateUsage(session, usage, { lambda = 1, features = gazeFeatu
     const p = ad.predict(f);
     const lx = c.label.x / w, ly = c.label.y / h;
     errs.push(Math.hypot((p.x - lx) * w, (p.y - ly) * h));
-    if (learn) ad.learn(f, lx, ly);            // как в приложении: после нажатия модель доучивается
+    if (learn) ad.learn(f, lx, ly);
   }
   return { clicks: errs.length, errorPx: errs.length ? Math.round(mean(errs) * 10) / 10 : null };
 }

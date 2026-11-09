@@ -1,5 +1,5 @@
 // Синтетическое лицо и записанная на нём калибровка — для тестов взгляда (не тест сам по себе: нет .test в имени).
-import { Calibration, FACE, eyeFeatures, gazeFeatures, packFrame } from "../../jarvis/webapp/static/gaze.js";
+import { Calibration, FACE, gazeFeatures, packFrame } from "../../jarvis/webapp/static/gaze.js";
 
 /** Детерминированный «шум», чтобы тесты не мигали. */
 export function rng(seed = 7) {
@@ -37,7 +37,7 @@ export function runCalibration({ mode = "quick", noise = 0.0004, seed = 11, scre
   while (!cal.done && ts < 120000) {
     const [x, y] = cal.point;
     const fc = face(x, y, { noise, rand });
-    cal.feed(eyeFeatures(fc.lm, fc.blend), ts, packFrame(fc.lm, fc.blend));
+    cal.feed(gazeFeatures(fc.lm, fc.blend), ts, packFrame(fc.lm, fc.blend));
     ts += 33;
   }
   return { cal, ms: ts };
@@ -122,27 +122,19 @@ export const MOVED_POSES = [
   { ...BASE_POSE, roll: -12, x: 3 },
 ];
 
-/** Калибровка на 3D-голове (30 кадров/с, с записью кадров). На скане человек водит телефоном (move: true)
- *  — поза плавно гуляет по всем осям; без движения скан тянется до SCAN.maxMs. */
-export function runCalibration3d({ mode = "quick", move = true, seed = 21, features = gazeFeatures, pose = BASE_POSE } = {}) {
+/** Калибровка на 3D-голове (30 кадров/с, с записью кадров) в позе pose — с небольшим естественным дрожанием. */
+export function runCalibration3d({ mode = "quick", seed = 21, features = gazeFeatures, pose = BASE_POSE } = {}) {
   const rand = rng(seed);
   const cal = new Calibration({ mode, screen: { w: PHONE.w, h: PHONE.h }, record: true });
-  let ts = 0, scanT = 0;
-  const steps = [];
+  let ts = 0;
   while (!cal.done && ts < 240000) {
     const [x, y] = cal.point;
-    let p = { ...pose, x: pose.x + rand() * 0.6, y: pose.y + rand() * 0.6, yaw: pose.yaw + rand(), pitch: pose.pitch + rand() };
-    if (cal.scanning && move) {
-      const s = (scanT += 0.033);
-      p = { ...pose, x: pose.x + 5.5 * Math.sin(s * 1.3), y: pose.y + 5.5 * Math.sin(s * 0.9 + 1), z: pose.z + 8 * Math.sin(s * 0.7),
-        yaw: 6 * Math.sin(s * 1.3), pitch: pose.pitch + 6 * Math.sin(s * 0.9 + 1), roll: 13 * Math.sin(s * 1.1 + 2) };
-    }
-    if (!steps.length || steps.at(-1).i !== cal.counter.n) steps.push({ i: cal.counter.n, scan: cal.scanning, from: ts });
+    const p = { ...pose, x: pose.x + rand() * 0.6, y: pose.y + rand() * 0.6, yaw: pose.yaw + rand(), pitch: pose.pitch + rand() };
     const fc = face3d(x * PHONE.w, y * PHONE.h, p, { rand });
     cal.feed(features(fc.lm, fc.blend, fc.matrix), ts, packFrame(fc.lm, fc.blend, fc.matrix));
     ts += 33;
   }
-  return { cal, ms: ts, steps };
+  return { cal, ms: ts };
 }
 
 /** Средняя ошибка модели (px) в позе pose на 40 точках экрана. */

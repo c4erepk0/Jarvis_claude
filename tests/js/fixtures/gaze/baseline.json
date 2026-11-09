@@ -1,0 +1,26 @@
+{
+  "note": "Точность взгляда на записанных калибровках (px); tests/js/gaze-sessions.test.mjs не даёт её ухудшить. Пересчитать: node scripts/gaze_eval.mjs --baseline",
+  "sessions": {
+    "2026-11-09-124337.json": {
+      "errorPx": 49.2,
+      "looPx": 42.4,
+      "livePx": 45.3
+    },
+    "2026-11-09-124449.json": {
+      "errorPx": 93.2,
+      "looPx": 38.2,
+      "livePx": 62.5
+    },
+    "2026-11-09-130039.json": {
+      "errorPx": 473,
+      "looPx": 45.2,
+      "livePx": 83.8
+    }
+  },
+  "usage": {
+    "2026-11-09-130525.json": {
+      "errorPx": 425.3,
+      "learnedErrorPx": 441.3
+    }
+  }
+}

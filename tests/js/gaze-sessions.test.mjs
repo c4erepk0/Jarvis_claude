@@ -1,6 +1,8 @@
 // Записи взгляда: маршрут /api/gaze ядра для iPhone (как jarvis/gaze.py), отчёт scripts/gaze_eval.mjs
-// и главное — точность на калибровках владельца (tests/js/fixtures/gaze): улучшения проверяются на них.
-//   Добавить свежие записи из хранилища: node scripts/gaze_eval.mjs --import <хранилище>/Jarvis/Gaze
+// и главное — точность на калибровках владельца: улучшения проверяются на них. Сами записи — точки лица
+// владельца — в публичный репозиторий не кладём: читаем из хранилища ($JARVIS_GAZE_DIR или клон
+// ../jarvis-vault/Jarvis/Gaze), а образец точности — цифры — в tests/js/fixtures/gaze/baseline.json.
+// Нет записей (CI) — тест пропускается.
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,7 +12,7 @@ import { test } from "node:test";
 import { BLEND_KEYS, RAW_LANDMARKS, packFrame } from "../../jarvis/webapp/static/gaze.js";
 import { Jarvis } from "../../jarvis/webapp/static/core/jarvis.js";
 import { LocalStore } from "../../jarvis/webapp/static/core/vault.js";
-import { BASELINE, FIXTURES, loadRecords, report } from "../../scripts/gaze_eval.mjs";
+import { BASELINE, FIXTURES, GAZE_DIRS, loadRecords, report } from "../../scripts/gaze_eval.mjs";
 import { face, rng, runCalibration } from "./gaze-synthetic.mjs";
 
 const CLOCK = () => new Date(2026, 10, 9, 9, 15, 30);
@@ -53,9 +55,9 @@ test("отчёт по записям: калибровки, нажатия, ср
   const rep = report(records, { lambdas: [0.3, 1] });
   assert.equal(rep.sessions.length, 1);
   const s = rep.sessions[0];
-  assert.equal(s.points, 36);
-  assert.ok(s.errorPx < 20 && s.looPx < 30, JSON.stringify(s));
-  assert.deepEqual(Object.keys(s.byFeatures), ["радужки", "+голова", "все"]);
+  assert.equal(s.points, 33);
+  assert.ok(s.errorPx < 20 && s.looPx < 30 && s.livePx < 30, JSON.stringify(s));
+  assert.deepEqual(Object.keys(s.byFeatures), ["глаза (v3)", "прежние 17", "прежние без головы"]);
   assert.ok(Object.values(s.byLambda).every((e) => e.errorPx !== null));
   assert.equal(rep.usage.length, 1);
   assert.equal(rep.usage[0].clicks, 20);
@@ -63,13 +65,12 @@ test("отчёт по записям: калибровки, нажатия, ср
 });
 
 // ---------- калибровки владельца ----------
-const files = (() => {
-  try { return loadRecords([FIXTURES]); } catch { return []; }
-})();
+const dataDir = GAZE_DIRS.find((d) => { try { return statSync(d).isDirectory() && loadRecords([d]).length; } catch { return false; } });
+const files = dataDir ? loadRecords([dataDir]) : [];
 const base = (() => { try { return JSON.parse(readFileSync(BASELINE, "utf8")); } catch { return { sessions: {}, usage: {} }; } })();
 
 test("калибровки владельца: точность взгляда не хуже записанной", { skip: files.length ? false
-  : "записей нет — node scripts/gaze_eval.mjs --import <хранилище>/Jarvis/Gaze" }, () => {
+  : "записей владельца нет рядом — JARVIS_GAZE_DIR=<хранилище>/Jarvis/Gaze или клон ../jarvis-vault" }, () => {
   const rep = report(files);
   const worse = (now, was) => now !== null && was !== null && was !== undefined && now > was * 1.1 + 3;
   for (const s of rep.sessions) {
@@ -77,23 +78,24 @@ test("калибровки владельца: точность взгляда �
     assert.ok(b, `нет baseline для ${s.name} — node scripts/gaze_eval.mjs --baseline`);
     assert.ok(!worse(s.errorPx, b.errorPx), `${s.name}: проверочные ${b.errorPx} → ${s.errorPx} px`);
     assert.ok(!worse(s.looPx, b.looPx), `${s.name}: по одной точке ${b.looPx} → ${s.looPx} px`);
+    assert.ok(!worse(s.livePx, b.livePx), `${s.name}: в работе ${b.livePx} → ${s.livePx} px`);
   }
   for (const u of rep.usage) {
     const b = base.usage[u.name];
-    assert.ok(b, `нет baseline для ${u.name}`);
+    if (!b) continue;                     // новое нажатие ещё не в образце — его оценит следующий --baseline
     assert.ok(!worse(u.learnedErrorPx, b.learnedErrorPx), `${u.name}: нажатия ${b.learnedErrorPx} → ${u.learnedErrorPx} px`);
   }
 });
 
-test("в тестовых записях только калибровки и нажатия, без лишнего", () => {
+test("в публичном репозитории — только цифры точности, без записей лица", () => {
   const walk = (d) => readdirSync(d).flatMap((n) => (statSync(join(d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]));
   let all = [];
   try { all = walk(FIXTURES); } catch { /* папки ещё нет */ }
   for (const f of all) {
     const rel = relative(FIXTURES, f);
-    if (rel === "baseline.json" || rel === "README.md") continue;
+    if (rel === "README.md") continue;
     const d = JSON.parse(readFileSync(f, "utf8"));
-    assert.ok(["jarvis-gaze-session", "jarvis-gaze-usage"].includes(d.kind), rel);
-    assert.ok(!JSON.stringify(d).includes("data:image"), `${rel}: фото в записях не храним`);
+    assert.equal(rel, "baseline.json", `${rel}: записи владельца — в его хранилище, не здесь`);
+    assert.ok(!JSON.stringify(d).includes('"lm"'), "в образце только цифры");
   }
 });

@@ -1,8 +1,8 @@
 // J.A.R.V.I.S. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=12";
-import { Voice } from "./voice.js?v=12";
+import { Reactor } from "./reactor.js?v=13";
+import { Voice } from "./voice.js?v=13";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -59,7 +59,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Jarvis работает прямо на телефоне
-    SA = await import("./standalone.js?v=12");
+    SA = await import("./standalone.js?v=13");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -745,7 +745,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=12");
+    const { Hologram } = await import("./hologram.js?v=13");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -768,7 +768,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=12");
+  const { NotePanel } = await import("./note-panel.js?v=13");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -808,7 +808,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=12");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=13");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -834,15 +834,16 @@ $("#holo-gestures").addEventListener("click", async () => {
 $("#holo-train").addEventListener("click", () => { voice.unlock(); openTutorial(); });
 
 // Управление взглядом: взгляд — курсор, жесты — действия (короткий щипок — нажать). Модель хранится на этом
-// устройстве и доучивается на нажатиях (повернули экран или сменили устройство — калибровать заново).
+// устройстве (повернули экран или сменили устройство — калибровать заново). При каждом включении — привязка
+// по 3 точкам, после каждого нажатия — поправка сдвига (gaze.js: AdaptiveGaze).
 // Записи калибровок и журнал нажатий уходят в хранилище (Jarvis/Gaze) — для анализа: scripts/gaze_eval.mjs.
-const GAZE_FEATURES = 2;      // = FEATURE_VERSION в gaze.js
+const GAZE_FEATURES = 3;      // = FEATURE_VERSION в gaze.js
 let gazeCal = null;
 let gazeClicks = [];          // нажатия взглядом, ещё не записанные в хранилище
 let gazeSaveTimer = null;
 function savedGaze() {
   const s = store.get("gaze_model", null);
-  // прежний формат или другие признаки (до скана лица) — откалибровать заново
+  // прежний формат или другие признаки — откалибровать заново
   if (!s?.adaptive || !s.w || !s.h || s.adaptive.featureVersion !== GAZE_FEATURES) return null;
   const sameShape = (s.w > s.h) === (innerWidth > innerHeight) && Math.abs(s.w / innerWidth - 1) < 0.25;
   return sameShape ? s : null;
@@ -858,7 +859,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=12").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=13").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -866,7 +867,7 @@ function flushGazeClicks() {
 function gazeClicked(record) {
   gazeClicks.push(record);
   if (gazeClicks.length >= 10) flushGazeClicks();
-  clearTimeout(gazeSaveTimer);                // модель доучилась — сохранить (не чаще раза в 2 с)
+  clearTimeout(gazeSaveTimer);                // курсор поправился — сохранить (не чаще раза в 2 с)
   gazeSaveTimer = setTimeout(() => { if (holo?.gaze?.model?.toJSON) saveGazeModel(holo.gaze.model, holo.gaze.errorPx); }, 2000);
 }
 addEventListener("pagehide", flushGazeClicks);
@@ -878,21 +879,21 @@ function eyesOff() {
   $("#holo-eyes").classList.remove("primary");
   $("#holo").classList.remove("eyes");
 }
-async function calibrateEyes() {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=12");
+async function calibrateEyes({ mode = null } = {}) {
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=13");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
-    onDone: (model, errorPx, session) => { saveGazeModel(model, errorPx); return gazeRecord(session); },
+    onDone: (model, errorPx, session) => { saveGazeModel(model, errorPx); return gazeRecord(session); },   // и привязку тоже
     onMagnet: (level) => store.set("gaze_magnet", level),
     onCancel: () => { if (!holo.gaze?.model) eyesOff(); },   // без калибровки курсора нет — выключаем
   });
   if (tutorial?.active) tutorial.close();
-  if (!gazeCal.active) gazeCal.open();
+  if (!gazeCal.active) gazeCal.open({ mode });
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=12");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=13");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),
@@ -900,7 +901,8 @@ async function eyesOn() {
   $("#holo-gestures").classList.add("primary");
   $("#holo-eyes").classList.add("primary");
   $("#holo").classList.add("eyes");
-  if (!saved) await calibrateEyes();
+  // модели нет — калибровка; есть — привязка по 3 точкам: убирает сдвиг этой сессии (свет, поза)
+  await calibrateEyes({ mode: saved ? "anchor" : null });
 }
 $("#holo-eyes").addEventListener("click", async () => {
   if (!holo) return;
@@ -912,7 +914,7 @@ $("#holo-gaze-cal").addEventListener("click", () => {
   if (holo?.gaze) calibrateEyes().catch((err) => toast(err.message, "error"));
 });
 addEventListener("orientationchange", () => {
-  if (holo?.gaze?.model) toast("Экран повернули — откалибруйте взгляд заново: кнопка ◎.", "warn");
+  if (holo?.gaze?.model) toast("Экран повернули — откалибруйте взгляд заново: кнопка ◎.", "warn");   // привязки тут мало
 });
 
 $("#btn-settings").addEventListener("click", () => { if (SA) openSettings(false); });
