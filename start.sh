@@ -17,5 +17,9 @@ if [ ! -f .env ]; then
   cp .env.example .env
   echo "→ Создан .env — при желании добавьте ANTHROPIC_API_KEY, GITHUB_TOKEN и VAULT_PATH."
 fi
-echo "→ J.A.R.V.I.S. запускается: http://localhost:${JARVIS_PORT:-8765}"
-exec .venv/bin/python -m jarvis
+case " $* " in
+  *" --tunnel"*) echo "→ J.A.R.V.I.S. запускается и открывает https-ссылку для Safari…" ;;
+  *) echo "→ J.A.R.V.I.S. запускается: http://localhost:${JARVIS_PORT:-8765}"
+     echo "  (с телефона или с другого устройства: bash start.sh --tunnel)" ;;
+esac
+exec .venv/bin/python -m jarvis "$@"

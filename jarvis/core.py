@@ -82,6 +82,7 @@ class Jarvis:
         self.pending: dict[str, PendingAction] = {}
         self.notifiers: list[Notifier] = []
         self.focus_until: float | None = None
+        self.git = None                 # GitSync, если хранилище живёт в GitHub-репозитории
         from .brain import Brain
         from .protocols import Protocols
         self.brain = Brain(self, client=llm)
@@ -512,6 +513,8 @@ class Jarvis:
             "events": self.hub.recent(),
             "telegram": self.cfg.telegram_enabled,
             "vault": str(self.vault.root),
+            "vault_git": ({"remote": self.git.remote.split("github.com/")[-1].removesuffix(".git"),
+                           "last_sync": self.git.last_sync, "error": self.git.last_error} if self.git else None),
         }
         if with_projects:
             st["projects_status"] = await self.act_project_status()

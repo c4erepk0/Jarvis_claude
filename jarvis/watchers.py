@@ -22,6 +22,7 @@ class Watchers:
         self.health_seen: dict[str, bool] = {}
         self.diag_strikes = 0
         self.last_briefing_day: str | None = None
+        self.gh_warned: set[str] = set()
 
     def start(self) -> None:
         j = self.j
@@ -90,7 +91,11 @@ class Watchers:
                 try:
                     st = await j.github.repo_status(project.repo)
                 except Exception as e:  # noqa: BLE001
-                    log.info("GitHub %s: %s", project.repo, e)
+                    if project.repo not in self.gh_warned:
+                        self.gh_warned.add(project.repo)
+                        hint = (" — репозиторий приватный: задайте GITHUB_TOKEN с доступом к нему"
+                                if getattr(e, "status", None) in (401, 403, 404) else "")
+                        log.warning("Статус %s недоступен%s (%s)", project.repo, hint, e)
                     st = None
                 ci = (st or {}).get("ci")
                 if ci and ci.get("status") == "completed":

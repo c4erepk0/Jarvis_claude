@@ -82,8 +82,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
         if (path.startswith("/api/") or path == "/ws") and path not in PUBLIC and not auth.allowed(request):
             return web.json_response({"error": "нужен вход", "login": True}, status=401)
         if request.method in ("POST", "PUT", "DELETE") and path.startswith("/api/") and auth.enabled:
-            origin = request.headers.get("Origin")
-            if origin and origin.split("://", 1)[-1] != request.host:
+            if not same_origin(request):
                 return web.json_response({"error": "чужой источник запроса"}, status=403)
         try:
             resp = await handler(request)
@@ -142,7 +141,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
             await asyncio.sleep(0.7)
             return ok({"error": "неверный код"}, 403)
         resp = ok()
-        secure = request.secure or request.headers.get("X-Forwarded-Proto") == "https"
+        secure = request.secure or request.headers.get("X-Forwarded-Proto") == "https" \
+            or '"https"' in request.headers.get("Cf-Visitor", "")
         resp.set_cookie(COOKIE, auth.make(), max_age=SESSION_DAYS * 86400, httponly=True, samesite="Strict",
                         secure=secure, path="/")
         return resp
@@ -295,8 +295,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
 
     async def ws_handler(request):
         if auth.enabled:
-            origin = request.headers.get("Origin")
-            if origin and origin.split("://", 1)[-1] != request.host:
+            if not same_origin(request):
                 raise web.HTTPForbidden()
         ws = web.WebSocketResponse(heartbeat=25)
         await ws.prepare(request)
@@ -353,6 +352,16 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_post("/api/scan", scan)
     r.add_get("/ws", ws_handler)
     return app
+
+
+def same_origin(request: web.Request) -> bool:
+    """Запрос с нашей же страницы? За туннелем (Cloudflare, localhost.run) Host бывает внутренним —
+    тогда сверяемся с X-Forwarded-Host."""
+    origin = request.headers.get("Origin")
+    if not origin:
+        return True
+    host = origin.split("://", 1)[-1]
+    return host in {request.host, request.headers.get("X-Forwarded-Host", "")}
 
 
 def _required(name: str):

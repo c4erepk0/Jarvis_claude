@@ -61,6 +61,10 @@ GitHub Actions. Есть и серверная версия (Python) — с не
 
 ## Быстрый старт (сервер)
 
+> Запускаете в терминале на телефоне, на VPS или в облаке? Добавьте `--tunnel`:
+> `bash start.sh --tunnel` — Jarvis поднимет бесплатный HTTPS-туннель, сам задаст код входа и напечатает
+> ссылку для Safari. Адрес `localhost` терминала Safari на iPhone не видит.
+
 ```bash
 git clone https://github.com/c4erepk0/Jarvis_claude && cd Jarvis_claude
 bash start.sh          # macOS: двойной клик по start.command, Windows: start.bat
@@ -73,7 +77,9 @@ bash start.sh          # macOS: двойной клик по start.command, Wind
   быстрых голосовых ответов);
 - `GITHUB_TOKEN` — статус приватных репозиториев, задачи для @claude, деплой;
 - `TELEGRAM_BOT_TOKEN` + `TELEGRAM_OWNER_ID` — оповещения и команды из Telegram;
-- `VAULT_PATH` — ваше хранилище Obsidian.
+- `VAULT_PATH` — ваше хранилище Obsidian;
+- `VAULT_GIT=c4erepk0/jarvis-vault` — хранилище в приватном GitHub-репозитории: Jarvis скачает его сам и будет
+  синхронизировать с Obsidian на iPhone (плагин Obsidian Git), заметки сливаются построчно.
 
 ### Docker (сервер)
 

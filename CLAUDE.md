@@ -31,6 +31,10 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   JS SDK с CDN (`dangerouslyAllowBrowser`, ключ только на устройстве). `static/standalone.js` — настройки,
   выбор склада, засев хранилища. **Меняете логику или формат заметок в Python — меняйте и здесь** (и наоборот).
 - `jarvis/cron.py` + `.github/workflows/jarvis-cron.yml` — оповещения в Telegram без сервера (раз в 15 мин).
+- `jarvis/gitsync.py` — хранилище в GitHub-репозитории для сервера (`VAULT_GIT`): clone, слияние `*.md merge=union`,
+  push; токен — только в заголовке команды, не в .git/config.
+- `jarvis/tunnel.py` — `python -m jarvis --tunnel` / `bash start.sh --tunnel`: Cloudflare Quick Tunnel →
+  localhost.run → pinggy; код входа создаётся сам. За туннелем Origin сверяется и с `X-Forwarded-Host`.
 - `.github/workflows/pages.yml` — публикация дашборда для iPhone на GitHub Pages.
 - `static/vault-template.json` — генерируется `scripts/build_template.py` из `vault-template/` (CI проверяет).
   **При изменении css/js поднимайте `?v=N` в `index.html`, `app.js` и `sw.js` (CACHE)**.

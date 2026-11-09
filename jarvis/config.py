@@ -55,6 +55,8 @@ class Config:
     journal_dir: str = "Journal"
     tasks_file: str = "Tasks/Inbox.md"
     watch_interval: float = 1.5     # как часто проверять изменения в хранилище, сек
+    vault_git: str = ""             # репозиторий с хранилищем (тот же, что у Obsidian Git на iPhone)
+    vault_git_interval: float = 20  # как часто синхронизироваться с ним, сек
     # --- личность ---
     user_title: str = "сэр"
     user_name: str = ""
@@ -123,6 +125,14 @@ class Config:
         return key
 
 
+def _vault_git(raw: str) -> str:
+    """«c4erepk0/jarvis-vault» или ссылка → https://github.com/c4erepk0/jarvis-vault.git"""
+    raw = raw.strip()
+    if raw and "://" not in raw and not raw.startswith("git@") and raw.count("/") == 1:
+        return f"https://github.com/{raw.removesuffix('.git')}.git"
+    return raw
+
+
 def load_config() -> Config:
     cfg = Config(
         host=_str("JARVIS_HOST", "127.0.0.1"),
@@ -137,6 +147,8 @@ def load_config() -> Config:
         journal_dir=_str("VAULT_JOURNAL_DIR", "Journal"),
         tasks_file=_str("VAULT_TASKS_FILE", "Tasks/Inbox.md"),
         watch_interval=max(0.3, _float("VAULT_WATCH_INTERVAL", 1.5)),
+        vault_git=_vault_git(_str("VAULT_GIT")),
+        vault_git_interval=max(5.0, _float("VAULT_GIT_INTERVAL", 20)),
         user_title=_str("USER_TITLE", "сэр"),
         user_name=_str("USER_NAME"),
         timezone=_str("TIMEZONE", "Europe/Moscow"),
