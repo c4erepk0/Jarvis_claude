@@ -25,6 +25,9 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/web.py` — REST + WebSocket + вход; `jarvis/hub.py` — шина событий; `jarvis/watchers.py` — фоновые датчики.
 - `jarvis/voice.py` (TTS), `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
 - `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`.
+- `static/gestures.js` — распознавание жестов по точкам руки MediaPipe и эталонные позы; `static/gesture-coach.js` —
+  шаги обучения жестам (без DOM, тест — `tests/js/gestures.test.mjs`); `static/gesture-tutorial.js` — окно обучения.
+  Голограмма сообщает распознанное через `holo.gestureListeners` (`frame`, `rotate`, `zoom`, `reset`, `dwell`, `select`).
 - `jarvis/webapp/static/core/*.js` — **ядро для режима «только iPhone»**: порт Python-ядра (ru, vault,
   tasks, finance, memory, intents, brain, projects, protocols, jarvis). Отвечает на те же `/api/…`, что сервер.
   Память — `GitHubStore` (приватный репозиторий с хранилищем, кэш блобов по sha), Claude — официальный

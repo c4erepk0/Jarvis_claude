@@ -325,6 +325,54 @@ input::placeholder, textarea::placeholder { color: #4d7584; }
 .holo-video, .holo-hands { position: absolute; z-index: 2; right: 16px; bottom: 16px; width: 220px; height: 165px;
   transform: scaleX(-1); border: 1px solid var(--holo-dim); border-radius: var(--r); object-fit: cover; opacity: .75; }
 .holo-hands { background: transparent; opacity: 1; }
+.holo-cursor { position: absolute; z-index: 3; left: 0; top: 0; width: 34px; height: 34px; margin: -17px 0 0 -17px;
+  border-radius: 50%; pointer-events: none; --p: 0;
+  background: conic-gradient(var(--holo) calc(var(--p) * 360deg), rgba(62,232,255,.12) 0);
+  -webkit-mask: radial-gradient(circle, transparent 11px, #000 12px); mask: radial-gradient(circle, transparent 11px, #000 12px);
+  filter: drop-shadow(0 0 6px var(--holo)); transition: transform .05s linear; }
+.holo-cursor.on { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
+.holo-cursor.hidden { display: none; }
+
+/* обучение жестам */
+.holo.training .holo-hint, .holo.training #holo-stats { display: none; }
+.holo.training .holo-video, .holo.training .holo-hands { left: 50%; right: auto; bottom: auto;
+  top: var(--gt-top, calc(max(14px, env(safe-area-inset-top)) + 58px)); width: min(300px, 64vw); height: calc(min(300px, 64vw) * .75);
+  transform: translateX(-50%) scaleX(-1); }
+.gt { position: absolute; z-index: 4; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+  width: min(460px, calc(100% - 24px)); background: rgba(3,14,22,.92); transition: box-shadow .3s, border-color .3s; }
+.gt.hidden { display: none; }
+.gt.gt-success { border-color: var(--holo); box-shadow: 0 0 28px rgba(62,232,255,.35); }
+.gt-body { display: flex; gap: 14px; align-items: center; }
+.gt-pic { flex: 0 0 96px; height: 96px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: var(--r);
+  background: radial-gradient(circle, rgba(62,232,255,.1), transparent 70%); }
+.gt-svg { width: 88px; height: 88px; overflow: visible; }
+.gt-hand line { stroke: rgba(62,232,255,.9); stroke-width: 1.6; stroke-linecap: round; }
+.gt-hand circle { fill: #eaffff; }
+.gt-phone, .gt-stand, .gt-ok, .gt-check, .gt-ring { fill: none; stroke: var(--holo); stroke-width: 1.6; }
+.gt-lens { fill: var(--holo); }
+.gt-dash { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 3 3; }
+.gt-txt { fill: var(--muted); font: 600 7px var(--display); text-anchor: middle; }
+.gt-node { fill: var(--amber, #ffb347); filter: drop-shadow(0 0 3px #ffb347); }
+.gt-ring { stroke-dasharray: 57; stroke-dashoffset: 57; animation: gt-ring 1.6s ease-in-out infinite; }
+.gt-check { stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.gt-text { min-width: 0; }
+.gt-text b { display: block; font: 700 13px var(--display); letter-spacing: .12em; color: #eaffff; margin-bottom: 4px; }
+.gt-text p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text); white-space: pre-line; }
+.gt-bar { height: 4px; margin: 12px 0 0; background: rgba(62,232,255,.12); border-radius: 2px; overflow: hidden; }
+.gt-bar i { display: block; height: 100%; width: 0; background: var(--holo); box-shadow: 0 0 8px var(--holo); transition: width .15s; }
+.gt-status { min-height: 18px; margin-top: 8px; font: 500 11px/1.4 var(--mono); }
+.gt-good { color: var(--holo); }
+.gt-bad { color: var(--amber, #ffb347); }
+.gt-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.gt-slide .gt-hand { animation: gt-slide 2.2s ease-in-out infinite; }
+.gt-spread .gt-l { animation: gt-left 2s ease-in-out infinite; }
+.gt-spread .gt-r { animation: gt-right 2s ease-in-out infinite; }
+.gt-pulse .gt-hand { animation: gt-pulse 1.4s ease-in-out infinite; }
+@keyframes gt-slide { 0%, 100% { transform: translateX(-12px); } 50% { transform: translateX(12px); } }
+@keyframes gt-left { 0%, 100% { transform: translateX(10px); } 50% { transform: translateX(-6px); } }
+@keyframes gt-right { 0%, 100% { transform: translateX(-10px); } 50% { transform: translateX(6px); } }
+@keyframes gt-pulse { 50% { filter: drop-shadow(0 0 5px var(--holo)); opacity: .7; } }
+@keyframes gt-ring { 0% { stroke-dashoffset: 57; } 70%, 100% { stroke-dashoffset: 0; } }
 
 /* ---------- вкладки (телефон) ---------- */
 .tabs { display: none; }

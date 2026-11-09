@@ -3,6 +3,7 @@
 //   щипок (большой + указательный) и движение — вращение; щипок двумя руками — масштаб;
 //   указательный палец — курсор, задержка на узле 1 с — открыть заметку; раскрытая ладонь 1 с — сброс вида.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
+import { BONES, classify } from "./gestures.js?v=4";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
@@ -63,6 +64,11 @@ export class Hologram {
     this.tags.className = "holo-tags";
     root.prepend(this.tags);
     this.tagEls = [];
+    this.cursor = document.createElement("div");
+    this.cursor.className = "holo-cursor hidden";
+    root.append(this.cursor);
+    this.gestureListeners = new Set();   // обучение жестам слушает, что распознано
+    this.suppressOpen = false;           // во время обучения выбор узла не открывает заметку
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.domElement.className = "three";
@@ -224,14 +230,24 @@ export class Hologram {
   }
 
   // ---------- жесты ----------
+  /** Кнопка «Жесты»: включить или выключить. */
   async enableGestures(video, overlay) {
     if (this.hands) { this.disableGestures(); return false; }
+    await this.startGestures(video, overlay);
+    return true;
+  }
+
+  /** Включить камеру и распознавание рук (если уже включено — ничего не делает). */
+  async startGestures(video, overlay) {
+    if (this.hands) return;
     this.onStatus("загружаю модель рук…");
-    const { FilesetResolver, HandLandmarker } = await import(VISION_URL);
-    const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
-    this.landmarker = await HandLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: HAND_MODEL, delegate: "GPU" }, runningMode: "VIDEO", numHands: 2,
-    });
+    if (!this.landmarker) {
+      const { FilesetResolver, HandLandmarker } = await import(VISION_URL);
+      const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
+      this.landmarker = await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: HAND_MODEL, delegate: "GPU" }, runningMode: "VIDEO", numHands: 2,
+      });
+    }
     this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: 640, height: 480 } });
     video.srcObject = this.stream;
     await video.play();
@@ -241,12 +257,14 @@ export class Hologram {
     video.classList.remove("hidden"); overlay.classList.remove("hidden");
     this.hands = { last: -1, pinch: null, pinch2: null, palmSince: 0, dwell: null };
     this.onStatus("жесты включены: щипок — вращать, две руки — масштаб, палец — выбрать, ладонь — сброс");
-    return true;
   }
+
+  emitGesture(evt) { this.gestureListeners.forEach((fn) => fn(evt)); }
 
   disableGestures() {
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
     this.stream = null; this.hands = null;
+    this.cursor.classList.add("hidden");
     if (this.video) this.video.classList.add("hidden");
     if (this.overlay) this.overlay.classList.add("hidden");
   }
@@ -258,53 +276,66 @@ export class Hologram {
     const res = this.landmarker.detectForVideo(v, ts);
     const hands = res.landmarks || [];
     this.drawHands(hands);
-    const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-    const pinching = (lm) => dist(lm[4], lm[8]) < 0.055;
-    const extended = (lm, tip, pip) => lm[tip].y < lm[pip].y - 0.02;
-    const openPalm = (lm) => [[8, 6], [12, 10], [16, 14], [20, 18]].every(([t, p]) => extended(lm, t, p)) && !pinching(lm);
-    const pointing = (lm) => extended(lm, 8, 6) && !extended(lm, 12, 10) && !extended(lm, 16, 14) && !pinching(lm);
+    const g = classify(hands);
+    this.emitGesture({ type: "frame", kind: g.kind, hands: g.hands });
+    if (g.kind !== "point") this.cursor.classList.add("hidden");
 
-    if (hands.length === 2 && pinching(hands[0]) && pinching(hands[1])) {
-      const d = dist(hands[0][9], hands[1][9]);
-      if (h.pinch2 !== null) this.zoom((h.pinch2 - d) * 400);
-      h.pinch2 = d; h.pinch = null;
+    if (g.kind === "pinch2") {
+      if (h.pinch2 !== null) {
+        const amount = (h.pinch2 - g.d) * 400;
+        this.zoom(amount);
+        this.emitGesture({ type: "zoom", amount });
+      }
+      h.pinch2 = g.d; h.pinch = null;
       return;
     }
     h.pinch2 = null;
-    const lm = hands[0];
-    if (!lm) { h.pinch = null; h.palmSince = 0; h.dwell = null; return; }
-    if (pinching(lm)) {
-      const p = { x: 1 - lm[9].x, y: lm[9].y };
-      if (h.pinch) this.rotate((p.x - h.pinch.x) * 6, (p.y - h.pinch.y) * 4);
-      h.pinch = p; h.dwell = null;
+    if (g.kind === "none") { h.pinch = null; h.palmSince = 0; h.dwell = null; return; }
+    if (g.kind === "pinch") {
+      if (h.pinch) {
+        const dy = (g.x - h.pinch.x) * 6, dx = (g.y - h.pinch.y) * 4;
+        this.rotate(dy, dx);
+        this.emitGesture({ type: "rotate", amount: Math.abs(dy) + Math.abs(dx) });
+      }
+      h.pinch = { x: g.x, y: g.y }; h.dwell = null;
       return;
     }
     h.pinch = null;
-    if (openPalm(lm)) {
+    if (g.kind === "palm") {
       h.palmSince = h.palmSince || ts;
-      if (ts - h.palmSince > 1000) { this.reset(); h.palmSince = ts + 1500; }
+      if (ts - h.palmSince > 1000) { this.reset(); h.palmSince = ts + 1500; this.emitGesture({ type: "reset" }); }
       return;
     }
     h.palmSince = 0;
-    if (pointing(lm)) {
-      const x = (1 - lm[8].x) * innerWidth, y = lm[8].y * innerHeight;
+    if (g.kind === "point") {
+      const x = g.x * innerWidth, y = g.y * innerHeight;
       this.setMouse(x, y);
       const n = this.hovered();
+      let progress = 0;
       if (n) {
         if (!h.dwell || h.dwell.id !== n.id) h.dwell = { id: n.id, since: ts };
-        else if (ts - h.dwell.since > 1000) { this.onOpen(n.id); h.dwell = { id: n.id, since: ts + 3000 }; }
+        progress = Math.max(0, Math.min(1, (ts - h.dwell.since) / 1000));
+        if (ts - h.dwell.since > 1000) {
+          if (!this.suppressOpen) this.onOpen(n.id);
+          this.emitGesture({ type: "select", id: n.id });
+          h.dwell = { id: n.id, since: ts + 3000 };
+          progress = 1;
+        }
+        this.emitGesture({ type: "dwell", progress, id: n.id });
       } else h.dwell = null;
+      this.cursor.style.transform = `translate(${x}px, ${y}px)`;
+      this.cursor.style.setProperty("--p", String(progress));
+      this.cursor.classList.toggle("on", Boolean(n));
+      this.cursor.classList.remove("hidden");
     }
   }
 
   drawHands(hands) {
     const g = this.overlay.getContext("2d"), W = this.overlay.width, H = this.overlay.height;
     g.clearRect(0, 0, W, H);
-    const bones = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12],
-      [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
     g.strokeStyle = "rgba(62,232,255,.9)"; g.fillStyle = "#eaffff"; g.lineWidth = 2;
     for (const lm of hands) {
-      for (const [a, b] of bones) { g.beginPath(); g.moveTo(lm[a].x * W, lm[a].y * H); g.lineTo(lm[b].x * W, lm[b].y * H); g.stroke(); }
+      for (const [a, b] of BONES) { g.beginPath(); g.moveTo(lm[a].x * W, lm[a].y * H); g.lineTo(lm[b].x * W, lm[b].y * H); g.stroke(); }
       for (const p of lm) { g.beginPath(); g.arc(p.x * W, p.y * H, 2.5, 0, Math.PI * 2); g.fill(); }
     }
   }
