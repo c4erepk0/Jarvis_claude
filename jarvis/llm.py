@@ -36,12 +36,36 @@ TIMEOUT = aiohttp.ClientTimeout(total=90, connect=15)
 SCHEMA_KEYS = {"type", "properties", "required", "enum", "description", "items", "minimum", "maximum"}
 
 
+RETRY_DELAY = 1.5   # временный сбой (сеть, 5xx, лимит) — одна повторная попытка через полторы секунды
+
+# Примеры вызовов для GigaChat (few_shot_examples): с ними он точнее выбирает инструмент и аргументы.
+FEW_SHOT: dict[str, list[dict]] = {
+    "tasks_list": [{"request": "что у меня на сегодня", "params": {"view": "today"}}],
+    "task_add": [{"request": "добавь задачу позвонить в банк", "params": {"text": "позвонить в банк"}}],
+    "money_add": [{"request": "потратил 300 на кофе",
+                   "params": {"amount_rub": -300, "category": "Кафе", "note": "кофе"}}],
+    "memory_search": [{"request": "что я писал про отпуск", "params": {"query": "отпуск"}}],
+    "memory_remember": [{"request": "запомни, что я не пью кофе после шести",
+                         "params": {"fact": "Не пьёт кофе после 18:00"}}],
+    "note_show": [{"request": "открой заметку про IPAStore", "params": {"path": "IPAStore"}}],
+    "notes_list": [{"request": "какие у меня есть заметки по проектам", "params": {"folder": "Projects"}}],
+    "run_protocol": [{"request": "включи режим фокуса", "params": {"name": "фокус"}}],
+}
+
+
 class LLMError(Exception):
     """Модель недоступна: сеть, лимит, ошибка сервера."""
+
+    def __init__(self, message: str, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
 
 
 class LLMAuthError(LLMError):
     """Ключ не принят."""
+
+    def __init__(self, message: str):
+        super().__init__(message, transient=False)
 
 
 @dataclass
@@ -63,10 +87,18 @@ def clean_schema(schema: dict) -> dict:
     return out
 
 
-def functions(tools: list[dict]) -> list[dict]:
+def functions(tools: list[dict], examples: bool = False) -> list[dict]:
     """Инструменты Jarvis (формат Anthropic) → описания функций для GigaChat / OpenAI."""
-    return [{"name": t["name"], "description": t.get("description", ""), "parameters": clean_schema(t["input_schema"])}
-            for t in tools if "input_schema" in t]
+    out = []
+    for t in tools:
+        if "input_schema" not in t:
+            continue
+        spec = {"name": t["name"], "description": t.get("description", ""),
+                "parameters": clean_schema(t["input_schema"])}
+        if examples and t["name"] in FEW_SHOT:
+            spec["few_shot_examples"] = FEW_SHOT[t["name"]]
+        out.append(spec)
+    return out
 
 
 def parse_args(raw: Any) -> dict:
@@ -114,6 +146,17 @@ class ChatLLM:
 
     async def post(self, url: str, *, headers: dict, json_body: dict | None = None,
                    form: dict | None = None) -> dict:
+        """Запрос к API; при временном сбое (сеть, 5xx, лимит) — одна повторная попытка."""
+        try:
+            return await self._post_once(url, headers=headers, json_body=json_body, form=form)
+        except LLMError as e:
+            if not e.transient:
+                raise
+            log.warning("%s: %s — повторяю через %.1f с", self.title, e, RETRY_DELAY)
+            await asyncio.sleep(RETRY_DELAY)
+            return await self._post_once(url, headers=headers, json_body=json_body, form=form)
+
+    async def _post_once(self, url: str, *, headers: dict, json_body: dict | None, form: dict | None) -> dict:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(timeout=TIMEOUT, trust_env=True)
         try:
@@ -123,7 +166,7 @@ class ChatLLM:
         except aiohttp.ClientSSLError as e:
             raise LLMError(f"ошибка сертификата TLS ({e})") from e
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            raise LLMError(f"нет связи с {self.title} ({str(e) or type(e).__name__})") from e
+            raise LLMError(f"нет связи с {self.title} ({str(e) or type(e).__name__})", transient=True) from e
         try:
             data = json.loads(body) if body else {}
         except ValueError:
@@ -133,9 +176,9 @@ class ChatLLM:
         if status in (401, 403):
             raise LLMAuthError(_message(data) or f"HTTP {status}")
         if status == 429:
-            raise LLMError("лимит запросов — попробуйте через минуту")
+            raise LLMError("лимит запросов — попробуйте через минуту", transient=True)
         if status >= 400:
-            raise LLMError(f"HTTP {status}: {_message(data) or 'ошибка сервера'}")
+            raise LLMError(f"HTTP {status}: {_message(data) or 'ошибка сервера'}", transient=status >= 500)
         return data
 
     async def complete(self, system: str, messages: list[dict], tools: list[dict]) -> Turn:
@@ -188,7 +231,7 @@ class GigaChat(ChatLLM):
 
     async def complete(self, system: str, messages: list[dict], tools: list[dict]) -> Turn:
         body = {"model": self.model, "messages": [{"role": "system", "content": system}, *messages],
-                "functions": functions(tools), "function_call": "auto"}
+                "functions": functions(tools, examples=True), "function_call": "auto"}
         data: dict = {}
         for attempt in (0, 1):
             token = await self.auth(force=attempt == 1)

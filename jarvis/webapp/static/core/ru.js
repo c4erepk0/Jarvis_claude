@@ -160,3 +160,24 @@ export function greeting(hour) {
   if (hour >= 18 && hour < 23) return "Добрый вечер";
   return "Доброй ночи";
 }
+
+// Текст для голоса: модели любят markdown (**жирный**, списки, ссылки) — читать его вслух не нужно.
+// То же — speech_text в jarvis/ru.py.
+export function speechText(text) {
+  let t = String(text || "").replace(/```[\s\S]*?```/g, " ");
+  t = t.replace(/!?\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/!?\[\[([^\]]+)\]\]/g, "$1");
+  t = t.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1");
+  t = t.replace(/^\s{0,3}#{1,6}\s+/gm, "").replace(/^\s*>\s?(?:\[![^\]]*\]\s*)?/gm, "");
+  t = t.replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/gm, "");
+  t = t.replace(/(\*\*|__|~~|==)(.+?)\1/g, "$2");
+  t = t.replace(/(?<![\p{L}\p{N}_*])[*_]([^*_\n]+)[*_](?![\p{L}\p{N}_*])/gu, "$1");
+  t = t.replace(/`/g, "");
+  const parts = [];
+  for (const raw of t.split("\n")) {
+    const line = raw.trim();
+    if (!line || /^[-*_=|: ]{3,}$/.test(line)) continue;
+    if (parts.length && !/[.!?…:;,]$/.test(parts[parts.length - 1])) parts[parts.length - 1] += ".";
+    parts.push(line);
+  }
+  return parts.join(" ");
+}

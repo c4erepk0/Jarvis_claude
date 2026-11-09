@@ -189,6 +189,11 @@ def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: st
         return Intent("forget", {"query": m.group(1).strip()})
     if re.fullmatch(r"что ты (знаешь|помнишь) обо мне|что ты обо мне знаешь", low):
         return Intent("recall", {"query": ""})
+    # «открой заметку IPAStore», «покажи файл про оферту» — в голограмме
+    m = re.match(r"^(?:открой|покажи|открыть|показать)\s+(?:мне\s+)?(?:заметку|файл|запись)\s+"
+                 r"(?:про\s+|о\s+|об\s+)?(.+)$", t, re.I)
+    if m:
+        return Intent("note_open", {"query": m.group(1).strip()})
     m = re.match(r"^(?:найди|поищи|поиск)(?: в (?:заметках|памяти|obsidian|обсидиане))?[:,]?\s+(.+)$", t, re.I) or \
         re.match(r"^что ты (?:знаешь|помнишь) (?:о|об|про)\s+(.+)$", t, re.I)
     if m:

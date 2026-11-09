@@ -145,6 +145,9 @@ export function parse(text, ref, projects = [], wake = "джарвис") {
   m = rx("^забудь[,:]?\\s+(?:что\\s+|про\\s+|о\\s+)?(.+)$").exec(t);
   if (m) return { name: "forget", args: { query: m[1].trim() } };
   if (rx("^(что ты (знаешь|помнишь) обо мне|что ты обо мне знаешь)$").test(low)) return { name: "recall", args: { query: "" } };
+  // «открой заметку IPAStore», «покажи файл про оферту» — в голограмме
+  m = rx("^(?:открой|покажи|открыть|показать)\\s+(?:мне\\s+)?(?:заметку|файл|запись)\\s+(?:про\\s+|о\\s+|об\\s+)?(.+)$").exec(t);
+  if (m) return { name: "note_open", args: { query: m[1].trim() } };
   m = rx("^(?:найди|поищи|поиск)(?: в (?:заметках|памяти|obsidian|обсидиане))?[:,]?\\s+(.+)$").exec(t)
     || rx("^что ты (?:знаешь|помнишь) (?:о|об|про)\\s+(.+)$").exec(t);
   if (m) return { name: "recall", args: { query: m[1].trim() } };

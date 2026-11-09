@@ -8,6 +8,24 @@ const WIKILINK = /\[\[([^\]|#^]+)(?:[#^][^\]|]*)?(?:\|[^\]]*)?\]\]/g;
 
 export class VaultError extends Error {}
 
+// Заметку изменили (в Obsidian, синхронизацией) после того, как её открыли для правки.
+export class VaultConflict extends VaultError {
+  constructor(rel, current, message = "") {
+    super(message || (current != null ? `заметку «${rel}» уже изменили — возможно, в Obsidian` : `заметки «${rel}» больше нет`));
+    this.rel = rel;
+    this.current = current ?? null;
+    this.status = 409;
+  }
+}
+
+// Версия содержимого: длина + FNV-1a (32 бита) от UTF-8 — так же, как content_version в jarvis/vault.py.
+export function contentVersion(text) {
+  const data = new TextEncoder().encode(String(text ?? ""));
+  let h = 0x811c9dc5;
+  for (const b of data) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  return `${data.length}-${h.toString(16).padStart(8, "0")}`;
+}
+
 export function checkPath(rel, { write = false } = {}) {
   rel = String(rel || "").replace(/\\/g, "/").trim().replace(/^\/+/, "");
   if (!rel || rel.includes("\0")) throw new VaultError("пустой путь");
@@ -129,6 +147,37 @@ export class Vault {
   }
 
   write(rel, text, message) { return this.update(rel, () => text, message); }
+
+  // Правка из голограммы: base — версия, с которой начали править (null — новая заметка). Проверка идёт
+  // внутри update, поэтому и при повторе после свежей правки с телефона чужие изменения не затираются.
+  save(rel, text, base) {
+    return this.update(rel, (cur) => {
+      if (base == null) {
+        if (cur !== undefined) throw new VaultConflict(rel, cur, `заметка «${rel}» уже есть`);
+      } else if (cur === undefined || contentVersion(cur) !== base) {
+        throw new VaultConflict(rel, cur);
+      }
+      return text;
+    }, `Jarvis: правка ${rel}`);
+  }
+
+  // Заметка по пути, названию или словам — как find_note в jarvis/vault.py.
+  findNote(query) {
+    const q = String(query || "").trim().replace(/^[«»"']+|[«»"']+$/g, "").trim();
+    if (!q) return null;
+    for (const cand of [q, `${q}.md`]) {
+      try { const rel = checkPath(cand); if (this.files.has(rel)) return rel; } catch { /* не путь — ищем дальше */ }
+    }
+    const norm = (s) => s.toLowerCase().replace(/ё/g, "е");
+    const low = norm(q);
+    const files = this.list();
+    const exact = files.find((f) => norm(title(f)) === low);
+    if (exact) return exact;
+    const partial = files.filter((f) => norm(title(f)).includes(low)).sort((a, b) => a.length - b.length);
+    if (partial.length) return partial[0];
+    const hits = this.search(q, 1);
+    return hits.length ? hits[0].path : null;
+  }
 
   append(rel, text, { header = "" } = {}) {
     return this.update(rel, (cur) => {

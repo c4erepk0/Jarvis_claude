@@ -12,7 +12,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from .core import Jarvis
-from .vault import VaultError
+from .vault import VaultConflict, VaultError, content_version
 
 log = logging.getLogger("jarvis.web")
 WEBAPP = Path(__file__).parent / "webapp"
@@ -159,7 +159,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
     async def command(request):
         data = await body(request)
         reply = await j.handle(str(data.get("text", ""))[:4000], source=str(data.get("source") or "dashboard"),
-                               client=str(data.get("client") or "") or None)
+                               client=str(data.get("client") or "") or None, note=str(data.get("note") or "") or None)
         return ok(reply.as_dict())
 
     async def tasks_get(request):
@@ -238,9 +238,19 @@ def build_app(jarvis: Jarvis) -> web.Application:
         return ok(await j.act_remember(str(d.get("fact", ""))))
 
     async def note_get(request):
-        path = request.query.get("path", "")
-        text = j.vault.read(path)
-        return ok({"path": path, "content": text[:200_000]})
+        return ok(j.act_read_note(request.query.get("path", "")))
+
+    async def note_save(request):
+        """PUT — правка (base — версия, с которой начали править), POST — новая заметка."""
+        d = await body(request)
+        base = str(d.get("base") or "") or None if request.method == "PUT" else None
+        if request.method == "PUT" and not base:
+            raise ValueError("не указана версия заметки (base)")
+        try:
+            return ok(await j.act_save_note(str(d.get("path", "")), str(d.get("content", "")), base))
+        except VaultConflict as e:
+            current = None if e.current is None else {"content": e.current, "version": content_version(e.current)}
+            return ok({"error": str(e), "conflict": True, "current": current}, 409)
 
     async def graph(_):
         loop = asyncio.get_running_loop()
@@ -343,6 +353,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/memory", memory_get)
     r.add_post("/api/memory", memory_add)
     r.add_get("/api/note", note_get)
+    r.add_put("/api/note", note_save)
+    r.add_post("/api/note", note_save)
     r.add_get("/api/graph", graph)
     r.add_get("/api/diagnostics", diag)
     r.add_get("/api/weather", weather)
