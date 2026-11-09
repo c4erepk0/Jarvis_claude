@@ -4,18 +4,26 @@
 export const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12],
   [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
 
-const PINCH = 0.055;
+// Все пороги — в долях размера руки, а не кадра: рука в метре от камеры занимает десятую часть кадра,
+// и абсолютный порог щипка принимал за щипок почти любой жест. Подобраны на реальных кадрах HaGRID
+// (tests/js/fixtures/hands-hagrid.json): 166 из 176 верно, против 149 с прежними абсолютными порогами.
+const PINCH = 0.3;          // кончики большого и указательного ближе 0,3 руки — щипок
+const EXTEND = 0.15;        // кончик выше среднего сустава хотя бы на 0,15 руки — палец вытянут
+const THUMB_UP = 0.4;       // большой палец выше всех остальных суставов на 0,4 руки — 👍
 const FINGERS = [[8, 6], [12, 10], [16, 14], [20, 18]];   // кончик и средний сустав: указательный … мизинец
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const handSize = (lm) => dist(lm[0], lm[9]) || 1e-6;      // запястье — основание среднего пальца
-const extended = (lm, tip, pip) => lm[tip].y < lm[pip].y - 0.02;
+/** Размер руки: самое длинное из запястье—основания пальцев и ширины ладони — не «сжимается»,
+ *  когда рука повёрнута к камере боком или ребром. */
+export const handSize = (lm) => Math.max(dist(lm[0], lm[9]), dist(lm[0], lm[5]), dist(lm[0], lm[17]),
+  dist(lm[5], lm[17]) * 1.4) || 1e-6;
+const extended = (lm, tip, pip) => lm[tip].y < lm[pip].y - EXTEND * handSize(lm);
 // палец сжат: кончик подвёрнут к ладони — ближе к запястью, чем средний сустав
 const curled = (lm, tip, pip) => dist(lm[tip], lm[0]) < dist(lm[pip], lm[0]) * 0.9;
 
 /** Кулак: все четыре пальца подвёрнуты к ладони (большой — как угодно). */
 export const fist = (lm) => FINGERS.every(([t, p]) => curled(lm, t, p));
 // В кулаке большой палец лежит поверх пальцев — кончики рядом, но это не щипок.
-export const pinching = (lm) => dist(lm[4], lm[8]) < PINCH && !fist(lm);
+export const pinching = (lm) => dist(lm[4], lm[8]) < PINCH * handSize(lm) && !fist(lm);
 export const openPalm = (lm) => FINGERS.every(([t, p]) => extended(lm, t, p)) && !pinching(lm);
 export const pointing = (lm) => extended(lm, 8, 6) && !extended(lm, 12, 10) && !extended(lm, 16, 14) && !pinching(lm);
 /** Два пальца (✌): указательный и средний вытянуты, безымянный и мизинец — нет. */
@@ -25,7 +33,7 @@ export const victory = (lm) => extended(lm, 8, 6) && extended(lm, 12, 10) && !ex
 export const thumbUp = (lm) => {
   if (FINGERS.some(([t, p]) => extended(lm, t, p))) return false;
   const top = Math.min(...lm.slice(5).map((p) => p.y));
-  return lm[4].y < lm[3].y && lm[3].y < lm[2].y && top - lm[4].y > handSize(lm) * 0.4;
+  return lm[4].y < lm[3].y && lm[3].y < lm[2].y && top - lm[4].y > handSize(lm) * THUMB_UP;
 };
 
 /** Что показывает рука (руки) в кадре. x/y — уже отзеркалены под экран (0…1).
@@ -54,7 +62,8 @@ export const KIND_LABEL = {
 
 /** Значки жестов — для подсказок на голограмме. */
 export const GESTURE_ICON = {
-  palm: "✋", fist: "✊", thumb: "👍", victory: "✌", point: "☝", pinch: "🤏", "swipe-left": "👋", "swipe-right": "👋",
+  palm: "✋", fist: "✊", thumb: "👍", victory: "✌", point: "☝", pinch: "🤏", pinch2: "🤏🤏", hand: "🖐",
+  "swipe-left": "👋", "swipe-right": "👋",
 };
 
 // ---------- удержание поз и взмах ладонью ----------

@@ -1,10 +1,11 @@
 // Жесты голограммы и первоначальное обучение им: node --test tests/js
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { GestureTracker, POSES, classify, poseFrame } from "../../jarvis/webapp/static/gestures.js";
+import { GestureTracker, POSES, classify, handSize, poseFrame } from "../../jarvis/webapp/static/gestures.js";
 import { GestureCoach, NEW_STEPS_FROM, STEPS } from "../../jarvis/webapp/static/gesture-coach.js";
-import { Trail, dictationLine, insertDictation, noteAction } from "../../jarvis/webapp/static/note-gestures.js";
+import { Trail, dictationLine, insertDictation, noteAction, noteHint } from "../../jarvis/webapp/static/note-gestures.js";
 
 test("эталонные позы из обучения распознаются как нарисованы", () => {
   assert.equal(classify([]).kind, "none");
@@ -30,11 +31,35 @@ test("новые позы: два пальца, большой палец, ку�
   assert.deepEqual(kinds, Object.keys(POSES));
   // в кулаке большой палец лежит на пальцах — кончики рядом, но это не щипок, и два кулака — не масштаб
   const f = poseFrame("fist");
-  assert.ok(Math.hypot(f[4].x - f[8].x, f[4].y - f[8].y) < 0.055);
+  assert.ok(Math.hypot(f[4].x - f[8].x, f[4].y - f[8].y) < 0.3 * handSize(f));
   assert.equal(classify([poseFrame("fist", { x: 0.05 }), poseFrame("fist", { x: 0.55 })]).kind, "fist");
   // у позы есть точка на экране (для взмаха), отзеркаленная
   const v = classify([poseFrame("palm", { x: 0 })]);
   assert.ok(v.x > 0.6 && v.y > 0);
+});
+
+// Реальные руки: точки MediaPipe на кадрах HaGRID (люди в 0,5–2 м от камеры, рука — малая часть кадра).
+// Нарисованные эталоны проходили и с прежними порогами в долях кадра, а живые жесты читались как щипок.
+test("реальные руки: жесты распознаются, щипок не мерещится", () => {
+  const fx = JSON.parse(readFileSync(new URL("./fixtures/hands-hagrid.json", import.meta.url), "utf8"));
+  const WANT = { fist: ["fist"], like: ["thumb"], peace: ["victory"], palm: ["palm"], stop: ["palm"], one: ["point"],
+    ok: ["pinch"], dislike: ["fist", "hand"] };     // 👎 — не наш жест: кулак или «просто рука»
+  const per = {};
+  let right = 0, wrongCommand = 0;
+  for (const f of fx.frames) {
+    const kind = classify(f.hands.map((h) => h.map(([x, y]) => ({ x, y })))).kind;
+    const c = (per[f.label] ??= { right: 0, total: 0, as: {} });
+    c.total += 1;
+    c.as[kind] = (c.as[kind] || 0) + 1;
+    if (WANT[f.label].includes(kind)) { right += 1; c.right += 1; } else if (kind !== "hand") wrongCommand += 1;
+  }
+  const report = JSON.stringify(per);
+  assert.ok(fx.frames.length >= 170);
+  assert.ok(right / fx.frames.length >= 0.92, `верно ${right} из ${fx.frames.length}: ${report}`);
+  // неверная команда хуже «ничего»: щипок вместо ✌ крутит граф, вместо правки
+  assert.ok(wrongCommand <= 4, `неверных команд ${wrongCommand}: ${report}`);
+  for (const [label, c] of Object.entries(per)) assert.ok(c.right / c.total >= 0.8, `${label}: ${JSON.stringify(c)}`);
+  for (const label of ["peace", "palm", "stop", "like"]) assert.ok(!per[label].as.pinch, `${label} — не щипок: ${report}`);
 });
 
 const G = (kind, x = 0.5, y = 0.5) => ({ kind, x, y });
@@ -236,6 +261,24 @@ test("жесты заметки: закрыть, править, сохрани�
   assert.equal(act("fist", { mode: "create" }), "leave");
   assert.equal(act("fist", { mode: "conflict" }), "back-edit");
   assert.equal(act("thumb", { mode: "conflict" }), null);               // перезаписать чужую версию — только кнопкой
+});
+
+test("жест распознан, но сейчас ни к чему — подсказка вместо тишины", () => {
+  const hint = (g, over) => noteHint(g, S(over));
+  assert.match(hint("thumb"), /сначала ✌/);                                // 👍 в просмотре
+  assert.equal(hint("fist"), null);                                       // у ✊ в просмотре есть действие
+  assert.match(hint("victory", { editable: false }), /Obsidian/);
+  assert.match(hint("victory", { mode: "edit", dictation: false }), /речь/);
+  assert.match(hint("thumb", { mode: "conflict" }), /кнопкой/);
+  assert.equal(hint("swipe-left"), null);                                 // взмах без истории — поворот графа
+  assert.equal(hint("palm"), null);
+  // у каждой позы в каждом режиме — либо действие, либо подсказка (кроме конфликта: там ✊ — действие)
+  for (const mode of ["view", "edit", "create", "conflict"]) {
+    for (const g of ["fist", "victory", "thumb"]) {
+      const s = S({ mode, dictation: false, editable: false });
+      assert.ok(noteAction(g, s) || noteHint(g, s), `${mode}/${g}`);
+    }
+  }
 });
 
 test("история заметок для взмаха: назад, вперёд, новая ветка, удалённая заметка", () => {
