@@ -54,6 +54,17 @@ def ensure_access_code(cfg, env_file: Path = Path(".env")):
     return replace(cfg, access_code=code), True
 
 
+def banner(url: str, code: str, created: bool = False, again: bool = False) -> str:
+    bar = "═" * 58
+    head = "  ⚠️  Ссылка сменилась — старая больше не работает.\n" if again else ""
+    return (f"\n{bar}\n{head}  Откройте в Safari:  {url}\n  Код входа:         {code}"
+            f"{'  (сохранён в .env)' if created else ''}\n"
+            "  Не набирайте localhost — Safari его не видит; только эту ссылку.\n"
+            "  Терминал держите открытым: если iOS его усыпит, ссылка отдаст «no tunnel»,\n"
+            "  а после возврата в терминал Jarvis поднимет новую и покажет её здесь.\n"
+            f"  Затем «Поделиться» → «На экран „Домой“».\n{bar}\n")
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m jarvis", description="J.A.R.V.I.S.")
     p.add_argument("--tunnel", nargs="?", const="auto", choices=["auto", "cloudflare", "localhostrun", "pinggy"],
@@ -114,14 +125,25 @@ async def main(argv: list[str] | None = None) -> None:
         order = ORDER if args.tunnel == "auto" else (args.tunnel,)
         tunnel = Tunnel(cfg.port, cfg.data_dir / "tools", order)
         url = await tunnel.start()
+
+        async def announce(url: str, again: bool = False) -> None:
+            print(banner(url, cfg.access_code, created_code, again), flush=True)
+            try:
+                (cfg.data_dir / "tunnel_url.txt").write_text(url + "\n", encoding="utf-8")
+            except OSError:
+                pass
+            if again and telegram:
+                try:
+                    await telegram.notify(f"Новая ссылка на Jarvis: {url}", "info")
+                except Exception:  # noqa: BLE001
+                    log.warning("Не удалось отправить новую ссылку в Telegram")
+
         if url:
-            bar = "═" * 58
-            print(f"\n{bar}\n  Откройте в Safari:  {url}\n  Код входа:         {cfg.access_code}"
-                  f"{'  (сохранён в .env)' if created_code else ''}\n"
-                  f"  Затем «Поделиться» → «На экран „Домой“».\n{bar}\n", flush=True)
+            await announce(url)
         else:
             log.error("Туннель не поднялся ни одним способом — подробности в %s",
                       cfg.data_dir / "tools" / "tunnel.log")
+        background.append(asyncio.create_task(tunnel.watch(lambda u: announce(u, True)), name="tunnel"))
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

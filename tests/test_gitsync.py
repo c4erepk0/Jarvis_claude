@@ -148,3 +148,52 @@ def test_tunnel_process_handling(tmp_path, monkeypatch):
         assert not t.alive
         assert "Registered tunnel connection" in (tmp_path / "tools" / "tunnel.log").read_text()
     asyncio.run(run())
+
+
+def test_tunnel_failure_reason_and_watchdog(tmp_path, monkeypatch, capsys):
+    """Туннель умер после выдачи адреса (как «no tunnel» у localhost.run) — сторож поднимает новый
+    и сообщает ссылку; при отказе видна причина из вывода туннеля."""
+    import os
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    counter = tmp_path / "n"
+    fake = bin_dir / "cloudflared"
+    # первый запуск — сразу умирает после адреса, второй — живёт
+    fake.write_text(f"#!/bin/sh\nn=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n"
+                    "echo \"|  https://river-$n.trycloudflare.com  |\"\n"
+                    "echo 'INF Registered tunnel connection connIndex=0'\n"
+                    "[ $n -eq 1 ] && exit 0\nexec sleep 30\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+
+    async def run():
+        from jarvis.tunnel import Tunnel
+        t = Tunnel(8765, tmp_path / "tools", ("cloudflare",), timeout=10)
+        assert await t.start() == "https://river-1.trycloudflare.com"
+        await asyncio.sleep(0.3)
+        assert not t.alive
+        got = []
+
+        async def on_url(u):
+            got.append(u)
+        watch = asyncio.create_task(t.watch(on_url, interval=0.05))
+        for _ in range(100):
+            if got:
+                break
+            await asyncio.sleep(0.05)
+        watch.cancel()
+        assert got == ["https://river-2.trycloudflare.com"] and t.alive
+        await t.stop()
+
+        broken = bin_dir / "cloudflared"
+        broken.write_text("#!/bin/sh\necho 'ERR failed to request quick Tunnel: 429 Too Many Requests'\nexit 1\n")
+        t2 = Tunnel(8765, tmp_path / "tools", ("cloudflare",), timeout=5)
+        assert await t2.start() is None
+    asyncio.run(run())
+    assert "429 Too Many Requests" in capsys.readouterr().out
+
+
+def test_tunnel_banner():
+    from jarvis.__main__ import banner
+    text = banner("https://abc.lhr.life", "code123", again=True)
+    assert "https://abc.lhr.life" in text and "code123" in text and "сменилась" in text

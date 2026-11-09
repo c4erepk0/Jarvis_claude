@@ -14,7 +14,11 @@ import shutil
 import stat
 import tarfile
 import urllib.request
+from collections import deque
 from pathlib import Path
+from typing import Awaitable, Callable
+
+import aiohttp
 
 log = logging.getLogger("jarvis.tunnel")
 CF_BASE = "https://github.com/cloudflare/cloudflared/releases/latest/download/"
@@ -96,6 +100,7 @@ class Tunnel:
         self.url: str | None = None
         self.name: str | None = None
         self._drain: asyncio.Task | None = None
+        self.last_lines: deque[str] = deque(maxlen=3)
 
     async def start(self) -> str | None:
         loop = asyncio.get_running_loop()
@@ -116,12 +121,14 @@ class Tunnel:
                 return url
             if proc.returncode is None:
                 proc.terminate()
-            print(f"   ❌ {name} не поднялся.", flush=True)
+            why = " / ".join(self.last_lines) or "нет ответа"
+            print(f"   ❌ {name} не поднялся: {why[-300:]}", flush=True)
         return None
 
     async def _wait_url(self, proc, name: str) -> str | None:
         url = None
         ready = name != "cloudflare"
+        self.last_lines.clear()
         log_path = self.tools / "tunnel.log"
         self.tools.mkdir(parents=True, exist_ok=True)
         with open(log_path, "a", encoding="utf-8") as logf:
@@ -133,6 +140,8 @@ class Tunnel:
                         return
                     line = raw.decode("utf-8", "replace")
                     logf.write(line)
+                    if line.strip():
+                        self.last_lines.append(line.strip())
                     url = url or find_url(line, name)
                     if "Registered tunnel connection" in line:
                         ready = True
@@ -163,3 +172,36 @@ class Tunnel:
                 self.proc.kill()
         if self._drain:
             self._drain.cancel()
+
+    async def reachable(self, timeout: float = 15) -> bool:
+        """Отвечает ли Jarvis по публичной ссылке. Бесплатные туннели рвутся молча: ssh ещё жив,
+        а сайт уже отдаёт «no tunnel» (localhost.run) — поэтому проверяем снаружи, через /healthz."""
+        if not self.url:
+            return False
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as s:
+                async with s.get(self.url + "/healthz") as r:
+                    return r.status == 200 and '"jarvis"' in await r.text()
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            return False
+
+    async def watch(self, on_url: Callable[[str], Awaitable[None]] | None = None,
+                    interval: float = 30, fails: int = 2) -> None:
+        """Сторож: если туннель упал или ссылка перестала открываться — поднимаем заново и сообщаем
+        новый адрес (у бесплатных туннелей он меняется)."""
+        bad = 0
+        while True:
+            await asyncio.sleep(interval)
+            if self.alive and await self.reachable():
+                bad = 0
+                continue
+            bad = fails if not self.alive else bad + 1
+            if bad < fails:
+                continue
+            print("⚠️  Туннель оборвался — переподключаюсь…", flush=True)
+            await self.stop()
+            self.proc = self.url = None
+            url = await self.start()
+            bad = 0
+            if url and on_url:
+                await on_url(url)
