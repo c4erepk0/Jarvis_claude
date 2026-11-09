@@ -69,13 +69,18 @@ export const GESTURE_ICON = {
 // ---------- удержание поз и взмах ладонью ----------
 /** Сколько держать позу, чтобы она сработала (мс). */
 export const HOLD_MS = { palm: 1000, victory: 800, thumb: 800, fist: 800 };
+/** Щипок, сдвинутый меньше чем на столько (доля кадра), — «нажатие», а не перетаскивание: граф не крутится. */
+export const DRAG = 0.03;
+/** Короткий щипок — «нажать» (для взгляда): свёл и развёл пальцы за это время (мс). */
+export const TAP_MS = [40, 450];
 
 /**
  * Следит за кадрами classify() и превращает их в команды. Без DOM — голограмма, обучение, тесты.
  * update(g, ts) возвращает события:
  *   { type: "hold", kind, progress } — поза держится (0…1), для индикатора;
  *   { type: "pose", kind }           — поза удержана; повтор — только если руку перестроить;
- *   { type: "swipe", dir }           — быстрый взмах раскрытой ладонью: dir = "left" | "right" (по экрану).
+ *   { type: "swipe", dir }           — быстрый взмах раскрытой ладонью: dir = "left" | "right" (по экрану);
+ *   { type: "tap" }                  — короткий щипок без движения: «нажать» то, на что смотрите.
  * Удержание засчитывается, только пока рука стоит на месте, — взмах ладонью не сбрасывает вид.
  */
 export class GestureTracker {
@@ -92,10 +97,13 @@ export class GestureTracker {
     this.path = [];              // недавние положения ладони — для взмаха
     this.lastSwipe = null;       // { dir, at }
     this.blockUntil = 0;         // сразу после взмаха позы не засчитываются
+    this.pinch = null;           // текущий щипок — для «нажатия»
   }
 
   update(g, ts) {
     const out = [];
+    const tap = this.detectTap(g, ts);
+    if (tap) out.push(tap);
     const sw = this.detectSwipe(g, ts);
     if (sw) {
       out.push(sw);
@@ -124,6 +132,22 @@ export class GestureTracker {
       out.push({ type: "pose", kind: k });
     }
     return out;
+  }
+
+  /** Щипок закончился (пальцы разведены дольше кадра-двух), был коротким и почти на месте — «нажать». */
+  detectTap(g, ts) {
+    const p = this.pinch;
+    if (g.kind === "pinch") {
+      if (!p) this.pinch = { since: ts, last: ts, x: g.x, y: g.y, moved: 0 };
+      else { p.last = ts; p.moved = Math.max(p.moved, Math.hypot(g.x - p.x, g.y - p.y)); }
+      return null;
+    }
+    if (!p) return null;
+    if (g.kind === "pinch2") { this.pinch = null; return null; }
+    if (ts - p.last < 90) return null;                // кадр без щипка посреди щипка — MediaPipe дрогнул
+    this.pinch = null;
+    const dur = p.last - p.since;
+    return dur >= TAP_MS[0] && dur <= TAP_MS[1] && p.moved < DRAG ? { type: "tap" } : null;
   }
 
   detectSwipe(g, ts) {
