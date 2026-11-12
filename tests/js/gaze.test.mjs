@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { ANCHOR_POINTS, AdaptiveGaze, BIG_CHECK, BIG_POINTS, BLEND_KEYS, CAL_POINTS, CHECK_POINTS, Calibration, FACE,
-  FEATURE_VERSION, GazeModel, LIVE_ALPHA, OneEuro2D, RAW_LANDMARKS, SPLIT, SplitModel, evaluateSession, evaluateUsage,
+  FEATURE_VERSION, GazeModel, GazeSync, LIVE_ALPHA, OneEuro2D, RAW_LANDMARKS, SPLIT, SplitModel, evaluateSession, evaluateUsage,
   eyeFeatures, gazeFeatures, headPose, packFrame, pickTarget, snapRadius, targetDistance, unpackFrame } from "../../jarvis/webapp/static/gaze.js";
 import { BASE_POSE, MOVED_POSES, PHONE, face, face3d, poseError, rng, runCalibration, runCalibration3d } from "./gaze-synthetic.mjs";
 
@@ -279,4 +279,39 @@ test("телефон сдвинули, наклонили, поднесли бл
   assert.equal(ad.outOfRange(far), true);
   ad.learn(gazeFeatures(face3d(195, 400, BASE_POSE).lm, face3d(195, 400, BASE_POSE).blend), 0.5, 0.47, 10, far);
   assert.equal(ad.outOfRange(far), false, "после поправки в этой позе подсказка больше не нужна");
+});
+
+test("взгляд и щипок синхронно: нажимается последняя устойчивая фиксация, а не взгляд в момент щипка", () => {
+  const A = { id: "A" }, B = { id: "B" };
+  const feed = (g, from, to, target, f = [1]) => { for (let t = from; t < to; t += 33) g.push(t, target, f, { x: t, y: 0 }); };
+  // поздний щипок: смотрел на A 300 мс, взгляд ушёл на B за 100 мс до щипка — нажимается A
+  let g = new GazeSync();
+  feed(g, 0, 300, A, [1]); feed(g, 300, 400, B, [9]);
+  g.pinchStart(400);
+  let hit = g.resolve(600);
+  assert.equal(hit.target.id, "A");
+  assert.equal(hit.kind, "fixation");
+  assert.deepEqual(hit.f, [1]);                                            // поправка курсора — по кадрам фиксации на A
+  // взгляд ушёл в пустоту перед щипком — всё равно A
+  g = new GazeSync();
+  feed(g, 0, 300, A); feed(g, 300, 420, null);
+  g.pinchStart(420);
+  assert.equal(g.resolve(500).target.id, "A");
+  // давняя фиксация (секунду назад) не считается
+  g = new GazeSync();
+  feed(g, 0, 300, A); feed(g, 300, 1100, null);
+  g.pinchStart(1100);
+  assert.equal(g.resolve(1200), null);
+  // ранний щипок: пальцы свели, пока взгляд ехал; остановился на B — нажимается B
+  g = new GazeSync();
+  feed(g, 0, 200, null);
+  g.pinchStart(200);
+  feed(g, 200, 260, null); feed(g, 260, 460, B);
+  hit = g.resolve(470);
+  assert.deepEqual([hit.target.id, hit.kind], ["B", "early"]);
+  // мимолётный пролёт взгляда через цель (один-два кадра) — не фиксация
+  g = new GazeSync();
+  feed(g, 0, 200, null); feed(g, 200, 250, B); feed(g, 250, 400, null);
+  g.pinchStart(400);
+  assert.equal(g.resolve(450), null);
 });

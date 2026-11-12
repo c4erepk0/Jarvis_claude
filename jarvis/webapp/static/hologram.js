@@ -9,8 +9,8 @@
 // Управление взглядом (MediaPipe Face Landmarker, gaze.js): взгляд — курсор, примагниченный к ближайшей кнопке
 //   или узлу; короткий щипок — нажать то, на что смотрите; щипок и движение — вращать граф или листать заметку.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=13";
-import { DEFAULT_MAGNET, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=13";
+import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=14";
+import { DEFAULT_MAGNET, GazeSync, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=14";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
@@ -399,7 +399,7 @@ export class Hologram {
       this.trackGaze(v, ts, g);
       // нажимается то, на что смотрели, когда свели пальцы (взгляд к отпусканию мог уже уйти); тогда же
       // запоминаем, что видела камера, — для доучивания модели и журнала нажатий
-      if (g.kind === "pinch" && !h.pinch) this.gazePressStart();
+      if (g.kind === "pinch" && !this.tracker.pinch) this.gazePressStart();
     }
     for (const e of this.tracker.update(g, ts)) this.onTracked(e, ts);
     if (ts - h.badgeAt > 300 && ts > h.badgeUntil) this.badge.classList.add("hidden");
@@ -542,7 +542,7 @@ export class Hologram {
       });
     }
     this.gaze = { model, errorPx, magnet, radius: snapRadius(errorPx, magnet), filter: new OneEuro2D(), target: null,
-      pressTarget: null, press: null, point: null, raw: null, recent: [], calibration: null, faceAt: 0 };
+      pressTarget: null, press: null, point: null, raw: null, recent: [], calibration: null, faceAt: 0, sync: new GazeSync() };
     this.onStatus("взгляд — курсор, короткий щипок — нажать, щипок и движение — вращать или листать");
   }
 
@@ -581,6 +581,7 @@ export class Hologram {
 
   trackGaze(v, ts, g) {
     const z = this.gaze;
+    z.now = ts;
     const res = this.face.detectForVideo(v, ts);
     const lm = res.faceLandmarks?.[0];
     const blend = {};
@@ -642,6 +643,8 @@ export class Hologram {
     if (z.target?.el && z.target.el !== t?.el) z.target.el.classList.remove("gaze-on");
     if (t?.el) t.el.classList.add("gaze-on");
     z.target = t;
+    // история «куда смотрел» — щипок нажмёт последнюю устойчивую фиксацию, а не взгляд в момент щипка
+    z.sync.push(z.now, t, z.recent.at(-1)?.f || null, z.rawPoint);   // время — кадра камеры, как у жестов
     // курсор — там, куда вы смотрите (он не прыгает на цель), а цель, которую нажмёт щипок, подсвечена
     if (t?.node) this.setMouse(t.x, t.y);              // подпись узла — как при наведении мышью
     else { this.mouse.set(-9, -9); this.hoverAt = null; }
@@ -653,19 +656,16 @@ export class Hologram {
 
   gazePressStart() {
     const z = this.gaze;
-    z.pressTarget = z.target;
-    const fs = z.recent.map((r) => r.f);
-    z.press = fs.length && z.raw && z.rawPoint ? {
-      f: fs[0].map((_, j) => fs.reduce((s, f) => s + f[j], 0) / fs.length),   // среднее за 250 мс — без дрожания
-      raw: packFrame(z.raw.lm, z.raw.blend, z.raw.matrix), pred: { ...z.rawPoint }, pose: headPose(z.raw.matrix),
-    } : null;
+    z.sync.pinchStart(z.now);
+    z.press = z.raw ? { raw: packFrame(z.raw.lm, z.raw.blend, z.raw.matrix), pose: headPose(z.raw.matrix) } : null;
   }
 
-  /** Короткий щипок при управлении взглядом: нажать то, на что смотрели, когда свели пальцы. */
+  /** Короткий щипок при управлении взглядом: нажать то, на что смотрели, — см. GazeSync (gaze.js). */
   gazeClick(ts) {
     const z = this.gaze;
-    const t = z.pressTarget || z.target;
-    const press = z.press;
+    const hit = z.sync.resolve(ts);
+    const t = hit?.target || null;
+    const press = z.press && hit?.f && hit.pt ? { ...z.press, f: hit.f, pred: hit.pt } : null;
     z.pressTarget = null;
     z.press = null;
     if (!t || (t.el && !t.el.isConnected)) {
