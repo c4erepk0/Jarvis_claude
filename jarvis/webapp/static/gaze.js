@@ -579,3 +579,63 @@ export function snapRadius(errorPx, level = DEFAULT_MAGNET) {
   const [k, lo, hi] = [[0, 10, 10], [0.5, 20, 50], [0.8, 28, 80], [1.2, 48, 150]][Math.max(0, Math.min(3, level))];
   return Math.round(Math.max(lo, Math.min(hi, e * k)));
 }
+
+// ---------- взгляд и щипок — синхронно ----------
+/** Какую цель нажимает щипок. Взгляд и рука расходятся во времени (Pfeuffer и др., «Design Principles & Issues
+ *  for Gaze and Pinch Interaction»; GazeHandSync):
+ *   — «поздний щипок»: посмотрел на цель, решил нажать — и глаза уже ушли дальше, пока пальцы сводились
+ *     (плюс камера видит щипок с опозданием на кадр-два). Поэтому берём не взгляд в момент щипка, а последнюю
+ *     устойчивую фиксацию за lookbackMs до него — цель, на которой взгляд простоял дольше всего;
+ *   — «ранний щипок»: пальцы сведены раньше, чем взгляд доехал до цели. Тогда ждём цель, на которой взгляд
+ *     остановится в течение earlyMs после начала щипка.
+ *  Признаки для поправки курсора берутся по кадрам этой фиксации, а не по тому, куда взгляд смотрел позже. */
+export class GazeSync {
+  constructor({ lookbackMs = 450, earlyMs = 350, minDwellMs = 90, keepMs = 1200 } = {}) {
+    Object.assign(this, { lookbackMs, earlyMs, minDwellMs, keepMs });
+    this.log = [];        // { ts, id, target, f, pt } — кадры взгляда
+    this.pinchAt = null;
+  }
+
+  /** Кадр взгляда: target — цель под взглядом ({ id, … } или null), f — признаки, pt — точка модели (px). */
+  push(ts, target, f = null, pt = null) {
+    this.log.push({ ts, id: target ? target.id : null, target, f, pt });
+    while (this.log.length && ts - this.log[0].ts > this.keepMs) this.log.shift();
+  }
+
+  /** Фиксации в окне [from, to]: подряд идущие кадры на одной цели. */
+  fixations(from, to) {
+    const out = [];
+    let cur = null, prev = null;
+    for (const e of this.log) {
+      if (e.ts < from || e.ts > to) continue;
+      const dt = prev === null ? 0 : Math.min(120, e.ts - prev);
+      prev = e.ts;
+      if (e.id === null) { cur = null; continue; }
+      if (!cur || cur.id !== e.id) { cur = { id: e.id, target: e.target, ms: 0, end: e.ts, frames: [] }; out.push(cur); }
+      else cur.ms += dt;
+      cur.end = e.ts; cur.target = e.target; cur.frames.push(e);
+    }
+    return out.filter((x) => x.ms >= this.minDwellMs);
+  }
+
+  /** Пальцы сведены. */
+  pinchStart(ts) { this.pinchAt = ts; }
+
+  /** Щипок оказался нажатием (пальцы разведены): { target, f, pt, kind: "fixation" | "early" } или null. */
+  resolve(ts) {
+    const at = this.pinchAt ?? ts;
+    this.pinchAt = null;
+    const pack = (fx, kind) => {
+      const fr = fx.frames.filter((e) => e.f);
+      const avg = (get) => fr[0] && get(fr[0]).map((_, j) => fr.reduce((s, e) => s + get(e)[j], 0) / fr.length);
+      return { target: fx.target, kind, ms: fx.ms, f: fr.length ? avg((e) => e.f) : null,
+        pt: fr.length && fr[0].pt ? { x: mean(fr.map((e) => e.pt.x)), y: mean(fr.map((e) => e.pt.y)) } : null };
+    };
+    // до щипка: самая долгая фиксация; при равных — более поздняя
+    const before = this.fixations(at - this.lookbackMs, at).sort((a, b) => b.ms - a.ms || b.end - a.end)[0];
+    if (before) return pack(before, "fixation");
+    // взгляд ещё ехал: первая фиксация после начала щипка
+    const after = this.fixations(at, Math.min(ts, at + this.earlyMs))[0];
+    return after ? pack(after, "early") : null;
+  }
+}
