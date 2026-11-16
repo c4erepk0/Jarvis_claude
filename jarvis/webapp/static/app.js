@@ -1,8 +1,8 @@
 // A.T.O.M. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=16";
-import { Voice } from "./voice.js?v=16";
+import { Reactor } from "./reactor.js?v=17";
+import { Voice } from "./voice.js?v=17";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -59,7 +59,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Atom работает прямо на телефоне
-    SA = await import("./standalone.js?v=16");
+    SA = await import("./standalone.js?v=17");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -750,7 +750,7 @@ tick(); setInterval(tick, 1000);
 let fm = null;
 async function fileManager() {
   if (fm) return fm;
-  const { FileManager } = await import("./files.js?v=16");
+  const { FileManager } = await import("./files.js?v=17");
   fm = new FileManager($("#fm"), {
     api, toast, store,
     projects: () => (S ? S.projects : []),
@@ -783,7 +783,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=16");
+    const { Hologram } = await import("./hologram.js?v=17");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -806,7 +806,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=16");
+  const { NotePanel } = await import("./note-panel.js?v=17");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -846,7 +846,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=16");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=17");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -897,7 +897,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=16").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=17").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -918,7 +918,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=16");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=17");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -931,7 +931,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=16");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=17");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),
