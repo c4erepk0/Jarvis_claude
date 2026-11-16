@@ -194,6 +194,11 @@ def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: st
                  r"(?:про\s+|о\s+|об\s+)?(.+)$", t, re.I)
     if m:
         return Intent("note_open", {"query": m.group(1).strip()})
+    if re.fullmatch(r"(?:открой|покажи|открыть)\s+(?:хранилище|файлы|все заметки|менеджер заметок|проводник)", low):
+        return Intent("files")
+    m = re.match(r"^(?:удали|удалить|выбрось|выкинь)\s+(?:заметку|файл|папку)\s+(.+)$", t, re.I)
+    if m:
+        return Intent("note_delete", {"query": m.group(1).strip().strip("«»\"")})
     m = re.match(r"^(?:найди|поищи|поиск)(?: в (?:заметках|памяти|obsidian|обсидиане))?[:,]?\s+(.+)$", t, re.I) or \
         re.match(r"^что ты (?:знаешь|помнишь) (?:о|об|про)\s+(.+)$", t, re.I)
     if m:
@@ -203,6 +208,14 @@ def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: st
         return Intent("note", {"text": m.group(1).strip()})
 
     # --- проекты ---
+    m = re.match(r"^(?:создай|заведи|добавь|начни|новый)\s+(?:новый\s+)?проект[:,]?\s+(.+)$", t, re.I)
+    if m:
+        return Intent("project_create", {"name": m.group(1).strip().strip("«»\"").rstrip(".!")})
+    m = re.match(r"^(?:открой|покажи)\s+(?:страницу\s+)?проект[аы]?\s+(.+)$", t, re.I)
+    if m:
+        name = m.group(1).strip().strip("«»\"")
+        proj = next((p for p in projects if p.lower() == name.lower()), name)
+        return Intent("project_open", {"project": proj})
     m = re.match(r"^(?:поручи|передай|отдай)(?:\s+(?:claude|клоду|клод|клоуду))?(?:\s+(локально|на компьютере))?"
                  r"\s+(?:в\s+|проекту\s+|проект\s+|для\s+)?([\w.-]+)[:,]?\s+(.+)$", t, re.I)
     if m:

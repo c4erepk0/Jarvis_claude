@@ -148,12 +148,22 @@ export function parse(text, ref, projects = [], wake = "джарвис") {
   // «открой заметку IPAStore», «покажи файл про оферту» — в голограмме
   m = rx("^(?:открой|покажи|открыть|показать)\\s+(?:мне\\s+)?(?:заметку|файл|запись)\\s+(?:про\\s+|о\\s+|об\\s+)?(.+)$").exec(t);
   if (m) return { name: "note_open", args: { query: m[1].trim() } };
+  if (rx("^(?:открой|покажи|открыть)\\s+(?:хранилище|файлы|все заметки|менеджер заметок|проводник)$").test(low)) return { name: "files", args: {} };
+  m = rx("^(?:удали|удалить|выбрось|выкинь)\\s+(?:заметку|файл|папку)\\s+(.+)$").exec(t);
+  if (m) return { name: "note_delete", args: { query: m[1].trim().replace(/^[«"]+|[»"]+$/g, "") } };
   m = rx("^(?:найди|поищи|поиск)(?: в (?:заметках|памяти|obsidian|обсидиане))?[:,]?\\s+(.+)$").exec(t)
     || rx("^что ты (?:знаешь|помнишь) (?:о|об|про)\\s+(.+)$").exec(t);
   if (m) return { name: "recall", args: { query: m[1].trim() } };
   m = rx("^(?:заметка|запиши заметку|запиши в журнал|в журнал)[:,]?\\s+(.+)$").exec(t);
   if (m) return { name: "note", args: { text: m[1].trim() } };
 
+  m = rx("^(?:создай|заведи|добавь|начни|новый)\\s+(?:новый\\s+)?проект[:,]?\\s+(.+)$").exec(t);
+  if (m) return { name: "project_create", args: { name: m[1].trim().replace(/^[«"]+|[»"]+$/g, "").replace(/[.!]+$/, "") } };
+  m = rx("^(?:открой|покажи)\\s+(?:страницу\\s+)?проект[аы]?\\s+(.+)$").exec(t);
+  if (m) {
+    const name = m[1].trim().replace(/^[«"]+|[»"]+$/g, "");
+    return { name: "project_open", args: { project: projects.find((p) => p.toLowerCase() === name.toLowerCase()) || name } };
+  }
   m = rx("^(?:поручи|передай|отдай)(?:\\s+(?:claude|клоду|клод|клоуду))?(?:\\s+(локально|на компьютере))?\\s+(?:в\\s+|проекту\\s+|проект\\s+|для\\s+)?([\\p{L}\\p{N}_.-]+)[:,]?\\s+(.+)$").exec(t);
   if (m) {
     const proj = projects.find((p) => p.toLowerCase() === m[2].toLowerCase()) || m[2];

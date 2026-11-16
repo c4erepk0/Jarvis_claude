@@ -24,10 +24,18 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/protocols.py` — протоколы (встроенные + `Jarvis/Protocols.md`).
 - `jarvis/vault.py` — безопасные пути, атомарная запись, frontmatter, поиск, граф, наблюдение за изменениями.
 - `jarvis/tasks.py` (формат Obsidian Tasks) · `jarvis/finance.py` (таблицы по месяцам, копейки) · `jarvis/memory.py`.
-- `jarvis/projects.py` + `jarvis/github.py` — статус, задачи для @claude, локальный Claude Code, деплой.
+- `jarvis/notes.py` — менеджер заметок: индекс хранилища (`/api/files`), теги, обратные ссылки, шаблоны
+  (`Templates/`), перенос/переименование с правкой `[[ссылок]]`, корзина `.trash/` (как в Obsidian); то же —
+  `core/notes.js`. Тест — `tests/test_files.py` и `tests/js/files.test.mjs`.
+- `jarvis/projects.py` + `jarvis/github.py` — статус, задачи для @claude, локальный Claude Code, деплой; создание
+  проекта, поля (`set_frontmatter_field` — правит одну строку frontmatter), страница проекта (`overview`: задачи по тегу,
+  в заметке и папке `Projects/<Проект>/`, прогресс, заметки, журнал). Заметки в папке проекта — не проекты.
 - `jarvis/web.py` — REST + WebSocket + вход; `jarvis/hub.py` — шина событий; `jarvis/watchers.py` — фоновые датчики.
 - `jarvis/voice.py` (TTS), `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
 - `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`.
+- `static/files.js` — окно «Хранилище» (менеджер заметок и проектов): дерево, теги, недавние, поиск, страница проекта,
+  перетаскивание; заметку показывает та же `NotePanel` (`extraActions`/`onAction`/`onTag`/`templates`). Логика без DOM —
+  `static/file-tree.js` (тест — `tests/js/files.test.mjs`). Диалоги — свои, не `prompt()`/`confirm()`.
 - `static/note-panel.js` — заметка в голограмме: просмотр, правка, новая, [[ссылки]], галочки задач; рендер —
   `static/markdown.js` (сначала экранирование, тест — `tests/js/markdown.test.mjs`). Сохранение — с версией
   (`content_version` / `contentVersion`, одинаковые в Python и JS): PUT /api/note с `base`, при чужой правке — 409.

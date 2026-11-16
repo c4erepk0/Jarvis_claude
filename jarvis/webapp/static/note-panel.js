@@ -2,8 +2,8 @@
 // Сохранение — с версией, с которой начали править: если заметку тем временем изменили в Obsidian,
 // сервер (или ядро на iPhone) вернёт 409 и панель предложит выбрать версию — ничего не затирается молча.
 // Жестами (через голограмму): ✊ закрыть, ✌ править / диктовать строку, 👍 сохранить, взмах — назад/вперёд.
-import { esc, renderMarkdown, toggleTask } from "./markdown.js?v=14";
-import { Trail, insertDictation, noteAction, noteHint } from "./note-gestures.js?v=14";
+import { esc, renderMarkdown, toggleTask } from "./markdown.js?v=15";
+import { Trail, insertDictation, noteAction, noteHint } from "./note-gestures.js?v=15";
 
 const folderOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 const titleOf = (path) => path.split("/").pop().replace(/\.[^.]+$/, "");
@@ -14,9 +14,13 @@ export class NotePanel {
    * resolve(name) — путь заметки по названию из [[ссылки]] (или null); today() — ГГГГ-ММ-ДД;
    * onShow(path) / onClose() — голограмма подсвечивает узел и сдвигает вид; onCreated(path) — новая заметка;
    * dictate() — фраза с микрофона текстом (null — браузер не распознаёт речь).
+   * Для менеджера заметок: extraActions(note) — html кнопок в шапке (data-act), onAction(act, note) — их обработка,
+   * onTag(tag) — нажали на тег, templates() — пути шаблонов для новой заметки.
    */
-  constructor(root, { api, toast, resolve, today, onShow = () => {}, onClose = () => {}, onCreated = () => {}, dictate = null }) {
-    Object.assign(this, { root, api, toast, resolve, today, onShow, onClose, onCreated, dictateFn: dictate });
+  constructor(root, { api, toast, resolve, today, onShow = () => {}, onClose = () => {}, onCreated = () => {}, dictate = null,
+    extraActions = () => "", onAction = () => {}, onTag = null, templates = () => [] }) {
+    Object.assign(this, { root, api, toast, resolve, today, onShow, onClose, onCreated, dictateFn: dictate,
+      extraActions, onAction, onTag, templates });
     this.note = null;
     this.mode = "view";            // view | edit | conflict | create
     this.trail = new Trail();      // открытые заметки — взмахом ладони назад/вперёд
@@ -60,9 +64,10 @@ export class NotePanel {
     return true;
   }
 
-  /** Новая заметка — с кнопки «＋» в голограмме или в панели. */
-  startCreate() {
+  /** Новая заметка — с кнопки «＋» в голограмме или в панели; folder — папка по умолчанию. */
+  startCreate({ folder = null } = {}) {
     if (!this.confirmLeave()) return;
+    this.createFolder = folder;
     this.el.classList.remove("hidden");
     this.root.classList.add("reading");
     this.render("create");
@@ -105,18 +110,24 @@ export class NotePanel {
     this.mode = mode;
     const n = this.note;
     if (mode === "create") {
-      const base = n ? folderOf(n.path) : "";
+      const base = this.createFolder ?? (n ? folderOf(n.path) : "");
+      const tpls = this.templates();
       this.el.innerHTML = `${this.head("")}
         <form class="np-create" data-form="create">
           <label class="muted" for="np-new">Папка/Название</label>
           <input id="np-new" value="${esc(base ? `${base}/` : "")}" placeholder="Ideas/Новая идея" autocomplete="off" required>
+          ${tpls.length ? `<label class="muted" for="np-tpl">Шаблон</label><select id="np-tpl"><option value="">— пустая заметка —</option>
+            ${tpls.map((t) => `<option value="${esc(t)}">${esc(titleOf(t))}</option>`).join("")}</select>` : ""}
           <div class="np-row"><button class="btn primary" type="submit">СОЗДАТЬ</button>
           <button class="btn ghost" type="button" data-act="back">ОТМЕНА</button></div>
         </form>`;
       const input = this.el.querySelector("#np-new");
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);
-      this.el.querySelector("form").addEventListener("submit", (e) => { e.preventDefault(); this.create(input.value); });
+      this.el.querySelector("form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        this.create(input.value, this.el.querySelector("#np-tpl")?.value || null);
+      });
       return;
     }
     if (mode === "edit") {
@@ -154,10 +165,22 @@ export class NotePanel {
       return;
     }
     const actions = (n.editable ? '<button class="btn ghost" data-act="edit">✎ ПРАВИТЬ</button>' : "")
-      + '<button class="btn ghost" data-act="new" title="Новая заметка">＋</button>';
+      + this.extraActions(n) + '<button class="btn ghost" data-act="new" title="Новая заметка">＋</button>';
     this.el.innerHTML = `${this.head(actions)}
       <div class="np-body md">${this.html(n.content) || '<p class="muted">Пустая заметка.</p>'}</div>
-      ${n.truncated ? '<p class="np-foot muted">Заметка очень большая — показано начало, править её лучше в Obsidian.</p>' : ""}`;
+      ${n.truncated ? '<p class="np-foot muted">Заметка очень большая — показано начало, править её лучше в Obsidian.</p>' : ""}
+      ${this.footer(n)}`;
+  }
+
+  /** Теги и обратные ссылки — какие заметки ссылаются на эту. */
+  footer(n) {
+    const tags = (n.tags || []).map((t) => (this.onTag ? `<button class="tag" data-tag="${esc(t)}">#${esc(t)}</button>`
+      : `<span class="tag">#${esc(t)}</span>`)).join("");
+    const back = (n.backlinks || []).map((b) => `<li><a class="md-link" href="#" data-path="${esc(b.path)}">${esc(b.title)}</a>
+      <small class="muted">${esc(folderOf(b.path))}</small></li>`).join("");
+    if (!tags && !back) return "";
+    return `<div class="np-meta">${tags ? `<div class="np-tags">${tags}</div>` : ""}
+      ${back ? `<div class="np-sub muted">ССЫЛАЮТСЯ СЮДА · ${n.backlinks.length}</div><ul class="np-back">${back}</ul>` : ""}</div>`;
   }
 
   html(content) { return renderMarkdown(content, { resolve: this.resolve }).html; }
@@ -168,6 +191,8 @@ export class NotePanel {
     if (link) { e.preventDefault(); this.follow(link); return; }
     const task = e.target.closest("li.md-task");
     if (task && this.mode === "view" && this.note?.editable) { this.toggle(Number(task.dataset.line)); return; }
+    const tag = e.target.closest("[data-tag]");
+    if (tag && this.onTag) { this.onTag(tag.dataset.tag); return; }
     const act = e.target.closest("[data-act]")?.dataset.act;
     const ed = this.editor;
     switch (act) {
@@ -183,7 +208,7 @@ export class NotePanel {
       case "ins-task": this.newLine(ed, "- [ ] "); break;
       case "ins-link": this.insert(ed, "[[", "]]"); break;
       case "ins-head": this.insert(ed, "## ", "", true); break;
-      default: break;
+      default: if (act) this.onAction(act, this.note); break;
     }
   }
 
@@ -365,19 +390,20 @@ export class NotePanel {
     await this.create(folder ? `${folder}/${name}` : name);
   }
 
-  async create(raw) {
+  /** template — путь шаблона из Templates/ ({{title}}, {{date}}, {{time}}); без него — заметка с заголовком. */
+  async create(raw, template = null) {
     let path = String(raw || "").trim().replace(/^\/+/, "");
     if (!path || path.endsWith("/")) { this.toast("Введите название заметки", "warn"); return; }
     if (!/\.(md|txt)$/i.test(path)) path += ".md";
     try {
-      const r = await this.api("/api/note", { method: "POST", body: { path, content: `# ${titleOf(path)}\n\n` } });
+      const r = await this.api("/api/files/new", { method: "POST", body: { path, template } });
       await this.onCreated(r.path);
       this.note = null;
       await this.open(r.path, { edit: true });
     } catch (e) {
-      this.toast(e.status === 409 ? `Заметка «${titleOf(path)}» уже есть — открываю.` : `Не создать: ${e.message}`,
-        e.status === 409 ? "warn" : "error");
-      if (e.status === 409) await this.open(path);
+      const exists = e.status === 409 || /уже есть/.test(e.message);
+      this.toast(exists ? `Заметка «${titleOf(path)}» уже есть — открываю.` : `Не создать: ${e.message}`, exists ? "warn" : "error");
+      if (exists) await this.open(path);
     }
   }
 }

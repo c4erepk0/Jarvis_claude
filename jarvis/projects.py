@@ -37,9 +37,10 @@ from typing import Any, Awaitable, Callable
 import aiohttp
 
 from .github import GitHub, GitHubError
-from .vault import Vault, parse_frontmatter
+from .vault import Vault, VaultError, dump_frontmatter, parse_frontmatter, set_frontmatter_field
 
 log = logging.getLogger("jarvis.projects")
+STATUSES = {"idea": "идея", "active": "в работе", "paused": "на паузе", "done": "завершён"}
 Emit = Callable[[str, dict], Awaitable[None]]
 
 
@@ -123,7 +124,8 @@ class Projects:
                 meta, body = parse_frontmatter(self.vault.read(rel))
             except OSError:
                 continue
-            if meta.get("type") not in ("project", None) or (not meta and "/" in rel[len(self.folder) + 1:]):
+            nested = "/" in rel[len(self.folder) + 1:]       # Projects/IPAStore/Встреча.md — заметка проекта
+            if meta.get("type") not in ("project", None) or (nested and meta.get("type") != "project"):
                 continue
             name = Path(rel).stem
             desc = next((ln.strip() for ln in body.splitlines()
@@ -143,6 +145,74 @@ class Projects:
         if exact:
             return exact
         return next((p for p in projects if key and (key in p.name.lower() or p.name.lower() in key)), None)
+
+    @staticmethod
+    def slug(name: str) -> str:
+        return re.sub(r"[^\w\-]+", "-", name.strip().lower()).strip("-_") or "project"
+
+    def folder_of(self, project: Project) -> str:
+        """Папка с заметками проекта: Projects/IPAStore/ рядом с Projects/IPAStore.md."""
+        return project.note[: -len(Path(project.note).suffix)]
+
+    def create(self, name: str, when: datetime, *, description: str = "", repo: str = "", tag: str = "",
+               status: str = "active") -> Project:
+        """Новый проект: заметка Projects/<Название>.md с полями и разделами Задачи, Заметки, Журнал."""
+        name = re.sub(r"[\\/:*?\"<>|#^\[\]]+", " ", name or "").strip()
+        if not name:
+            raise ValueError("назовите проект")
+        if self.get_exact(name):
+            raise ValueError(f"проект «{name}» уже есть")
+        if status not in STATUSES:
+            raise ValueError("статус: idea, active, paused или done")
+        rel = f"{self.folder}/{name}.md"
+        if self.vault.exists(rel):
+            raise VaultError(f"заметка «{rel}» уже есть")
+        meta = {"type": "project", "status": status, "tag": self.slug(tag or name), "repo": repo.strip(),
+                "created": when.date().isoformat()}
+        body = (f"# {name}\n\n{description.strip() or 'Описание проекта.'}\n\n## Задачи\n\n## Заметки\n\n"
+                f"## Журнал\n- {when:%Y-%m-%d %H:%M} Проект создан\n")
+        self.vault.write(rel, dump_frontmatter(meta) + body)
+        project = self.get_exact(name)
+        assert project is not None
+        return project
+
+    def get_exact(self, name: str) -> Project | None:
+        key = name.lower().strip()
+        return next((p for p in self.list() if p.name.lower() == key), None)
+
+    def set_field(self, project: Project, key: str, value: str) -> Project:
+        if key == "status" and value not in STATUSES:
+            raise ValueError("статус: idea, active, paused или done")
+        if key not in ("status", "repo", "tag", "url", "health", "path", "deploy_workflow"):
+            raise ValueError(f"поле {key} так не меняется — поправьте заметку проекта")
+        text = self.vault.read(project.note)
+        self.vault.write(project.note, set_frontmatter_field(text, key, value.strip()))
+        return self.get_exact(project.name) or project
+
+    def overview(self, project: Project, tasks: list, notes: list[dict], linked: list[dict]) -> dict:
+        """Страница проекта: задачи (по тегу, в заметке и папке проекта), прогресс, заметки, журнал."""
+        folder = self.folder_of(project) + "/"
+        mine = [t for t in tasks if project.tag in t.tags or t.path == project.note or t.path.startswith(folder)]
+        open_ = sorted((t for t in mine if t.is_open), key=lambda t: (-t.priority, t.due or "9999", t.text))
+        done = sorted((t for t in mine if t.status == "done"), key=lambda t: t.done or "", reverse=True)
+        text = self.vault.read(project.note)
+        journal, in_journal = [], False
+        for line in text.splitlines():
+            if re.match(r"^#{1,2} ", line):
+                in_journal = line.strip().lower() == "## журнал"
+            elif in_journal and line.strip().startswith("- "):
+                journal.append(line.strip()[2:])
+        files = [n for n in notes if n["path"].startswith(folder)]        # заметки в папке проекта
+        seen = {n["path"] for n in files} | {project.note}
+        files += [n for n in linked if n["path"] not in seen]               # и те, что ссылаются на проект
+        total = len(open_) + len(done)
+        return {**project.as_dict(), "status_label": STATUSES.get(project.status, project.status),
+                "folder": folder.rstrip("/"),
+                "progress": {"done": len(done), "total": total,
+                             "percent": round(100 * len(done) / total) if total else 0},
+                "tasks": [t.as_dict() for t in open_], "done": [t.as_dict() for t in done[:10]],
+                "notes": [{"path": n["path"], "title": n["title"]} for n in files],
+                "journal": journal[-12:][::-1]}
 
     def log(self, project: Project, text: str, when: datetime) -> None:
         self.vault.append_to_section(project.note, "Журнал", f"- {when:%Y-%m-%d %H:%M} {text}")

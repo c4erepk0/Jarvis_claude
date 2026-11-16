@@ -79,6 +79,37 @@ export function parseFrontmatter(text) {
   return [{}, text];
 }
 
+export function dumpFrontmatter(meta) {
+  const fmt = (v) => {
+    if (typeof v === "boolean") return v ? "true" : "false";
+    if (Array.isArray(v)) return `[${v.map(fmt).join(", ")}]`;
+    const s = v == null ? "" : String(v);
+    return s.includes(":") || /^[[{#-]/.test(s) ? `"${s}"` : s;
+  };
+  return `---\n${Object.entries(meta).map(([k, v]) => `${k}: ${fmt(v)}`).join("\n")}\n---\n`;
+}
+
+// Меняет одно поле frontmatter, не трогая остальные строки — как set_frontmatter_field в jarvis/vault.py.
+export function setFrontmatterField(text, key, value) {
+  const line = dumpFrontmatter({ [key]: value }).split("\n")[1];
+  const lines = text.split("\n");
+  if (lines.length && lines[0].trim() === "---") {
+    const keyRx = new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:`);
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === "---") { lines.splice(i, 0, line); return lines.join("\n"); }
+      if (keyRx.test(lines[i])) {
+        let j = i + 1;
+        while (j < lines.length && /^\s+-/.test(lines[j])) j++;
+        lines.splice(i, j - i, line);
+        return lines.join("\n");
+      }
+    }
+  }
+  return `---\n${line}\n---\n${text}`;
+}
+
+const noExt = (rel) => rel.replace(/\.[^./]+$/, "");
+
 // ---------- поиск ----------
 const RU_ENDINGS = /(иями|ями|ами|ого|его|ому|ему|ыми|ими|ов|ев|ей|ам|ям|ах|ях|ою|ею|ой|ий|ый|ая|яя|ое|ее|ые|ие|ую|юю|ом|ем|а|я|о|е|ы|и|у|ю|ь)$/;
 export function stem(word) {
@@ -99,6 +130,7 @@ export class Vault {
     this.version = 0;
     this.listeners = [];
     this.queue = Promise.resolve();
+    this.dirs = new Set();      // пустые папки, созданные здесь: в Git пустых папок не бывает — живут до перезагрузки
   }
 
   async load() {
@@ -147,6 +179,88 @@ export class Vault {
   }
 
   write(rel, text, message) { return this.update(rel, () => text, message); }
+
+  // ---------- папки, удаление, перемещение, корзина (как в jarvis/vault.py) ----------
+  listDirs() {
+    const out = new Set([...this.dirs].filter((d) => !this.files.has(d)));
+    for (const p of this.files.keys()) {
+      const parts = p.split("/");
+      for (let i = 1; i < parts.length; i++) out.add(parts.slice(0, i).join("/"));
+    }
+    return [...out].filter((d) => !d.split("/").some((x) => x.startsWith(".") || IGNORED.has(x))).sort();
+  }
+
+  isDir(rel) { try { rel = checkPath(rel); } catch { return false; } return this.listDirs().includes(rel); }
+
+  mkdir(rel) {
+    rel = checkPath(rel).replace(/\/+$/, "");
+    if (this.files.has(rel) || this.isDir(rel)) throw new VaultError(`«${rel}» уже есть`);
+    this.dirs.add(rel);
+    this.version++;
+    return rel;
+  }
+
+  remove(rel, message) {
+    rel = checkPath(rel);
+    const job = this.queue.then(async () => {
+      if (this.files.has(rel)) await this.store.remove(rel, message || `Jarvis: удалено ${rel}`);
+      this.files.delete(rel);
+      this.version++;
+      return rel;
+    });
+    this.queue = job.catch(() => {});
+    return job;
+  }
+
+  /** Файлы под путём: сам файл или все файлы папки. */
+  under(rel) {
+    if (this.files.has(rel)) return [rel];
+    return [...this.files.keys()].filter((p) => p.startsWith(`${rel}/`)).sort();
+  }
+
+  /** Переместить файл или папку. Возвращает пары [было, стало] для каждого перемещённого файла. */
+  async move(src, dst) {
+    src = checkPath(src).replace(/\/+$/, "");
+    dst = checkPath(dst).replace(/\/+$/, "");
+    const isDir = !this.files.has(src);
+    if (isDir && !this.isDir(src)) throw Object.assign(new VaultError(`не найдено: ${src}`), { status: 404 });
+    if (!isDir) checkPath(dst, { write: true });
+    if (this.files.has(dst) || this.isDir(dst)) throw new VaultError(`«${dst}» уже есть`);
+    if (isDir && (dst === src || dst.startsWith(`${src}/`))) throw new VaultError("нельзя переместить папку внутрь неё самой");
+    const pairs = this.under(src).map((p) => [p, dst + p.slice(src.length)]);
+    for (const [a, b] of pairs) {
+      await this.write(b, this.files.get(a), `Jarvis: ${a} → ${b}`);
+      await this.remove(a, `Jarvis: ${a} → ${b}`);
+    }
+    if (this.dirs.delete(src) || !pairs.length) this.dirs.add(dst);
+    for (const d of [...this.dirs]) if (d.startsWith(`${src}/`)) { this.dirs.delete(d); this.dirs.add(dst + d.slice(src.length)); }
+    this.version++;
+    return pairs;
+  }
+
+  /** В корзину Obsidian (.trash/). Возвращает путь в корзине (для папки — путь папки в корзине). */
+  async trash(rel) {
+    rel = checkPath(rel).replace(/\/+$/, "");
+    const files = this.under(rel);
+    if (!files.length && !this.dirs.has(rel)) throw Object.assign(new VaultError(`не найдено: ${rel}`), { status: 404 });
+    let target = `.trash/${rel}`;
+    const taken = (t) => files.some((f) => this.store.has?.(t + f.slice(rel.length)));
+    for (let n = 2; taken(target); n++) target = `.trash/${noExt(rel)} ${n}${rel.slice(noExt(rel).length)}`;
+    const queue = this.queue.then(async () => {
+      for (const f of files) {
+        const dest = target + f.slice(rel.length);
+        const text = this.files.get(f);
+        await this.store.update(dest, () => text, `Jarvis: в корзину ${f}`, undefined);
+        await this.store.remove(f, `Jarvis: в корзину ${f}`);
+        this.files.delete(f);
+      }
+      for (const d of [...this.dirs]) if (d === rel || d.startsWith(`${rel}/`)) this.dirs.delete(d);
+      this.version++;
+      return target;
+    });
+    this.queue = queue.catch(() => {});
+    return queue;
+  }
 
   // Правка из голограммы: base — версия, с которой начали править (null — новая заметка). Проверка идёт
   // внутри update, поэтому и при повторе после свежей правки с телефона чужие изменения не затираются.
@@ -265,6 +379,7 @@ export class LocalStore {
     this.seed = seed;
     this.mem = null;
     this.kind = "local";
+    this.trashed = new Set();   // что уже лежит в корзине — чтобы не затереть одноимённое
   }
 
   async db() {
@@ -312,8 +427,22 @@ export class LocalStore {
   async update(rel, fn, _message, current) {
     const text = fn(current);
     await this.put(rel, text);
+    if (rel.startsWith(".trash/")) this.trashed.add(rel);
     return text;
   }
+
+  async remove(rel) {
+    const db = await this.db();
+    if (!db) { this.mem.delete(rel); return; }
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("files", "readwrite");
+      tx.objectStore("files").delete(rel);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  has(rel) { return this.trashed.has(rel); }
 
   async pull() { return []; }
 }
@@ -411,6 +540,16 @@ export class GitHubStore {
     }
     throw new VaultError("не удалось сохранить заметку");
   }
+
+  async remove(rel, message) {
+    const sha = this.shas.get(rel);
+    if (!sha) return;
+    await this.gh.request("DELETE", `/repos/${this.repo}/contents/${encodePath(rel)}`,
+      { body: { message, sha, branch: this.branch } });
+    this.shas.delete(rel);
+  }
+
+  has(rel) { return this.shas.has(rel); }
 }
 
 export function encodePath(rel) { return rel.split("/").map(encodeURIComponent).join("/"); }

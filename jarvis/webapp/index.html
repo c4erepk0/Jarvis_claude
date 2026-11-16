@@ -9,12 +9,12 @@
 <meta name="apple-mobile-web-app-title" content="JARVIS">
 <title>J.A.R.V.I.S.</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="static/icon.svg?v=14" type="image/svg+xml">
-<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=14">
+<link rel="icon" href="static/icon.svg?v=15" type="image/svg+xml">
+<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=15">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="static/app.css?v=14">
+<link rel="stylesheet" href="static/app.css?v=15">
 </head>
 <body>
 <div class="bg-grid" aria-hidden="true"></div>
@@ -50,6 +50,7 @@
   </div>
   <div class="clock"><div id="clock-time">--:--</div><div id="clock-date" class="muted">—</div></div>
   <div class="weather" id="weather"><span class="muted">—</span></div>
+  <button class="h-btn files-btn" id="btn-files" title="Хранилище: заметки и проекты" aria-label="Хранилище">▤</button>
   <button class="h-btn settings-btn" id="btn-settings" title="Настройки" aria-label="Настройки">⚙</button>
 </header>
 
@@ -72,7 +73,7 @@
       <div class="protocols" id="protocols"></div>
     </article>
     <article class="panel" id="p-memory">
-      <div class="panel-h"><span class="idx">03</span> ПАМЯТЬ <span class="h-meta" id="memory-meta"></span></div>
+      <div class="panel-h"><span class="idx">03</span> ПАМЯТЬ <span class="h-meta" id="memory-meta"></span><button class="h-btn" id="mem-files" title="Хранилище: все заметки">▤</button></div>
       <form class="inline-add" id="mem-form"><input id="mem-q" placeholder="Поиск по Obsidian…" autocomplete="off"><button class="btn" type="submit">⌕</button></form>
       <ul class="facts" id="facts"></ul>
     </article>
@@ -118,7 +119,7 @@
   <!-- правая колонка -->
   <section class="col col-right" data-tab="projects">
     <article class="panel" id="p-projects">
-      <div class="panel-h"><span class="idx">04</span> ПРОЕКТЫ <button class="h-btn" id="projects-refresh" title="Обновить">⟳</button></div>
+      <div class="panel-h"><span class="idx">04</span> ПРОЕКТЫ <button class="h-btn" id="projects-new" title="Новый проект">＋</button><button class="h-btn" id="projects-refresh" title="Обновить">⟳</button></div>
       <div id="projects"></div>
     </article>
     <article class="panel hidden" id="p-workshop">
@@ -163,6 +164,7 @@
   <button data-tab="missions">МИССИИ</button>
   <button data-tab="projects">ПРОЕКТЫ</button>
   <button data-tab="finance">ФИНАНСЫ</button>
+  <button data-tab="files">ФАЙЛЫ</button>
 </nav>
 
 <div class="toasts" id="toasts"></div>
@@ -174,6 +176,8 @@
     <div id="modal-body"></div>
   </div>
 </div>
+
+<div class="fm hidden" id="fm" role="dialog" aria-label="Хранилище: заметки и проекты"></div>
 
 <div class="holo hidden" id="holo">
   <div class="holo-ui">
@@ -194,6 +198,6 @@
   <canvas id="holo-hands" class="holo-hands hidden"></canvas>
 </div>
 
-<script type="module" src="static/app.js?v=14"></script>
+<script type="module" src="static/app.js?v=15"></script>
 </body>
 </html>
