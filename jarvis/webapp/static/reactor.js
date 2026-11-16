@@ -4,8 +4,10 @@
 const TAU = Math.PI * 2;
 const COLORS = {
   idle: [255, 59, 48], listening: [255, 110, 90], thinking: [255, 40, 60], speaking: [255, 140, 115],
-  alert: [255, 179, 71], error: [255, 45, 111],
+  alert: [255, 179, 71], error: [255, 95, 162],
 };
+// «уменьшить движение» в системе — кольца вращаются в несколько раз медленнее (свечение от голоса остаётся)
+const CALM = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
 
 export class Reactor {
   constructor(canvas) {
@@ -40,7 +42,7 @@ export class Reactor {
     const dt = Math.min(0.05, (ts - (this.last || ts)) / 1000);
     this.last = ts;
     const speed = { idle: 0.25, listening: 0.6, thinking: 1.4, speaking: 0.8, alert: 0.9, error: 0.9 }[this.state];
-    this.t += dt * speed;
+    this.t += dt * speed * (CALM?.matches ? 0.2 : 1);
     this.level += (this.target - this.level) * Math.min(1, dt * 12);
     if (this.state !== "speaking" && this.state !== "listening") this.target *= 0.9;
     const goal = COLORS[this.state];
