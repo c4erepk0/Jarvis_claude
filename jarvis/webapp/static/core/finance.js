@@ -77,7 +77,7 @@ export class Ledger {
       if (last < 0) lines.push("", ...HEADER.split("\n"), row);
       else lines.splice(last + 1, 0, row);
       return lines.join("\n") + "\n";
-    }, `Jarvis: ${amount < 0 ? "расход" : "доход"} ${note || category}`);
+    }, `Atom: ${amount < 0 ? "расход" : "доход"} ${note || category}`);
     return { date: day, amount, category, note, account, path };
   }
 

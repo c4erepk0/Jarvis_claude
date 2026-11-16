@@ -1,4 +1,4 @@
-// Ядро Jarvis, которое целиком работает в Safari на iPhone — без сервера.
+// Ядро Atom, которое целиком работает в Safari на iPhone — без сервера.
 // Отвечает на те же запросы /api/…, что и Python-сервер, поэтому интерфейс (app.js) один на оба режима.
 import { MONTHS_GEN, WEEKDAYS, greeting, humanDate, isoDay, money, plural, weekdayIndex } from "./ru.js";
 import { parse } from "./intents.js";
@@ -11,17 +11,19 @@ import { Notes, noteTags } from "./notes.js";
 import { Briefing } from "./briefing.js";
 import { Brain } from "./brain.js";
 import { Protocols } from "./protocols.js";
+import { description as synthesisDescription, synthesize } from "./synthesis.js";
 
 const NOTE_LIMIT = 200000;   // больше — показываем, но не даём править (чтобы не обрезать заметку при сохранении)
 const ACKS = ["Слушаюсь, {t}.", "Сделано, {t}.", "Готово, {t}.", "Как скажете, {t}.", "Будет исполнено, {t}."];
 export const HELP = `Вот что я умею, {t}:
-• «Джарвис, доброе утро» — брифинг: погода, задачи, финансы, проекты, курс.
+• «Атом, доброе утро» — брифинг: погода, задачи, финансы, проекты, курс.
 • «Добавь задачу написать оферту для IPAStore в пятницу, срочно» · «задачи на сегодня» · «выполнил …».
 • «Потратил 450 на кофе» · «получил 50 000 зарплата» · «сколько я потратил в этом месяце».
 • «Напомни через 20 минут позвонить» · «запомни, что …» · «найди в заметках …» · «заметка: …».
 • «Открой заметку IPAStore» — покажу её в голограмме; там же её можно поправить.
 • «Открой хранилище» — заметки и проекты: папки, теги, шаблоны, корзина.
 • «Создай проект Кофейня» · «открой проект IPAStore» — страница проекта: задачи, прогресс, заметки.
+• «Синтез проектов» — найду в хранилище заметки проектов и то, что похоже на новый проект, и подсвечу их.
 • «Статус проектов» · «поручи IPAStore: добавить экспорт в CSV» (задача для @claude) · «задеплой IPAStore».
 • Протоколы: Утро, Фокус, Итоги дня, Неделя, Диагностика, Чистый лист, Вечеринка, Тишина и ваши из Obsidian.
 • С ключом Claude — свободный разговор, поиск в интернете и разбор фото чеков.`;
@@ -269,7 +271,30 @@ export class Jarvis {
   }
   actProjectOverview(name) {
     const p = this.project(name);
-    return this.projects.overview(p, this.tasks.all(), this.notes.index().files, this.notes.backlinks(p.note));
+    const linked = this.notes.backlinks(p.note);
+    for (const o of this.notes.outlinks(p.note)) if (!linked.some((x) => x.path === o.path)) linked.push(o);   // «Материалы»
+    return this.projects.overview(p, this.tasks.all(), this.notes.index().files, linked);
+  }
+
+  // ---------- синтез проектов (core/synthesis.js) ----------
+  actSynthesis() {
+    const tasks = this.tasks.all().map((t) => ({ path: t.path, tags: t.tags, open: t.status === "todo" || t.status === "doing" }));
+    return synthesize(this.notes.index().files, this.projects.list(), tasks, { projectsDir: this.projects.folder });
+  }
+  async actSynthesisCreate(name, status = "idea") {
+    const k = String(name || "").toLowerCase().trim();
+    const cands = this.actSynthesis().candidates;
+    const c = cands.find((x) => x.name.toLowerCase() === k || x.tag === k) || cands.find((x) => k && x.name.toLowerCase().includes(k));
+    if (!c) throw new VaultError(`в синтезе нет кандидата «${name}»`);
+    return this.actProjectCreate(c.name, synthesisDescription(c), "", c.tag, status);
+  }
+  synthesisReply() {
+    const syn = this.actSynthesis(), t = this.title;
+    const linked = syn.projects.reduce((n, p) => n + p.notes.length, 0);
+    const head = `Проектов: ${syn.projects.length}, заметок при них: ${linked}.`;
+    if (!syn.candidates.length) return { text: `${head} Новых проектов в хранилище не вижу, ${t}.`, data: syn };
+    const names = syn.candidates.slice(0, 4).map((c) => `${c.name} (${c.notes.length} ${plural(c.notes.length, "заметка", "заметки", "заметок")})`).join(", ");
+    return { text: `${head} Похоже на проекты: ${names}. Подсветил их в хранилище.`, kind: "ok", data: syn };
   }
 
   async actNote(text) {
@@ -304,7 +329,7 @@ export class Jarvis {
   async handle(text, source = "iphone", depth = 0, note = null) {
     text = String(text || "").trim();
     if (!text) return { text: `Слушаю вас, ${this.title}.` };
-    const it = parse(text, this.today(), this.projectNames(), this.settings.wakeWord || "джарвис");
+    const it = parse(text, this.today(), this.projectNames(), this.settings.wakeWord || "атом");
     let reply = null;
     try {
       if (it && (it.name === "confirm" || it.name === "cancel")) {
@@ -393,6 +418,7 @@ export class Jarvis {
         const m = Math.max(1, r.in_minutes);
         return { text: `Напомню через ${m} ${plural(m, "минуту", "минуты", "минут")}: «${r.text}».`, kind: "ok", data: r };
       }
+      case "synthesis": this.emit("open_synthesis", {}); return this.synthesisReply();
       case "project_status": {
         const st = await this.actProjectStatus(a.project);
         return st.length ? { text: st.map(projectLine).join(" "), data: st }
@@ -453,7 +479,7 @@ export class Jarvis {
     return {
       now: this.now().toISOString(), title: this.title, name: this.settings.name || "",
       mode: "standalone", llm: this.brain.available, model: this.brain.available ? (this.settings.model || "claude-opus-5-5") : null,
-      voice: { engine: "browser", server: false, muted: this.muted, wake_word: this.settings.wakeWord || "джарвис" },
+      voice: { engine: "browser", server: false, muted: this.muted, wake_word: this.settings.wakeWord || "атом" },
       tasks: { summary: this.tasks.summary(ref), today: this.actListTasks("today"), week: this.actListTasks("week").slice(0, 20),
         nodate: this.actListTasks("nodate").slice(0, 15), done_today: this.tasks.doneOn(ref) },
       finance: this.actFinance(),
@@ -514,7 +540,7 @@ export class Jarvis {
     const base = `Jarvis/Gaze/${sub}/${isoDay(d)}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
     let rel = `${base}.json`;
     for (let n = 2; this.vault.exists(rel); n++) rel = `${base}-${n}.json`;
-    return this.vault.write(rel, `${text}\n`, `Jarvis: запись взгляда ${rel}`);
+    return this.vault.write(rel, `${text}\n`, `Atom: запись взгляда ${rel}`);
   }
 
   // ---------- те же маршруты /api/…, что у Python-сервера ----------
@@ -548,6 +574,11 @@ export class Jarvis {
     }
     if ((m = /^\/api\/projects\/([^/]+)\/task$/.exec(p))) {
       return this.actAddTask(String(body.text || ""), body.due || null, body.priority || null, decodeURIComponent(m[1]), true);
+    }
+    if (p === "/api/synthesis" && method === "GET") return this.actSynthesis();
+    if (p === "/api/synthesis") {
+      if (!String(body.name || "").trim()) throw new VaultError("не указано: name");
+      return this.actSynthesisCreate(String(body.name), String(body.status || "idea"));
     }
     if (p === "/api/files" && method === "GET") return this.actFiles();
     if ((m = /^\/api\/files\/(new|folder|move|trash)$/.exec(p))) {

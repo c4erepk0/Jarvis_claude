@@ -1,7 +1,7 @@
 name: Claude
 
 # Напишите @claude в задаче или комментарии — Claude сделает изменения в ветке и откроет PR.
-# Jarvis сам создаёт такие задачи командой «поручи Jarvis: …».
+# Atom сам создаёт такие задачи командой «поручи Atom: …».
 # Нужен секрет CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`) или ANTHROPIC_API_KEY
 # и установленное приложение https://github.com/apps/claude
 on:

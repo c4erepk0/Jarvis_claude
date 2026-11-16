@@ -14,7 +14,7 @@ def test_auth_and_api(tmp_path):
         async with TestClient(TestServer(build_app(j))) as c:
             assert (await c.get("/healthz")).status == 200
             r = await c.get("/")
-            assert r.status == 200 and "J.A.R.V.I.S." in await r.text()
+            assert r.status == 200 and "A.T.O.M." in await r.text()
             assert "Content-Security-Policy" in r.headers
             assert (await c.get("/static/app.js")).status == 200
             assert (await c.get("/api/state")).status == 401

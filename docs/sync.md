@@ -1,6 +1,6 @@
 # Синхронизация Obsidian в реальном времени — бесплатно
 
-Память Jarvis — обычная папка с markdown-заметками (хранилище Obsidian). Jarvis следит за ней
+Память Atom — обычная папка с markdown-заметками (хранилище Obsidian). Atom следит за ней
 каждые 1,5 секунды и сразу обновляет все открытые дашборды через WebSocket. Остаётся доставить
 эту папку на ваши устройства. Платный Obsidian Sync не нужен — вот бесплатные варианты.
 
@@ -13,12 +13,12 @@
 
 ## 1. Self-hosted LiveSync (iPhone + ПК + сервер)
 
-Схема: **Obsidian на iPhone/ПК ⇄ CouchDB ⇄ мост livesync-bridge ⇄ папка `vault/` ⇄ Jarvis ⇄ дашборды.**
+Схема: **Obsidian на iPhone/ПК ⇄ CouchDB ⇄ мост livesync-bridge ⇄ папка `vault/` ⇄ Atom ⇄ дашборды.**
 Плагин Obsidian [Self-hosted LiveSync](https://github.com/vrtmrz/obsidian-livesync) бесплатный и
 открытый, работает на iOS. Мост [livesync-bridge](https://github.com/vrtmrz/livesync-bridge) — от того же
-автора; он держит папку хранилища Jarvis и базу CouchDB в синхроне в обе стороны.
+автора; он держит папку хранилища Atom и базу CouchDB в синхроне в обе стороны.
 
-### На сервере (там же, где Jarvis)
+### На сервере (там же, где Atom)
 
 ```bash
 cp .env.example .env
@@ -38,7 +38,7 @@ iPhone подключается к CouchDB только по HTTPS. Беспла
 - **Tailscale** (проще всего, ничего не открывается в интернет): установите Tailscale на сервер и iPhone,
   затем на сервере:
   ```bash
-  tailscale serve --bg --https=443  http://127.0.0.1:8765   # дашборд Jarvis
+  tailscale serve --bg --https=443  http://127.0.0.1:8765   # дашборд Atom
   tailscale serve --bg --https=8443 http://127.0.0.1:5984   # CouchDB для LiveSync
   ```
   Адреса: `https://<имя-сервера>.<ваш-tailnet>.ts.net` и `…ts.net:8443`.
@@ -54,7 +54,7 @@ iPhone подключается к CouchDB только по HTTPS. Беспла
 4. Скопируйте **Setup URI** (Команды → «Copy setup URI») и откройте его на iPhone в Obsidian —
    плагин настроится сам.
 
-Готово: заметка, поправленная на iPhone, появляется на дашборде Jarvis через пару секунд, а задача,
+Готово: заметка, поправленная на iPhone, появляется на дашборде Atom через пару секунд, а задача,
 добавленная голосом, — в Obsidian на телефоне.
 
 > Важно: мост и все устройства должны использовать одинаковые настройки чувствительности имён к регистру
@@ -72,7 +72,7 @@ ssh -L 8384:127.0.0.1:8384 сервер      # веб-интерфейс Syncthi
 
 ## 3. iCloud Drive (Mac + iPhone, без сервера)
 
-Если Jarvis работает на Mac: создайте хранилище в Obsidian на iPhone в iCloud, а в `.env` укажите
+Если Atom работает на Mac: создайте хранилище в Obsidian на iPhone в iCloud, а в `.env` укажите
 ```
 VAULT_PATH=~/Library/Mobile Documents/iCloud~md~obsidian/Documents/<Имя хранилища>
 ```
@@ -80,4 +80,4 @@ VAULT_PATH=~/Library/Mobile Documents/iCloud~md~obsidian/Documents/<Имя хр�
 ## 4. Git
 
 Плагин Obsidian Git с автокоммитом раз в минуту и закрытый репозиторий на GitHub. Не реальное время,
-зато история версий. На сервере Jarvis — `git pull` по cron.
+зато история версий. На сервере Atom — `git pull` по cron.

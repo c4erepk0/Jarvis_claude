@@ -1,4 +1,4 @@
-"""Настройки Jarvis из переменных окружения (.env).
+"""Настройки Atom из переменных окружения (.env).
 
 Новая настройка → поле здесь + строка в .env.example + раздел README.
 """
@@ -87,7 +87,7 @@ class Config:
     tts_pitch: str = "-8Hz"
     piper_bin: str = "piper"
     piper_model: str = ""
-    wake_word: str = "джарвис"
+    wake_word: str = "атом"
     # --- погода / брифинг ---
     city: str = "Москва"
     latitude: float = 55.7558
@@ -199,7 +199,7 @@ def load_config() -> Config:
         tts_pitch=_str("TTS_PITCH", "-8Hz"),
         piper_bin=_str("PIPER_BIN", "piper"),
         piper_model=_str("PIPER_MODEL"),
-        wake_word=_str("WAKE_WORD", "джарвис").lower(),
+        wake_word=_str("WAKE_WORD", "атом").lower(),
         city=_str("WEATHER_CITY", "Москва"),
         latitude=_float("WEATHER_LAT", 55.7558),
         longitude=_float("WEATHER_LON", 37.6173),

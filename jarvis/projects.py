@@ -13,7 +13,7 @@
     deploy_workflow: deploy.yml
     ---
 
-Работа над проектом («Джарвис, поручи IPAStore …») — два режима:
+Работа над проектом («Атом, поручи IPAStore …») — два режима:
 - `github`: Jarvis создаёт задачу в репозитории с упоминанием @claude — её берёт workflow
   claude-code-action (в IPAStore он уже настроен) и открывает PR;
 - `local`: Jarvis запускает Claude Code (`claude -p`) в папке проекта на этом компьютере
@@ -276,7 +276,7 @@ class Projects:
             raise ValueError(f"у проекта {project.name} не указан repo")
         title = task.strip().splitlines()[0][:90]
         body = (f"{task.strip()}\n\n---\n@claude возьми эту задачу: следуй CLAUDE.md, прогони проверки и "
-                f"открой PR с описанием на русском.\n\n_Поручено через Jarvis {when:%Y-%m-%d %H:%M}._")
+                f"открой PR с описанием на русском.\n\n_Поручено через Atom {when:%Y-%m-%d %H:%M}._")
         issue = await self.github.create_issue(project.repo, title, body)
         self.log(project, f"Поручено @claude: [#{issue['number']} {title}]({issue['url']})", when)
         return issue
@@ -311,7 +311,7 @@ class Projects:
         if reason:
             raise ValueError(reason)
         slug = re.sub(r"[^a-z0-9]+", "-", task.lower())[:30].strip("-") or "task"
-        prompt = (f"Задача от владельца проекта (через Jarvis): {task.strip()}\n\n"
+        prompt = (f"Задача от владельца проекта (через Atom): {task.strip()}\n\n"
                   f"Сначала создай ветку jarvis/{slug}-{when:%m%d%H%M}. Выполни задачу, следуя CLAUDE.md, "
                   f"прогони проверки проекта и сделай коммит. Не делай push. В конце — короткий отчёт на русском.")
         job = Job(id=uuid.uuid4().hex[:8], project=project.name, prompt=task.strip(), mode="local")

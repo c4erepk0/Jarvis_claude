@@ -11,7 +11,7 @@ const KEY = "jarvis.settings";
 export const DEFAULTS = {
   title: "сэр", name: "", city: "Москва", lat: 55.7558, lon: 37.6173, currency: "RUB",
   anthropicKey: "", model: "claude-opus-5-5", effort: "low", webSearch: true,
-  githubToken: "", vaultRepo: "", vaultBranch: "main", statsTokens: {}, wakeWord: "джарвис", voiceName: "",
+  githubToken: "", vaultRepo: "", vaultBranch: "main", statsTokens: {}, wakeWord: "атом", voiceName: "",
 };
 
 export function loadSettings() {
@@ -51,7 +51,7 @@ class BlobCache {
 }
 
 export async function vaultTemplate() {
-  const r = await fetch("static/vault-template.json?v=15");
+  const r = await fetch("static/vault-template.json?v=16");
   return r.ok ? r.json() : {};
 }
 
@@ -84,7 +84,7 @@ export async function checkVaultRepo(token, repo) {
   const me = await gh.user();
   if (me.login.toLowerCase() !== owner.toLowerCase()) throw new Error("репозиторий не найден — создайте его на GitHub");
   try {
-    await gh.request("POST", "/user/repos", { body: { name, private: true, auto_init: true, description: "Память Jarvis (Obsidian)" } });
+    await gh.request("POST", "/user/repos", { body: { name, private: true, auto_init: true, description: "Память Atom (Obsidian)" } });
   } catch {
     throw new Error(`репозиторий ${repo} не найден, и токен не может его создать — создайте приватный репозиторий вручную`);
   }
@@ -97,7 +97,7 @@ export async function seedVault(j) {
   let n = 0;
   for (const [path, text] of Object.entries(files)) {
     if (j.vault.exists(path)) continue;
-    await j.vault.write(path, text, `Jarvis: стартовая структура (${path})`);
+    await j.vault.write(path, text, `Atom: стартовая структура (${path})`);
     n++;
   }
   return n;

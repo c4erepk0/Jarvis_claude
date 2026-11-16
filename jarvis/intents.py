@@ -39,11 +39,13 @@ PROTOCOL_ALIASES = {
     "тишина": ["тишина", "замолчи", "режим тишины", "без звука", "помолчи"],
     "голос": ["голос", "говори", "включи голос", "можешь говорить"],
 }
+SYNTHESIS = re.compile(r"синтез\w*\s+проект|(?:найди|собери|поищи|покажи|какие)\s+(?:скрытые\s+|новые\s+)?проекты"
+                       r"(?:\s+(?:есть\s+)?в\s+хранилищ\w*)?$|проекты\s+в\s+хранилищ")
 PRIORITY_WORDS = {"high": ["срочно", "срочная", "важно", "важная", "приоритет", "горит"],
                   "low": ["когда-нибудь", "не срочно", "неважно", "потом"]}
 
 
-def normalize(text: str, wake_word: str = "джарвис") -> str:
+def normalize(text: str, wake_word: str = "атом") -> str:
     t = text.strip()
     t = re.sub(rf"^\s*(?:эй,?\s+|ок,?\s+|окей,?\s+)?{re.escape(wake_word)}\w*[\s,.:!—-]*", "", t, flags=re.I)
     t = re.sub(r"\s+", " ", t).strip()
@@ -72,7 +74,7 @@ def _priority(text: str) -> tuple[str | None, str]:
     return None, text
 
 
-def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: str = "джарвис") -> Intent | None:
+def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: str = "атом") -> Intent | None:
     projects = projects or []
     t = normalize(text, wake_word)
     low = t.lower()
@@ -85,6 +87,8 @@ def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: st
         return Intent("confirm")
     if re.fullmatch(r"(нет|отмена|отменить|отмени|не надо|стоп|стой|отбой)", low):
         return Intent("cancel")
+    if SYNTHESIS.search(low):
+        return Intent("synthesis", {})
 
     # --- протоколы ---
     m = re.match(r"^(?:запусти |активируй |включи )?протокол[а-я]*\s+[«\"']?(.+?)[»\"']?$", low)

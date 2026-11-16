@@ -9,15 +9,16 @@
 // Управление взглядом (MediaPipe Face Landmarker, gaze.js): взгляд — курсор, примагниченный к ближайшей кнопке
 //   или узлу; короткий щипок — нажать то, на что смотрите; щипок и движение — вращать граф или листать заметку.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=15";
-import { DEFAULT_MAGNET, GazeSync, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=15";
+import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=16";
+import { DEFAULT_MAGNET, GazeSync, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=16";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const HAND_MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
-const EDGE = [0x3e / 255, 0xe8 / 255, 0xff / 255];   // цвет нитей-связей
-const PALETTE = [0x3ee8ff, 0x5dffb0, 0xffb347, 0xb48cff, 0xff6b9a, 0x7fd4ff, 0xe6ff6b, 0xff8f5a];
+const EDGE = [0xff / 255, 0x3b / 255, 0x30 / 255];   // цвет нитей-связей
+const CANDIDATE = 0xffd23b;   // заметки «похоже на проект» из синтеза проектов
+const PALETTE = [0xff3b30, 0x5dffb0, 0xffb347, 0xb48cff, 0xff6b9a, 0xff8a7a, 0xe6ff6b, 0xff8f5a];
 const DWELL_MS = 1000;                // задержка пальца, чтобы открыть узел или нажать кнопку
 // что можно «нажать» пальцем в воздухе: кнопки, галочки задач и [[ссылки]] заметки, кнопки с data-air
 const AIR_TARGETS = ".np button:not([disabled]), .np a.md-link, .np li.md-task, [data-air]:not([disabled])";
@@ -102,7 +103,7 @@ export class Hologram {
     this.renderer.domElement.className = "three";
     root.prepend(this.renderer.domElement);
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0x02121c, 0.006);
+    this.scene.fog = new THREE.FogExp2(0x1c0304, 0.006);
     this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 2000);
     this.camera.position.set(0, 8, 120);
     this.world = new THREE.Group();
@@ -129,7 +130,7 @@ export class Hologram {
   decor() {
     const ring = (r, y, op) => {
       const g = new THREE.RingGeometry(r, r + 0.25, 128);
-      const m = new THREE.MeshBasicMaterial({ color: 0x3ee8ff, transparent: true, opacity: op, side: THREE.DoubleSide });
+      const m = new THREE.MeshBasicMaterial({ color: 0xff3b30, transparent: true, opacity: op, side: THREE.DoubleSide });
       const mesh = new THREE.Mesh(g, m);
       mesh.rotation.x = Math.PI / 2;
       mesh.position.y = y;
@@ -139,7 +140,7 @@ export class Hologram {
     this.rings = [ring(58, -48, 0.35), ring(48, -48.5, 0.2), ring(66, -49, 0.12)];
     const sphere = new THREE.LineSegments(
       new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(62, 2)),
-      new THREE.LineBasicMaterial({ color: 0x3ee8ff, transparent: true, opacity: 0.05 }));
+      new THREE.LineBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.05 }));
     this.world.add(sphere);
     const beams = new THREE.BufferGeometry();
     const pts = [];
@@ -148,7 +149,7 @@ export class Hologram {
       pts.push(Math.cos(a) * 58, -48, Math.sin(a) * 58, Math.cos(a) * 40, 40, Math.sin(a) * 40);
     }
     beams.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    this.scene.add(new THREE.LineSegments(beams, new THREE.LineBasicMaterial({ color: 0x3ee8ff, transparent: true, opacity: 0.025 })));
+    this.scene.add(new THREE.LineSegments(beams, new THREE.LineBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.025 })));
   }
 
   setData({ nodes, links }) {
@@ -162,7 +163,7 @@ export class Hologram {
     this.edges = edges;
     const colors = [], positions = [], sizes = [];
     nodes.forEach((n, i) => {
-      const col = new THREE.Color(PALETTE[groups.indexOf(n.group) % PALETTE.length]);
+      const col = new THREE.Color(n.syn === "candidate" ? CANDIDATE : PALETTE[groups.indexOf(n.group) % PALETTE.length]);
       colors.push(col.r, col.g, col.b);
       positions.push(pos[i].x, pos[i].y, pos[i].z);
       sizes.push(n.type === "project" ? 7 : 3 + Math.min(4, Math.log10(1 + n.size)));
@@ -707,7 +708,7 @@ export class Hologram {
     } });
   }
 
-  /** Подпись на окошке камеры сверху: видит ли Jarvis глаза и не держат ли телефон совсем иначе, чем на калибровке. */
+  /** Подпись на окошке камеры сверху: видит ли Atom глаза и не держат ли телефон совсем иначе, чем на калибровке. */
   drawFaceStatus(face, eyes, off = false) {
     const g = this.overlay.getContext("2d"), W = this.overlay.width;
     const text = !face ? "👁 не вижу лицо" : !eyes ? "👁 глаза закрыты" : off ? "👁 поза другая — ◎ привязка" : "👁 вижу взгляд";
@@ -715,7 +716,7 @@ export class Hologram {
     g.scale(-1, 1);
     g.font = "600 15px system-ui, sans-serif";
     const w = g.measureText(text).width + 14;
-    g.fillStyle = "rgba(2,10,16,.78)";
+    g.fillStyle = "rgba(16,3,3,.78)";
     g.fillRect(-W + 6, 6, w, 24);
     g.fillStyle = face && eyes && !off ? "#ffd59a" : "#ffb347";
     g.fillText(text, -W + 13, 23);
@@ -726,7 +727,7 @@ export class Hologram {
   drawHands(hands, kind = "none") {
     const g = this.overlay.getContext("2d"), W = this.overlay.width, H = this.overlay.height;
     g.clearRect(0, 0, W, H);
-    g.strokeStyle = "rgba(62,232,255,.9)"; g.fillStyle = "#eaffff"; g.lineWidth = 2;
+    g.strokeStyle = "rgba(255,59,48,.9)"; g.fillStyle = "#ffecea"; g.lineWidth = 2;
     for (const lm of hands) {
       for (const [a, b] of BONES) { g.beginPath(); g.moveTo(lm[a].x * W, lm[a].y * H); g.lineTo(lm[b].x * W, lm[b].y * H); g.stroke(); }
       for (const p of lm) { g.beginPath(); g.arc(p.x * W, p.y * H, 2.5, 0, Math.PI * 2); g.fill(); }
@@ -736,9 +737,9 @@ export class Hologram {
     g.scale(-1, 1);                 // окошко отзеркалено стилем — текст отзеркаливаем обратно, чтобы читался
     g.font = "600 17px system-ui, sans-serif";
     const w = g.measureText(text).width + 16;
-    g.fillStyle = "rgba(2,10,16,.78)";
+    g.fillStyle = "rgba(16,3,3,.78)";
     g.fillRect(-W + 6, H - 34, w, 28);
-    g.fillStyle = kind === "none" ? "#ffb347" : "#eaffff";
+    g.fillStyle = kind === "none" ? "#ffb347" : "#ffecea";
     g.fillText(text, -W + 14, H - 14);
     g.restore();
   }

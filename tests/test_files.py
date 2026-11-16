@@ -45,7 +45,7 @@ def test_index_backlinks_move_trash(tmp_path):
         paths = {f["path"] for f in idx["files"]}
         assert "Projects/IPAStore.md" in paths and "Templates/Встреча.md" in idx["templates"]
         assert {"Projects", "Templates"} <= set(idx["folders"])
-        assert idx["tags"][0]["tag"] == "ipastore"
+        assert "ipastore" in [t["tag"] for t in idx["tags"][:2]]
         assert all(not f["path"].startswith("Templates/") or f["type"] for f in idx["files"] if f["ext"] == ".md")
 
         # новая заметка по шаблону — подстановки заполнены; повтор — ошибка, ничего не затёрто
@@ -107,7 +107,7 @@ def test_projects_create_status_overview(tmp_path):
         await j.act_complete_task(query="купить домен")
 
         # заметка в папке проекта — не отдельный проект
-        assert [x.name for x in j.projects.list()] == ["IPAStore", "Jarvis", "Сайт студии"]
+        assert [x.name for x in j.projects.list()] == ["Atom", "IPAStore", "Сайт студии"]
         ov = j.act_project_overview("сайт студии")
         assert ov["progress"] == {"done": 1, "total": 3, "percent": 33}
         assert {x["text"] for x in ov["tasks"]} == {"сверстать главную", "согласовать цвета"}

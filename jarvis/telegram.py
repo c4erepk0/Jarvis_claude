@@ -1,4 +1,4 @@
-"""Jarvis в Telegram: оповещения и команды из любой точки мира (только от владельца).
+"""Atom в Telegram: оповещения и команды из любой точки мира (только от владельца).
 
 Это отдельный бот (свой токен от @BotFather), не @IPA_Market_bot: у одного токена
 может быть только один получатель обновлений.
@@ -81,7 +81,7 @@ class Telegram:
             await r.read()
 
     async def notify(self, text: str, level: str = "warn") -> None:
-        """Оповещение уходит в фоне: если Telegram тормозит или недоступен, остальной Jarvis не ждёт."""
+        """Оповещение уходит в фоне: если Telegram тормозит или недоступен, остальной Atom не ждёт."""
         icon = {"error": "🔴", "warn": "🟠", "info": "🔵", "ok": "🟢"}.get(level, "🔵")
         task = asyncio.create_task(self._deliver(f"{icon} {text}"))
         self._sending.add(task)
@@ -108,7 +108,7 @@ class Telegram:
                             "или скажите голосом на дашборде.", chat)
             return
         if text.startswith("/start"):
-            await self.send(f"J.A.R.V.I.S. на связи, {self.j.title}. Команды: " + ", ".join(COMMANDS), chat)
+            await self.send(f"A.T.O.M. на связи, {self.j.title}. Команды: " + ", ".join(COMMANDS), chat)
             return
         text = COMMANDS.get(text.split("@")[0], text)
         reply = await self.j.handle(text, source="telegram")

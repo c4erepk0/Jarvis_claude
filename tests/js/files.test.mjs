@@ -45,7 +45,7 @@ test("индекс, шаблоны, обратные ссылки, переим�
   const j = await makeJarvis();
   const idx = await j.request("GET", "/api/files");
   assert.ok(idx.templates.includes("Templates/Встреча.md"));
-  assert.ok(idx.folders.includes("Projects") && idx.tags[0].tag === "ipastore");
+  assert.ok(idx.folders.includes("Projects") && idx.tags.slice(0, 2).some((t) => t.tag === "ipastore"));
 
   const r = await j.request("POST", "/api/files/new", { path: "Встречи/Созвон", template: "Templates/Встреча.md" });
   assert.equal(r.path, "Встречи/Созвон.md");
@@ -95,7 +95,7 @@ test("проекты: создание, задачи в заметке прое�
   await j.request("POST", "/api/files/new", { path: "Ideas/Логотип", content: "для [[Сайт студии]]\n" });
   await j.actCompleteTask(null, "купить домен");
 
-  assert.deepEqual(j.projects.list().map((x) => x.name), ["IPAStore", "Jarvis", "Сайт студии"]);
+  assert.deepEqual(j.projects.list().map((x) => x.name), ["Atom", "IPAStore", "Сайт студии"]);
   const ov = await j.request("GET", `/api/projects/${encodeURIComponent("сайт студии")}`);
   assert.deepEqual(ov.progress, { done: 1, total: 3, percent: 33 });
   assert.deepEqual(new Set(ov.tasks.map((x) => x.text)), new Set(["сверстать главную", "согласовать цвета"]));

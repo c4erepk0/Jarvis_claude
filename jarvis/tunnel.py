@@ -1,4 +1,4 @@
-"""Бесплатный HTTPS-туннель — чтобы Jarvis, запущенный в терминале (на сервере, в облаке или в
+"""Бесплатный HTTPS-туннель — чтобы Atom, запущенный в терминале (на сервере, в облаке или в
 Linux-приложении на iPhone), открывался в Safari по обычной https-ссылке. Без регистрации:
 сначала Cloudflare Quick Tunnel (cloudflared скачивается сам), если не вышло — localhost.run,
 затем pinggy (оба через ssh). HTTPS нужен ещё и для микрофона в Safari.
@@ -174,7 +174,7 @@ class Tunnel:
             self._drain.cancel()
 
     async def reachable(self, timeout: float = 15) -> bool:
-        """Отвечает ли Jarvis по публичной ссылке. Бесплатные туннели рвутся молча: ssh ещё жив,
+        """Отвечает ли Atom по публичной ссылке. Бесплатные туннели рвутся молча: ssh ещё жив,
         а сайт уже отдаёт «no tunnel» (localhost.run) — поэтому проверяем снаружи, через /healthz."""
         if not self.url:
             return False

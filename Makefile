@@ -1,4 +1,4 @@
-# Команды разработки Jarvis.  make help — список.
+# Команды разработки Atom.  make help — список.
 PY ?= .venv/bin/python
 SH_FILES := start.sh start.command scripts/vps.sh
 
@@ -10,7 +10,7 @@ help:
 	@echo "make lint   — flake8 + shellcheck"
 	@echo "make audit  — уязвимости в зависимостях (pip-audit)"
 	@echo "make check  — lint + test + audit (как в CI)"
-	@echo "make run    — запустить Jarvis (нужен .env)"
+	@echo "make run    — запустить Atom (нужен .env)"
 	@echo "make livesync-config — собрать конфиг моста LiveSync из .env"
 
 .venv/bin/python:

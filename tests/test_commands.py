@@ -12,7 +12,7 @@ P = ["IPAStore", "Jarvis"]
 
 def test_intents_cover_common_phrases():
     cases = {
-        "Джарвис, добавь задачу купить молоко завтра": ("task_add", {"text": "купить молоко", "due": "2026-11-10"}),
+        "Атом, добавь задачу купить молоко завтра": ("task_add", {"text": "купить молоко", "due": "2026-11-10"}),
         "добавь задачу срочно написать оферту для IPAStore в пятницу":
             ("task_add", {"text": "написать оферту", "priority": "high", "project": "IPAStore", "due": "2026-11-13"}),
         # прилагательное перед «задачу»: текст из него или приоритет
@@ -22,7 +22,7 @@ def test_intents_cover_common_phrases():
         "добавь срочную задачу позвонить маме": ("task_add", {"text": "позвонить маме", "priority": "high"}),
         "добавь мне ещё одну задачу полить цветы": ("task_add", {"text": "полить цветы"}),
         "создай новую задачу проверить сервер": ("task_add", {"text": "проверить сервер"}),
-        "добавь задачу": ("task_add", {"text": ""}),     # Jarvis переспросит, что записать
+        "добавь задачу": ("task_add", {"text": ""}),     # Atom переспросит, что записать
         "потратил 450 на кофе": ("expense", {"amount": -45000, "category": "Кафе", "note": "кофе"}),
         "купил кроссовки за 7990р": ("expense", {"amount": -799000, "note": "кроссовки"}),
         "получил 50 000 зарплата": ("income", {"amount": 5000000, "category": "Доход"}),
@@ -78,7 +78,7 @@ def test_command_flow_writes_obsidian(tmp_path):
         assert r.kind == "warn" and "GigaChat" in r.text and "docs/brain.md" in r.text
 
         convo = j.vault.read(f"Jarvis/Conversations/{j.today().isoformat()}.md")
-        assert "минус 28000 продукты" in convo and "**Jarvis:**" in convo
+        assert "минус 28000 продукты" in convo and "**Atom:**" in convo
         await j.close()
     asyncio.run(run())
 
@@ -125,7 +125,7 @@ def test_external_actions_need_confirmation(tmp_path):
         r = await j.handle("отмена")
         assert r.text == "Отменено." and not j.pending
 
-        r = await j.handle("поручи локально Jarvis: починить тесты")
+        r = await j.handle("поручи локально Atom: починить тесты")
         assert r.kind == "error" and not r.confirm
 
         r = await j.handle("забудь эспрессо")

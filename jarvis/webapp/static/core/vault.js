@@ -169,7 +169,7 @@ export class Vault {
   update(rel, fn, message) {
     rel = checkPath(rel, { write: true });
     const job = this.queue.then(async () => {
-      const text = await this.store.update(rel, fn, message || `Jarvis: ${rel}`, this.files.get(rel));
+      const text = await this.store.update(rel, fn, message || `Atom: ${rel}`, this.files.get(rel));
       this.files.set(rel, text);
       this.version++;
       return rel;
@@ -203,7 +203,7 @@ export class Vault {
   remove(rel, message) {
     rel = checkPath(rel);
     const job = this.queue.then(async () => {
-      if (this.files.has(rel)) await this.store.remove(rel, message || `Jarvis: удалено ${rel}`);
+      if (this.files.has(rel)) await this.store.remove(rel, message || `Atom: удалено ${rel}`);
       this.files.delete(rel);
       this.version++;
       return rel;
@@ -229,8 +229,8 @@ export class Vault {
     if (isDir && (dst === src || dst.startsWith(`${src}/`))) throw new VaultError("нельзя переместить папку внутрь неё самой");
     const pairs = this.under(src).map((p) => [p, dst + p.slice(src.length)]);
     for (const [a, b] of pairs) {
-      await this.write(b, this.files.get(a), `Jarvis: ${a} → ${b}`);
-      await this.remove(a, `Jarvis: ${a} → ${b}`);
+      await this.write(b, this.files.get(a), `Atom: ${a} → ${b}`);
+      await this.remove(a, `Atom: ${a} → ${b}`);
     }
     if (this.dirs.delete(src) || !pairs.length) this.dirs.add(dst);
     for (const d of [...this.dirs]) if (d.startsWith(`${src}/`)) { this.dirs.delete(d); this.dirs.add(dst + d.slice(src.length)); }
@@ -250,8 +250,8 @@ export class Vault {
       for (const f of files) {
         const dest = target + f.slice(rel.length);
         const text = this.files.get(f);
-        await this.store.update(dest, () => text, `Jarvis: в корзину ${f}`, undefined);
-        await this.store.remove(f, `Jarvis: в корзину ${f}`);
+        await this.store.update(dest, () => text, `Atom: в корзину ${f}`, undefined);
+        await this.store.remove(f, `Atom: в корзину ${f}`);
         this.files.delete(f);
       }
       for (const d of [...this.dirs]) if (d === rel || d.startsWith(`${rel}/`)) this.dirs.delete(d);
@@ -272,7 +272,7 @@ export class Vault {
         throw new VaultConflict(rel, cur);
       }
       return text;
-    }, `Jarvis: правка ${rel}`);
+    }, `Atom: правка ${rel}`);
   }
 
   // Заметка по пути, названию или словам — как find_note в jarvis/vault.py.

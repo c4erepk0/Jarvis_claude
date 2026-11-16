@@ -1,7 +1,7 @@
 """Собирает конфиг моста livesync-bridge (sync/livesync/config.json) из .env.
 
-Мост держит папку хранилища Jarvis и базу CouchDB плагина Self-hosted LiveSync в синхроне
-в обе стороны: правка на iPhone → CouchDB → папка → Jarvis, и обратно.
+Мост держит папку хранилища Atom и базу CouchDB плагина Self-hosted LiveSync в синхроне
+в обе стороны: правка на iPhone → CouchDB → папка → Atom, и обратно.
 """
 import json
 import os

@@ -1,4 +1,4 @@
-"""Мозг Jarvis — Claude (Anthropic API) с инструментами для памяти, задач, финансов и проектов.
+"""Мозг Atom — Claude (Anthropic API) с инструментами для памяти, задач, финансов и проектов.
 Вместо Claude можно подключить GigaChat или YandexGPT (`JARVIS_LLM`, jarvis/llm.py) — разговор, личность
 и инструменты те же, меняется только формат запросов.
 
@@ -90,6 +90,11 @@ TOOLS: list[dict] = [
      "input_schema": _obj({"text": S, "minutes": {"type": "integer", "minimum": 1}}, ["text", "minutes"])},
     {"name": "projects_status", "description": "Живой статус проектов: CI, PR, задачи GitHub, health, метрики.",
      "input_schema": _obj({"project": S})},
+    {"name": "projects_synthesis",
+     "description": "Синтез проектов по хранилищу: какие заметки относятся к проектам и что похоже на ещё не "
+                    "оформленный проект (тег, папка, узел ссылок, type: project). create — оформить кандидата "
+                    "проектом (заметка в Projects/ со ссылками на материалы); найденное подсвечивается в хранилище.",
+     "input_schema": _obj({"create": {**S, "description": "название кандидата, которого оформить проектом"}})},
     {"name": "project_delegate",
      "description": "Поручить работу над кодом проекта: mode=github — задача для @claude в репозитории "
                     "(он откроет PR); mode=local — Claude Code на этом компьютере. Требует подтверждения владельца.",
@@ -116,7 +121,7 @@ TOOLS: list[dict] = [
      "input_schema": _obj({})},
 ]
 
-PERSONA = """Ты — J.A.R.V.I.S., личный ИИ-ассистент владельца. Обращайся к нему «{title}»{name}.
+PERSONA = """Ты — A.T.O.M., личный ИИ-ассистент владельца. Обращайся к нему «{title}»{name}.
 Манера: безупречно вежливый британский дворецкий с суховатым юмором — спокойный, точный, немногословный, \
 заботливый без подобострастия. Иногда уместная ирония, но дело — прежде всего.
 Ответы часто звучат голосом: обычно 1–3 коротких предложения, без markdown, таблиц, списков и эмодзи, \
@@ -347,7 +352,7 @@ class Brain:
 
     async def _run_chat(self, messages: list[dict], system: str) -> Reply:
         """Тот же цикл «ответ → инструменты → ответ», но через GigaChat / YandexGPT (jarvis/llm.py).
-        История — в формате этой модели (модель не меняется посреди работы Jarvis)."""
+        История — в формате этой модели (модель не меняется посреди работы Atom)."""
         from .llm import LLMAuthError, LLMError
 
         chat = self.chat()
@@ -449,6 +454,14 @@ class Brain:
                 res = await j.act_reminder(str(args["text"]), int(args["minutes"]) * 60)
             elif name == "projects_status":
                 res = await j.act_project_status(args.get("project") or None)
+            elif name == "projects_synthesis":
+                if args.get("create"):
+                    res = await j.act_synthesis_create(str(args["create"]))
+                else:
+                    syn = j.act_synthesis()
+                    await j.hub.emit("open_synthesis", {}, log_it=False)
+                    res = {"projects": [{k: p[k] for k in ("name", "notes", "open_tasks")} for p in syn["projects"]],
+                           "candidates": syn["candidates"]}
             elif name == "project_delegate":
                 item = j.act_delegate(str(args["project"]), str(args["task"]), str(args.get("mode") or "github"))
                 pending = item.as_dict()

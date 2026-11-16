@@ -106,7 +106,7 @@ export class Projects {
     if (this.vault.exists(rel)) throw new VaultError(`заметка «${rel}» уже есть`);
     const meta = { type: "project", status, tag: slug(tag || name), repo: String(repo).trim(), created: stamp.slice(0, 10) };
     const body = `# ${name}\n\n${String(description).trim() || "Описание проекта."}\n\n## Задачи\n\n## Заметки\n\n## Журнал\n- ${stamp} Проект создан\n`;
-    await this.vault.write(rel, dumpFrontmatter(meta) + body, `Jarvis: новый проект ${name}`);
+    await this.vault.write(rel, dumpFrontmatter(meta) + body, `Atom: новый проект ${name}`);
     return this.getExact(name);
   }
 
@@ -115,7 +115,7 @@ export class Projects {
     if (!["status", "repo", "tag", "url", "health", "path", "deploy_workflow"].includes(key)) {
       throw new Error(`поле ${key} так не меняется — поправьте заметку проекта`);
     }
-    await this.vault.update(p.note, (cur) => setFrontmatterField(cur ?? "", key, String(value).trim()), `Jarvis: ${p.name} — ${key}`);
+    await this.vault.update(p.note, (cur) => setFrontmatterField(cur ?? "", key, String(value).trim()), `Atom: ${p.name} — ${key}`);
     return this.getExact(p.name) || p;
   }
 
@@ -149,7 +149,7 @@ export class Projects {
   async delegateGithub(p, task, stamp) {
     if (!p.repo) throw new Error(`у проекта ${p.name} не указан repo`);
     const t = task.trim().split("\n")[0].slice(0, 90);
-    const body = `${task.trim()}\n\n---\n@claude возьми эту задачу: следуй CLAUDE.md, прогони проверки и открой PR с описанием на русском.\n\n_Поручено через Jarvis с iPhone, ${stamp}._`;
+    const body = `${task.trim()}\n\n---\n@claude возьми эту задачу: следуй CLAUDE.md, прогони проверки и открой PR с описанием на русском.\n\n_Поручено через Atom с iPhone, ${stamp}._`;
     const issue = await this.gh.createIssue(p.repo, t, body);
     await this.log(p, `Поручено @claude: [#${issue.number} ${t}](${issue.url})`, stamp);
     return issue;

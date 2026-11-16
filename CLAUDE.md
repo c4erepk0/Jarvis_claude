@@ -1,11 +1,13 @@
-# Jarvis — контекст для разработки
+# Atom — контекст для разработки
 
 Этот файл читают Claude Code и `@claude` в GitHub. При заметных изменениях — обновляйте.
 
 ## Что это
-Личный ассистент владельца (@c4erepk0): голос + HUD-дашборд в духе фильма «Железный человек»,
-память в хранилище Obsidian (markdown), проекты (IPAStore и др.), задачи, финансы.
+Личный ассистент владельца (@c4erepk0) — **Atom** (бывший Jarvis): голос + HUD-дашборд в духе «Железного человека»
+(палитра — красная), память в хранилище Obsidian (markdown), проекты (IPAStore и др.), задачи, финансы.
 Интерфейс, тексты, комментарии, README и описания PR — **на русском**.
+Внутренние имена после ребрендинга прежние (пакет `jarvis`, `JARVIS_*`, класс `Jarvis`, папка `Jarvis/` в хранилище) —
+ради совместимости с установками; в текстах для человека — «Atom» / «Атом».
 
 ## Стек
 Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-tts · psutil.
@@ -27,6 +29,12 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/notes.py` — менеджер заметок: индекс хранилища (`/api/files`), теги, обратные ссылки, шаблоны
   (`Templates/`), перенос/переименование с правкой `[[ссылок]]`, корзина `.trash/` (как в Obsidian); то же —
   `core/notes.js`. Тест — `tests/test_files.py` и `tests/js/files.test.mjs`.
+- `jarvis/synthesis.py` — умный синтез проектов без модели: по индексу (`Notes.index()` — теги, `links`, папки, `type`)
+  какие заметки относятся к проектам и что похоже на неоформленный проект (type: project, тег, папка, узел ссылок);
+  `highlight` — подсветка в дереве (`markSynthesis` в `file-tree.js`), графе и вкладке «СИНТЕЗ» `files.js`.
+  `GET/POST /api/synthesis`, интент `synthesis`, инструмент Claude `projects_synthesis`. JS — `core/synthesis.js`;
+  ответ обязан совпадать с Python: общий `tests/js/fixtures/synthesis.json` (пересоздайте его при смене правил).
+  Тесты — `tests/test_synthesis.py`, `tests/js/synthesis.test.mjs`.
 - `jarvis/projects.py` + `jarvis/github.py` — статус, задачи для @claude, локальный Claude Code, деплой; создание
   проекта, поля (`set_frontmatter_field` — правит одну строку frontmatter), страница проекта (`overview`: задачи по тегу,
   в заметке и папке `Projects/<Проект>/`, прогресс, заметки, журнал). Заметки в папке проекта — не проекты.

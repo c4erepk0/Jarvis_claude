@@ -1,4 +1,4 @@
-// Память Jarvis в Obsidian: факты, профиль, журнал дня, разговоры, напоминания. Порт jarvis/memory.py.
+// Память Atom в Obsidian: факты, профиль, журнал дня, разговоры, напоминания. Порт jarvis/memory.py.
 import { parseFrontmatter } from "./vault.js";
 
 const FACT = /^- (?:(\d{4}-\d{2}-\d{2}) — )?(.+)$/;
@@ -29,7 +29,7 @@ export class Memory {
     if (!fact) throw new Error("пустой факт");
     if (this.facts().some((f) => f.text.toLowerCase() === fact.toLowerCase())) return { text: fact, duplicate: true };
     await this.vault.appendToSection(this.memoryPath, "Факты", `- ${day} — ${fact}`, {
-      header: "# Память Jarvis\n\nЗдесь Jarvis хранит то, что узнал о вас. Можно править вручную.\n\n" });
+      header: "# Память Atom\n\nЗдесь Atom хранит то, что узнал о вас. Можно править вручную.\n\n" });
     return { date: day, text: fact };
   }
 
@@ -53,14 +53,14 @@ export class Memory {
   journalPath(day) { return `${this.journalDir}/${day}.md`; }
 
   logEvent(text, day, time) {
-    return this.vault.appendToSection(this.journalPath(day), "Журнал Jarvis", `- ${time} ${text}`,
+    return this.vault.appendToSection(this.journalPath(day), "Журнал Atom", `- ${time} ${text}`,
       { header: `# ${day}\n\n` });
   }
 
   logDialog(user, reply, day, time, source = "") {
     const src = source && source !== "dashboard" ? ` · ${source}` : "";
     return this.vault.append(`${this.dir}/Conversations/${day}.md`,
-      `\n**Вы (${time}${src}):** ${user.trim()}\n\n**Jarvis:** ${reply.trim()}\n`, { header: `# Разговоры — ${day}\n` });
+      `\n**Вы (${time}${src}):** ${user.trim()}\n\n**Atom:** ${reply.trim()}\n`, { header: `# Разговоры — ${day}\n` });
   }
 
   // ---------- напоминания (их же читает GitHub Actions и шлёт в Telegram, когда приложение закрыто) ----------

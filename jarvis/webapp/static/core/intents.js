@@ -17,10 +17,12 @@ export const PROTOCOL_ALIASES = {
   "тишина": ["тишина", "замолчи", "режим тишины", "без звука", "помолчи"],
   "голос": ["голос", "говори", "включи голос", "можешь говорить"],
 };
+// «синтез проектов», «найди проекты в хранилище», «какие проекты есть в хранилище» — как SYNTHESIS в Python
+const SYNTHESIS = /синтез[\p{L}]*\s+проект|(?:найди|собери|поищи|покажи|какие)\s+(?:скрытые\s+|новые\s+)?проекты(?:\s+(?:есть\s+)?в\s+хранилищ[\p{L}]*)?$|проекты\s+в\s+хранилищ/u;
 const PRIORITY_WORDS = { high: ["срочно", "срочная", "важно", "важная", "приоритет", "горит"],
   low: ["когда-нибудь", "не срочно", "неважно", "потом"] };
 
-export function normalize(text, wake = "джарвис") {
+export function normalize(text, wake = "атом") {
   let t = text.trim().replace(rx(`^\\s*(?:эй,?\\s+|ок,?\\s+|окей,?\\s+)?${esc(wake)}[\\p{L}]*[\\s,.:!—-]*`), "");
   t = t.replace(/\s+/g, " ").trim();
   return t.replace(/[ .!?]+$/, "");
@@ -56,13 +58,14 @@ const nominative = (w) => (w.slice(0, -2) + (w.toLowerCase().endsWith("юю") ? 
 
 const stripLead = (s) => s.replace(rx("^(?:о том,? что|что|про|о|об)\\s+"), "");
 
-export function parse(text, ref, projects = [], wake = "джарвис") {
+export function parse(text, ref, projects = [], wake = "атом") {
   const t = normalize(text, wake);
   const low = t.toLowerCase();
   if (!low) return { name: "greet", args: {} };
 
   if (rx("^(да,? )?(подтверждаю|подтвердить|подтверди|выполняй|выполнить|делай|давай|да|так точно|запускай|поехали)$").test(low)) return { name: "confirm", args: {} };
   if (rx("^(нет|отмена|отменить|отмени|не надо|стоп|стой|отбой)$").test(low)) return { name: "cancel", args: {} };
+  if (SYNTHESIS.test(low)) return { name: "synthesis", args: {} };
 
   let m = rx("^(?:запусти |активируй |включи )?протокол[а-яё]*\\s+[«\"']?(.+?)[»\"']?$").exec(low);
   if (m) return { name: "protocol", args: { name: m[1].trim() } };
