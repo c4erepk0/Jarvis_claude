@@ -1,6 +1,6 @@
-"""Мозг Jarvis на моделях, доступных в России: GigaChat (Сбер) и YandexGPT (Яндекс AI Studio).
+"""Мозг Atom на моделях, доступных в России: GigaChat (Сбер) и YandexGPT (Яндекс AI Studio).
 
-Разговор ведёт `Brain` одинаково для всех моделей: личность, служебная строка, инструменты Jarvis,
+Разговор ведёт `Brain` одинаково для всех моделей: личность, служебная строка, инструменты Atom,
 история только дописывается. Здесь — только перевод в формат конкретного API:
 
 - **GigaChat** (`https://api.giga.chat/v1`): функции — в `functions`, вызов приходит как `function_call`
@@ -91,7 +91,7 @@ def clean_schema(schema: dict) -> dict:
 
 
 def functions(tools: list[dict], examples: bool = False) -> list[dict]:
-    """Инструменты Jarvis (формат Anthropic) → описания функций для GigaChat / OpenAI."""
+    """Инструменты Atom (формат Anthropic) → описания функций для GigaChat / OpenAI."""
     out = []
     for t in tools:
         if "input_schema" not in t:

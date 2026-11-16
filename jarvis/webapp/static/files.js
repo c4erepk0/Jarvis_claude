@@ -1,12 +1,14 @@
 // Хранилище — менеджер заметок и проектов: дерево папок, теги, недавние, поиск по названию и тексту,
 // заметки (просмотр и правка — та же панель, что в голограмме), новые заметки по шаблонам, папки,
 // переименование и перемещение (и перетаскиванием) с правкой [[ссылок]], корзина Obsidian; страница проекта —
-// статус, прогресс, задачи, заметки проекта, журнал. Всё через те же /api/…, поэтому работает и на iPhone без сервера.
-import { esc } from "./markdown.js?v=15";
-import { NotePanel } from "./note-panel.js?v=15";
-import { buildTree, filterFiles, moveTarget, nameOf, parentOf, pushRecent, renameTarget } from "./file-tree.js?v=15";
+// статус, прогресс, задачи, заметки проекта, журнал; синтез проектов — заметки проектов и «спрятанные» проекты
+// подсвечиваются в дереве, кандидата можно оформить проектом. Всё через те же /api/…, поэтому работает и на iPhone без сервера.
+import { esc } from "./markdown.js?v=16";
+import { NotePanel } from "./note-panel.js?v=16";
+import { buildTree, filterFiles, markSynthesis, moveTarget, nameOf, parentOf, pushRecent, renameTarget } from "./file-tree.js?v=16";
 
 const STATUS = { idea: "ИДЕЯ", active: "В РАБОТЕ", paused: "НА ПАУЗЕ", done: "ЗАВЕРШЁН" };
+const KIND = { note: "type: project", tag: "тег", folder: "папка", hub: "узел ссылок" };
 const ICON = { ".md": "▤", ".txt": "▤", ".canvas": "◫", ".csv": "▦", ".json": "{}" };
 const kb = (n) => (n < 1024 ? `${n} Б` : `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} КБ`);
 const ago = (t) => {
@@ -26,6 +28,8 @@ export class FileManager {
   constructor(root, { api, toast, store, projects, openHolo, delegate, dictate = null, today }) {
     Object.assign(this, { root, api, toast, store, projects, openHolo, delegate });
     this.index = { files: [], folders: [], templates: [], tags: [] };
+    this.syn = { projects: [], candidates: [], highlight: {} };
+    this.marks = new Map();
     this.side = store.get("fm.side", "tree");
     this.open = new Set(store.get("fm.open", ["Projects"]));
     this.recent = store.get("fm.recent", []);
@@ -45,7 +49,7 @@ export class FileManager {
       <div class="fm-body">
         <nav class="fm-side">
           <div class="seg" data-el="seg">
-            <button data-side="tree">ПАПКИ</button><button data-side="projects">ПРОЕКТЫ</button><button data-side="tags">ТЕГИ</button><button data-side="recent">НЕДАВНИЕ</button>
+            <button data-side="tree">ПАПКИ</button><button data-side="projects">ПРОЕКТЫ</button><button data-side="synthesis" title="Синтез проектов">СИНТЕЗ</button><button data-side="tags">ТЕГИ</button><button data-side="recent">НЕДАВНИЕ</button>
           </div>
           <div class="fm-side-list" data-el="side"></div>
         </nav>
@@ -118,6 +122,10 @@ export class FileManager {
     try {
       this.index = await this.api("/api/files");
     } catch (e) { this.toast(`Хранилище недоступно: ${e.message}`, "error"); return; }
+    try {
+      this.syn = await this.api("/api/synthesis");
+    } catch { this.syn = { projects: [], candidates: [], highlight: {} }; }   // старый сервер — без подсветки
+    this.marks = markSynthesis(this.syn.highlight);
     this.titles = new Map();
     for (const f of this.index.files) {
       this.titles.set(f.title.toLowerCase(), f.path);
@@ -158,11 +166,11 @@ export class FileManager {
       const tree = buildTree(this.index);
       const node = (n, depth) => {
         if (n.type === "file") {
-          return `<div class="fm-node file" draggable="true" data-path="${esc(n.path)}" style="--d:${depth}">
+          return `<div class="fm-node file${this.synClass(n.path)}" draggable="true" data-path="${esc(n.path)}" style="--d:${depth}"${this.synTitle(n.path)}>
             <span class="ic">${ICON[n.file.ext] || "·"}</span><span class="nm">${esc(n.name)}</span></div>`;
         }
         const open = this.open.has(n.path);
-        return `<div class="fm-node dir ${open ? "open" : ""}" draggable="true" data-dir="${esc(n.path)}" style="--d:${depth}">
+        return `<div class="fm-node dir ${open ? "open" : ""}${this.synClass(n.path)}" draggable="true" data-dir="${esc(n.path)}" style="--d:${depth}"${this.synTitle(n.path)}>
             <span class="ic">${open ? "▾" : "▸"}</span><span class="nm">${esc(n.name)}</span><small>${n.count || ""}</small></div>
           ${open ? n.children.map((c) => node(c, depth + 1)).join("") : ""}`;
       };
@@ -178,6 +186,16 @@ export class FileManager {
           <span class="nm">${esc(p.name)}</span></div>`).join("")}` : "";
       }).join("") : `<p class="empty">Проектов пока нет.</p>`)
         + `<button class="btn ghost fm-wide" data-fm="new-project">＋ НОВЫЙ ПРОЕКТ</button>`;
+    } else if (this.side === "synthesis") {
+      const { candidates, projects } = this.syn;
+      el.innerHTML = `<button class="fm-node syn-candidate" data-syn="" style="--d:0"><span class="ic">✦</span><span class="nm">Обзор синтеза</span></button>
+        <div class="fm-group">ПОХОЖЕ НА ПРОЕКТ · ${candidates.length}</div>
+        ${candidates.map((c) => `<div class="fm-node syn-candidate" data-syn="${esc(c.name)}" style="--d:0" title="${esc(c.reasons.join("; "))}">
+          <span class="ic">✦</span><span class="nm">${esc(c.name)}</span><small>${c.notes.length}</small></div>`).join("")
+          || '<p class="empty">Новых проектов не видно.</p>'}
+        <div class="fm-group">ПРОЕКТЫ</div>
+        ${projects.map((p) => `<div class="fm-node proj syn-project" data-project="${esc(p.name)}" style="--d:0">
+          <span class="ic">◆</span><span class="nm">${esc(p.name)}</span><small>${p.notes.length}</small></div>`).join("")}`;
     } else if (this.side === "tags") {
       el.innerHTML = this.index.tags.length ? `<div class="fm-tags">${this.index.tags.map((t) => `
         <button class="tag" data-tag="${esc(t.tag)}">#${esc(t.tag)} <small>${t.count}</small></button>`).join("")}</div>`
@@ -197,7 +215,8 @@ export class FileManager {
     this.el("side").querySelectorAll(".fm-node").forEach((n) => {
       n.classList.toggle("on", (path && n.dataset.path === path) || (this.view.kind === "folder" && n.dataset.dir === this.view.path)
         || (this.view.kind === "project" && n.dataset.project === this.view.name)
-        || (this.view.kind === "tag" && n.dataset.tag === this.view.tag));
+        || (this.view.kind === "tag" && n.dataset.tag === this.view.tag)
+        || (this.view.kind === "synthesis" && n.dataset.syn === (this.view.name || "")));
     });
   }
 
@@ -208,9 +227,9 @@ export class FileManager {
   }
 
   row(f, { snippet = "", showFolder = false } = {}) {
-    return `<li class="fm-row" draggable="true" data-path="${esc(f.path)}">
+    return `<li class="fm-row${this.synClass(f.path)}" draggable="true" data-path="${esc(f.path)}"${this.synTitle(f.path)}>
       <span class="ic">${ICON[f.ext] || "·"}</span>
-      <div class="fm-row-main"><b>${esc(f.title)}</b>${showFolder && f.folder ? `<small class="muted"> · ${esc(f.folder)}</small>` : ""}
+      <div class="fm-row-main"><b>${esc(f.title)}</b>${this.synBadge(f.path)}${showFolder && f.folder ? `<small class="muted"> · ${esc(f.folder)}</small>` : ""}
         ${snippet ? `<small class="fm-snip">${esc(snippet)}</small>` : ""}
         ${(f.tags || []).length ? `<span class="fm-row-tags">${f.tags.slice(0, 4).map((t) => `<span class="tag" data-tag="${esc(t)}">#${esc(t)}</span>`).join("")}</span>` : ""}</div>
       <small class="muted fm-row-meta">${f.mtime ? ago(f.mtime) + " · " : ""}${kb(f.size || 0)}</small>
@@ -224,6 +243,7 @@ export class FileManager {
   renderMain() {
     const v = this.view, el = this.el("main");
     if (v.kind === "project") { this.renderProject(); return; }
+    if (v.kind === "synthesis") { this.renderSynthesis(); return; }
     if (v.kind === "folder") {
       if (v.path && !this.index.folders.includes(v.path)) v.path = parentOf(v.path);    // папку переместили / удалили
       const subs = this.index.folders.filter((f) => parentOf(f) === v.path);
@@ -235,7 +255,7 @@ export class FileManager {
               <button class="btn ghost danger" data-fm="trash-dir">🗑</button>` : ""}
           </div></div>
         <ul class="fm-list" data-drop="${esc(v.path)}">
-          ${subs.map((d) => `<li class="fm-row dir" draggable="true" data-dir="${esc(d)}"><span class="ic">▸</span>
+          ${subs.map((d) => `<li class="fm-row dir${this.synClass(d)}" draggable="true" data-dir="${esc(d)}"${this.synTitle(d)}><span class="ic">▸</span>
             <div class="fm-row-main"><b>${esc(nameOf(d))}</b></div>
             <small class="muted fm-row-meta">${this.index.files.filter((f) => f.path.startsWith(`${d}/`)).length} файлов</small></li>`).join("")}
           ${files.map((f) => this.row(f)).join("")}
@@ -271,6 +291,52 @@ export class FileManager {
       const r = await this.api(`/api/memory?q=${encodeURIComponent(q)}`);
       if (this.view.kind === "search" && this.view.query === q) { this.view.hits = r.hits || []; this.renderMain(); }
     } catch { /* поиск по тексту недоступен — остаются совпадения по названию */ }
+  }
+
+  // ---------- синтез проектов ----------
+  synClass(path) { const m = this.marks.get(path); return m ? ` syn-${m.kind}` : ""; }
+  synTitle(path) {
+    const m = this.marks.get(path);
+    return m ? ` title="${esc(m.kind === "project" ? `Проект ${m.project}` : `Похоже на проект «${m.project}» — синтез`)}"` : "";
+  }
+  synBadge(path) {
+    const m = this.marks.get(path);
+    return m ? `<span class="syn-badge ${m.kind}">${m.kind === "project" ? "◆" : "✦"} ${esc(m.project)}</span>` : "";
+  }
+
+  renderSynthesis() {
+    const el = this.el("main"), { candidates, projects } = this.syn;
+    const only = this.view.name ? candidates.filter((c) => c.name === this.view.name) : candidates;
+    const byPath = new Map(this.index.files.map((f) => [f.path, f]));
+    const card = (c) => `<section class="syn-card" data-syn-card="${esc(c.name)}">
+        <div class="syn-card-h"><span class="syn-mark">✦</span><b>${esc(c.name)}</b>
+          <span class="tag">#${esc(c.tag)}</span>${c.kinds.map((k) => `<span class="syn-kind">${esc(KIND[k] || k)}</span>`).join("")}
+          <button class="btn primary" data-syn-create="${esc(c.name)}">◆ ОФОРМИТЬ ПРОЕКТОМ</button></div>
+        <p class="muted syn-why">${c.reasons.map(esc).join(" · ")}${c.open_tasks ? ` · открытых задач: ${c.open_tasks}` : ""}</p>
+        <ul class="fm-list">${c.notes.map((p) => byPath.get(p)).filter(Boolean).map((f) => this.row(f, { showFolder: true })).join("")}</ul>
+      </section>`;
+    el.innerHTML = `<div class="fm-head"><nav class="fm-crumbs"><a href="#" data-syn="">СИНТЕЗ ПРОЕКТОВ</a>${this.view.name ? ` / <b>${esc(this.view.name)}</b>` : ""}</nav>
+        <div class="fm-head-acts"><button class="btn ghost" data-fm="synthesis-refresh">↻ ПЕРЕСЧИТАТЬ</button></div></div>
+      ${this.view.name ? "" : `<p class="fm-proj-desc">Atom просмотрел хранилище: теги, папки, ссылки и поле <code>type</code>.
+        <span class="syn-legend"><span class="syn-badge project">◆ проект</span> — заметка уже относится к проекту,
+        <span class="syn-badge candidate">✦ кандидат</span> — похоже на проект, который ещё не оформлен. Подсветка видна и в дереве папок.</span></p>`}
+      ${only.map(card).join("") || '<p class="empty">Всё, что похоже на проекты, уже оформлено. Новые появятся, когда у темы наберутся заметки, теги или ссылки.</p>'}
+      ${this.view.name ? "" : `<div class="fm-group">ПРОЕКТЫ И ИХ ЗАМЕТКИ</div>
+        <ul class="fm-list">${projects.map((p) => `<li class="fm-row syn-project" data-project="${esc(p.name)}"><span class="ic">◆</span>
+          <div class="fm-row-main"><b>${esc(p.name)}</b> <span class="tag">#${esc(p.tag)}</span></div>
+          <small class="muted fm-row-meta">${p.notes.length} заметок${p.open_tasks ? ` · ${p.open_tasks} задач` : ""}</small></li>`).join("")}</ul>`}`;
+  }
+
+  async createFromSynthesis(name) {
+    const c = this.syn.candidates.find((x) => x.name === name);
+    if (!c) return;
+    const d = await this.ask("ОФОРМИТЬ ПРОЕКТОМ", `<p>Будет создана заметка <b>Projects/${esc(c.name)}.md</b> с тегом #${esc(c.tag)}
+      и ссылками на ${c.notes.length} ${c.notes.length === 1 ? "заметку" : "заметок"}. Сами заметки останутся на месте.</p>
+      <label>Статус</label><select name="status">${Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${k === "idea" ? "selected" : ""}>${l}</option>`).join("")}</select>`,
+    { ok: "ОФОРМИТЬ" });
+    if (!d) return;
+    const p = await this.run(() => this.api("/api/synthesis", { method: "POST", body: { name: c.name, status: d.status } }), `Проект «${c.name}» оформлен`);
+    if (p) { await this.reload(); this.notes.close(); this.show({ kind: "project", name: p.name }); }
   }
 
   // ---------- страница проекта ----------
@@ -337,6 +403,10 @@ export class FileManager {
     if (side) { this.side = side.dataset.side; this.store.set("fm.side", this.side); this.renderSide(); return; }
     const sideGo = t.closest("[data-side-go]");
     if (sideGo) { e.preventDefault(); this.side = sideGo.dataset.sideGo; this.renderSide(); this.show({ kind: "folder", path: "" }); return; }
+    const synCreate = t.closest("[data-syn-create]");
+    if (synCreate) { this.createFromSynthesis(synCreate.dataset.synCreate); return; }
+    const syn = t.closest("[data-syn]");
+    if (syn) { e.preventDefault(); if (this.notes.close()) this.show({ kind: "synthesis", name: syn.dataset.syn || null }); return; }
     const rowAct = t.closest("[data-row]");
     if (rowAct) { e.stopPropagation(); this.fileAction(rowAct.dataset.row, rowAct.closest("[data-path]").dataset.path); return; }
     const tag = t.closest("[data-tag]");
@@ -429,6 +499,7 @@ export class FileManager {
       return;
     }
     if (cmd === "new-project") { this.newProject(); return; }
+    if (cmd === "synthesis-refresh") { await this.reload(); this.toast(`Синтез: кандидатов — ${this.syn.candidates.length}`, "ok"); return; }
     const path = this.view.path;
     if (cmd === "rename-dir") this.rename(path, true);
     if (cmd === "move-dir") this.move(path, true);

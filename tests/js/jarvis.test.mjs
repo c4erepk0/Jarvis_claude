@@ -31,7 +31,7 @@ async function makeJarvis(extra = {}, opts = {}) {
 
 test("команды без Claude пишут в Obsidian", async () => {
   const j = await makeJarvis();
-  let r = await j.handle("Джарвис, добавь задачу проверить оплату Stars для IPAStore сегодня, срочно");
+  let r = await j.handle("Атом, добавь задачу проверить оплату Stars для IPAStore сегодня, срочно");
   assert.equal(r.kind, "ok");
   assert.match(r.text, /добавлена на сегодня/);
   assert.match(j.vault.read("Tasks/Inbox.md"), /проверить оплату Stars #ipastore ⏫ ➕ 2026-11-09 📅 2026-11-09/);
@@ -167,10 +167,10 @@ test("GitHub-хранилище: загрузка, запись, правки с
   const j = await new Jarvis(settings({ githubToken: "ghp_test", vaultRepo: "me/vault" }),
     { store: new GitHubStore(gh, "me/vault", "main"), github: gh, clock: CLOCK, fetchImpl: offline }).init();
   assert.ok(j.vault.exists("Tasks/Inbox.md"));
-  await j.handle("добавь задачу из Jarvis завтра");
-  assert.match(repo.read("Tasks/Inbox.md"), /из Jarvis/);
+  await j.handle("добавь задачу из Atom завтра");
+  assert.match(repo.read("Tasks/Inbox.md"), /из Atom/);
 
-  // в Obsidian на iPhone дописали задачу → Jarvis видит её после опроса
+  // в Obsidian на iPhone дописали задачу → Atom видит её после опроса
   repo.edit("Tasks/Inbox.md", repo.read("Tasks/Inbox.md") + "- [ ] с телефона 📅 2026-11-09\n");
   const seen = [];
   j.on((e) => { if (e.type === "vault") seen.push(...e.data.paths); });
@@ -182,7 +182,7 @@ test("GitHub-хранилище: загрузка, запись, правки с
   await j.vault.poll();
   assert.deepEqual(repo.calls.slice(before), ["GET /repos/me/vault/commits/main"]);
 
-  // конфликт: телефон изменил файл, а Jarvis ещё не опрашивал — правка применяется к свежей версии
+  // конфликт: телефон изменил файл, а Atom ещё не опрашивал — правка применяется к свежей версии
   repo.edit("Tasks/Inbox.md", repo.read("Tasks/Inbox.md") + "- [ ] ещё одна с телефона\n");
   await j.handle("добавь задачу после конфликта");
   const final = repo.read("Tasks/Inbox.md");

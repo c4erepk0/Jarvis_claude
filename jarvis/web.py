@@ -227,6 +227,15 @@ def build_app(jarvis: Jarvis) -> web.Application:
     async def project_get(request):
         return ok(j.act_project_overview(request.match_info["name"]))
 
+    async def synthesis_get(_):
+        loop = asyncio.get_running_loop()
+        return ok(await loop.run_in_executor(None, j.act_synthesis))
+
+    async def synthesis_create(request):
+        d = await body(request)
+        return ok(await j.act_synthesis_create(str(d.get("name", "")).strip() or _required("name"),
+                                               str(d.get("status") or "idea")))
+
     # ---------- менеджер заметок ----------
     async def files_get(_):
         loop = asyncio.get_running_loop()
@@ -387,6 +396,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_post("/api/projects", project_create)
     r.add_get("/api/projects/{name}", project_get)
     r.add_post("/api/projects/{name}/{action}", project_action)
+    r.add_get("/api/synthesis", synthesis_get)
+    r.add_post("/api/synthesis", synthesis_create)
     r.add_get("/api/files", files_get)
     r.add_post("/api/files/{action}", files_action)
     r.add_get("/api/jobs/{id}", job_get)

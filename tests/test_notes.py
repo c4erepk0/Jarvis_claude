@@ -52,7 +52,7 @@ def test_save_detects_changes_made_in_obsidian(tmp_path):
     with pytest.raises(VaultConflict, match="уже есть"):
         v.save("Home.md", "x", None)
     assert v.find_note("ipastore") == "Projects/IPAStore.md"
-    assert v.find_note("Projects/Jarvis") == "Projects/Jarvis.md"
+    assert v.find_note("Projects/Atom") == "Projects/Atom.md"
     assert v.find_note("несуществующее-слово-xyz") is None
 
 
@@ -92,7 +92,7 @@ def test_open_note_command_shows_it_in_hologram(tmp_path):
     async def run():
         j = make_jarvis(tmp_path)
         seen = spy_events(j)
-        r = await j.handle("Джарвис, открой заметку IPAStore")
+        r = await j.handle("Атом, открой заметку IPAStore")
         assert r.kind == "ok" and r.data == {"open_note": "Projects/IPAStore.md"} and "голограмм" in r.text
         assert ("open_note", {"path": "Projects/IPAStore.md"}) in seen
         r = await j.handle("открой заметку квантовый-телепорт-xyz")
@@ -151,7 +151,7 @@ def test_brain_edits_the_note_open_in_hologram(tmp_path, monkeypatch):
             [("note_read", {"path": "IPAStore"})],
             [("note_edit", {"path": "Projects/IPAStore.md", "find": "status: active", "replace": "status: paused"})],
             [("note_edit", {"path": "Projects/IPAStore.md", "find": "нет такого фрагмента", "replace": "x"})],
-            [("notes_list", {"folder": "Projects"}), ("note_show", {"path": "Jarvis"}),
+            [("notes_list", {"folder": "Projects"}), ("note_show", {"path": "Atom"}),
              ("note_create", {"path": "Ideas/План", "text": "# План\n"})],
             "**Готово**, сэр:\n- статус — пауза\n- план создан",
         ], fail_first=1)
@@ -167,9 +167,9 @@ def test_brain_edits_the_note_open_in_hologram(tmp_path, monkeypatch):
             first_user = model.requests[0]["messages"][1]["content"]
             assert "[В голограмме открыта заметка: Projects/IPAStore.md]" in first_user
             results = [m["content"] for m in model.requests[-1]["messages"] if m["role"] == "tool"]
-            assert any("фрагмент не найден" in v for v in results)          # ошибка ушла модели, не уронила Jarvis
-            assert any("Projects/Jarvis.md" in v for v in results)
-            assert ("open_note", {"path": "Projects/Jarvis.md"}) in seen
+            assert any("фрагмент не найден" in v for v in results)          # ошибка ушла модели, не уронила Atom
+            assert any("Projects/Atom.md" in v for v in results)
+            assert ("open_note", {"path": "Projects/Atom.md"}) in seen
             await j.close()
     asyncio.run(run())
 

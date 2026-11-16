@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#02070d">
+<meta name="theme-color" content="#0d0203">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="JARVIS">
-<title>J.A.R.V.I.S.</title>
+<meta name="apple-mobile-web-app-title" content="ATOM">
+<title>A.T.O.M.</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="static/icon.svg?v=15" type="image/svg+xml">
-<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=15">
+<link rel="icon" href="static/icon.svg?v=16" type="image/svg+xml">
+<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=16">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="static/app.css?v=15">
+<link rel="stylesheet" href="static/app.css?v=16">
 </head>
 <body>
 <div class="bg-grid" aria-hidden="true"></div>
@@ -23,7 +23,7 @@
 <!-- загрузка -->
 <div id="boot" class="boot">
   <div class="boot-inner">
-    <div class="boot-logo">J.A.R.V.I.S.</div>
+    <div class="boot-logo">A.T.O.M.</div>
     <div class="boot-sub">JUST A RATHER VERY INTELLIGENT SYSTEM</div>
     <pre id="boot-log" class="boot-log"></pre>
   </div>
@@ -41,7 +41,7 @@
 </div>
 
 <header class="top">
-  <div class="brand"><span class="brand-mark">J.A.R.V.I.S.</span><span class="brand-ver">MK·I</span></div>
+  <div class="brand"><span class="brand-mark">A.T.O.M.</span><span class="brand-ver">MK·I</span></div>
   <div class="chips">
     <span class="chip" id="chip-brain" title="Мозг Claude">BRAIN</span>
     <span class="chip" id="chip-sync" title="Связь с сервером и Obsidian">SYNC</span>
@@ -82,7 +82,7 @@
   <!-- центр -->
   <section class="col col-center" data-tab="core">
     <div class="reactor-wrap" id="reactor-wrap">
-      <canvas id="reactor" aria-label="Ядро Jarvis"></canvas>
+      <canvas id="reactor" aria-label="Ядро Atom"></canvas>
       <div class="reactor-state" id="reactor-state">ОЖИДАНИЕ</div>
       <div class="focus-timer hidden" id="focus-timer"></div>
     </div>
@@ -92,7 +92,7 @@
     </div>
     <div class="confirms" id="confirms"></div>
     <form class="command" id="cmd-form">
-      <button type="button" class="icon-btn" id="btn-mic" title="Говорить (или скажите «Джарвис»)" aria-label="Микрофон">
+      <button type="button" class="icon-btn" id="btn-mic" title="Говорить (или скажите «Атом»)" aria-label="Микрофон">
         <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-2.07A7 7 0 0 0 19 12h-2Z"/></svg>
       </button>
       <input id="cmd" placeholder="Команда, сэр…" autocomplete="off" enterkeyhint="send">
@@ -105,7 +105,7 @@
       </button>
     </form>
     <div class="toggles">
-      <label class="tgl"><input type="checkbox" id="opt-wake"><span>«ДЖАРВИС» — ПОСТОЯННОЕ ПРОСЛУШИВАНИЕ</span></label>
+      <label class="tgl"><input type="checkbox" id="opt-wake"><span>«АТОМ» — ПОСТОЯННОЕ ПРОСЛУШИВАНИЕ</span></label>
       <label class="tgl"><input type="checkbox" id="opt-fx" checked><span>ЭФФЕКТ ГОЛОСА</span></label>
       <label class="tgl"><input type="checkbox" id="opt-mute"><span>БЕЗ ЗВУКА</span></label>
       <button class="btn ghost" id="btn-holo">◈ ГОЛОГРАММА</button>
@@ -198,6 +198,6 @@
   <canvas id="holo-hands" class="holo-hands hidden"></canvas>
 </div>
 
-<script type="module" src="static/app.js?v=15"></script>
+<script type="module" src="static/app.js?v=16"></script>
 </body>
 </html>

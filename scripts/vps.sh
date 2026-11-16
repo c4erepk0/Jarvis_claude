@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# J.A.R.V.I.S. на своём VPS (Ubuntu 24.04 или Debian 12): служба systemd + Caddy (HTTPS получает сам).
+# A.T.O.M. на своём VPS (Ubuntu 24.04 или Debian 12): служба systemd + Caddy (HTTPS получает сам).
 #
 #   bash vps.sh install   — установить; повторный запуск безопасен (настройки и память сохраняются)
 #   bash vps.sh update    — скачать новую версию и перезапустить
@@ -48,9 +48,9 @@ get_env() { [ -f "$1" ] && sed -n "s/^$2=//p" "$1" | tail -n 1 || true; }
 
 render_unit() {
   cat <<EOF
-# J.A.R.V.I.S. — создано scripts/vps.sh
+# A.T.O.M. — создано scripts/vps.sh
 [Unit]
-Description=J.A.R.V.I.S. — личный ассистент
+Description=A.T.O.M. — личный ассистент
 After=network-online.target
 Wants=network-online.target
 
@@ -74,7 +74,7 @@ EOF
 
 render_caddy() {
   cat <<EOF
-# J.A.R.V.I.S. — создано scripts/vps.sh. Сертификат HTTPS Caddy получает и продлевает сам.
+# A.T.O.M. — создано scripts/vps.sh. Сертификат HTTPS Caddy получает и продлевает сам.
 $1 {
 	encode gzip
 	reverse_proxy 127.0.0.1:$PORT
@@ -162,8 +162,8 @@ fetch_code() {
     # на сервере код не правят руками: приводим к версии из GitHub (.env, data/, vault/ не трогаются)
     as_app git -C "$APP_DIR" checkout -q --force -B "$ref" FETCH_HEAD
   else
-    say "⬇️  Скачиваю Jarvis ($ref)…"
-    [ -z "$(ls -A "$APP_DIR")" ] || die "$APP_DIR не пуста и это не установка Jarvis — уберите её или задайте JARVIS_DIR."
+    say "⬇️  Скачиваю Atom ($ref)…"
+    [ -z "$(ls -A "$APP_DIR")" ] || die "$APP_DIR не пуста и это не установка Atom — уберите её или задайте JARVIS_DIR."
     git_app clone -q --branch "$ref" "$REPO" "$APP_DIR" \
       || die "Не удалось скачать $REPO. Репозиторий приватный — нужен GITHUB_TOKEN с правом Contents: read."
   fi
@@ -182,7 +182,7 @@ configure_env() {
   fi
   chown "$APP_USER:$APP_USER" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
-  # наружу смотрит только Caddy (HTTPS); сам Jarvis слушает лишь этот сервер
+  # наружу смотрит только Caddy (HTTPS); сам Atom слушает лишь этот сервер
   set_env "$ENV_FILE" JARVIS_HOST 127.0.0.1
   set_env "$ENV_FILE" JARVIS_PORT "$PORT"
   [ -n "$(get_env "$ENV_FILE" JARVIS_ACCESS_CODE)" ] \
@@ -195,7 +195,7 @@ configure_env() {
     [ "$VAULT_GIT" = "-" ] || set_env "$ENV_FILE" VAULT_GIT "$VAULT_GIT"
   }
   [ -n "$(get_env "$ENV_FILE" ANTHROPIC_API_KEY)" ] || {
-    ask ANTHROPIC_API_KEY "Ключ Claude API (Enter — пропустить, Jarvis будет работать на командах): " secret
+    ask ANTHROPIC_API_KEY "Ключ Claude API (Enter — пропустить, Atom будет работать на командах): " secret
     [ -z "${ANTHROPIC_API_KEY:-}" ] || set_env "$ENV_FILE" ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY"
   }
   [ -n "$(get_env "$ENV_FILE" TELEGRAM_BOT_TOKEN)" ] || {
@@ -242,7 +242,7 @@ wait_local() {
     sleep 1
   done
   journalctl -u jarvis -n 30 --no-pager 2>/dev/null || true
-  die "Jarvis не запустился — строки журнала выше. Настройки: nano $ENV_FILE, затем: systemctl restart jarvis"
+  die "Atom не запустился — строки журнала выше. Настройки: nano $ENV_FILE, затем: systemctl restart jarvis"
 }
 
 wait_https() {
@@ -259,7 +259,7 @@ check_net() {
   local name url code hint ca
   while IFS='|' read -r name url hint ca; do
     local -a extra=()
-    # GigaChat работает на сертификате Минцифры — проверяем им, как и сам Jarvis (jarvis/llm.py)
+    # GigaChat работает на сертификате Минцифры — проверяем им, как и сам Atom (jarvis/llm.py)
     [ -z "$ca" ] || [ ! -f "$APP_DIR/$ca" ] || extra=(--cacert "$APP_DIR/$ca")
     code=$(curl -s -o /dev/null --max-time 8 -w '%{http_code}' "${extra[@]}" "$url" 2>/dev/null || true)
     if [ -n "$code" ] && [ "$code" != "000" ]; then say "   ✓ $name"; else say "   ✗ $name — $hint"; fi
@@ -303,12 +303,12 @@ brain_env() {
 
 cmd_brain() {
   need_root brain
-  [ -f "$ENV_FILE" ] || die "Jarvis не установлен в $APP_DIR — сначала: bash $0 install"
+  [ -f "$ENV_FILE" ] || die "Atom не установлен в $APP_DIR — сначала: bash $0 install"
   brain_env "$ENV_FILE" "${JARVIS_LLM:-}"
-  say "⚙️  Перезапускаю Jarvis…"
+  say "⚙️  Перезапускаю Atom…"
   systemctl restart jarvis
   wait_local
-  say "🧠 Проверка: спрашиваю Jarvis «Представься одной фразой»…"
+  say "🧠 Проверка: спрашиваю Atom «Представься одной фразой»…"
   local code reply
   code=$(get_env "$ENV_FILE" JARVIS_ACCESS_CODE)
   reply=$(curl -sS --max-time 120 -H "Authorization: Bearer $code" -H "Content-Type: application/json" \
@@ -327,7 +327,7 @@ banner() {
   bar="══════════════════════════════════════════════════════════"
   say ""
   say "$bar"
-  say "  J.A.R.V.I.S. на сервере:  $url"
+  say "  A.T.O.M. на сервере:  $url"
   say "  Код входа:                $code"
   say "  В Safari: открыть ссылку → код → «Поделиться» → «На экран Домой»."
   say "  Ссылка постоянная, телефон и терминал можно выключать."
@@ -379,7 +379,7 @@ cmd_install() {
 
 cmd_update() {
   need_root update
-  [ -d "$APP_DIR/.git" ] || die "Jarvis не установлен в $APP_DIR — сначала: bash $0 install"
+  [ -d "$APP_DIR/.git" ] || die "Atom не установлен в $APP_DIR — сначала: bash $0 install"
   GITHUB_TOKEN=${GITHUB_TOKEN:-$(get_env "$ENV_FILE" GITHUB_TOKEN)}
   local ref=${JARVIS_REF:-$(git_root rev-parse --abbrev-ref HEAD)}
   fetch_code "$ref"

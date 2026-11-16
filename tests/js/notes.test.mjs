@@ -57,7 +57,7 @@ test("правка из голограммы не затирает измене�
   await assert.rejects(() => j.request("PUT", "/api/note", { path: "Home.md", content: "x" }), (e) => e.status === 400);
   await assert.rejects(() => j.vault.save("Home.md", "x", null), (e) => e instanceof VaultConflict);
   assert.equal(j.vault.findNote("ipastore"), "Projects/IPAStore.md");
-  assert.equal(j.vault.findNote("Projects/Jarvis"), "Projects/Jarvis.md");
+  assert.equal(j.vault.findNote("Projects/Atom"), "Projects/Atom.md");
   assert.equal(j.vault.findNote("несуществующее-слово-xyz"), null);
 });
 
@@ -65,7 +65,7 @@ test("«открой заметку» показывает её в гологр�
   const j = await makeJarvis();
   const seen = [];
   j.on((e) => seen.push(e));
-  const r = await j.handle("Джарвис, открой заметку IPAStore");
+  const r = await j.handle("Атом, открой заметку IPAStore");
   assert.equal(r.kind, "ok");
   assert.deepEqual(r.data, { open_note: "Projects/IPAStore.md" });
   assert.ok(seen.some((e) => e.type === "open_note" && e.data.path === "Projects/IPAStore.md"));
@@ -87,7 +87,7 @@ test("мозг правит открытую заметку инструмент
     { content: [tool("note_read", { path: "IPAStore" }, "t1")], stop_reason: "tool_use" },
     { content: [tool("note_edit", { path: "Projects/IPAStore.md", find: "status: active", replace: "status: paused" }, "t2"),
       tool("note_edit", { path: "Projects/IPAStore.md", find: "нет такого фрагмента", replace: "x" }, "t3")], stop_reason: "tool_use" },
-    { content: [tool("notes_list", { folder: "Projects" }, "t4"), tool("note_show", { path: "Jarvis" }, "t5"),
+    { content: [tool("notes_list", { folder: "Projects" }, "t4"), tool("note_show", { path: "Atom" }, "t5"),
       tool("note_create", { path: "Ideas/План", text: "# План\n" }, "t6")], stop_reason: "tool_use" },
     { content: [{ type: "text", text: "**Готово**, сэр:\n- статус — пауза" }], stop_reason: "end_turn" },
   ];
@@ -105,5 +105,5 @@ test("мозг правит открытую заметку инструмент
   const results = calls.at(-1).messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []))
     .filter((b) => b.type === "tool_result");
   assert.ok(results.some((b) => b.is_error && /фрагмент не найден/.test(b.content)));
-  assert.ok(seen.some((e) => e.type === "open_note" && e.data.path === "Projects/Jarvis.md"));
+  assert.ok(seen.some((e) => e.type === "open_note" && e.data.path === "Projects/Atom.md"));
 });

@@ -50,6 +50,10 @@ export const TOOLS = [
     input_schema: obj({ text: S, minutes: { type: "integer", minimum: 1 } }, ["text", "minutes"]) },
   { name: "projects_status", description: "Живой статус проектов: CI, PR, задачи GitHub, health, метрики.",
     input_schema: obj({ project: S }) },
+  { name: "projects_synthesis", description: "Синтез проектов по хранилищу: какие заметки относятся к проектам и что похоже на ещё не "
+      + "оформленный проект (тег, папка, узел ссылок, type: project). create — оформить кандидата проектом (заметка в Projects/ "
+      + "со ссылками на материалы); найденное подсвечивается в хранилище.",
+    input_schema: obj({ create: { ...S, description: "название кандидата, которого оформить проектом" } }) },
   { name: "project_delegate", description: "Поручить работу над кодом проекта: задача для @claude в репозитории "
     + "(он откроет PR). Требует подтверждения владельца.",
     input_schema: obj({ project: S, task: { ...S, description: "подробное техзадание" } }, ["project", "task"]) },
@@ -67,7 +71,7 @@ export const TOOLS = [
   { name: "weather_and_rates", description: "Текущая погода в городе владельца и курсы ЦБ.", input_schema: obj({}) },
 ];
 
-const PERSONA = `Ты — J.A.R.V.I.S., личный ИИ-ассистент владельца. Обращайся к нему «{title}»{name}.
+const PERSONA = `Ты — A.T.O.M., личный ИИ-ассистент владельца. Обращайся к нему «{title}»{name}.
 Манера: безупречно вежливый британский дворецкий с суховатым юмором — спокойный, точный, немногословный, заботливый без подобострастия.
 Ответы звучат голосом на iPhone: обычно 1–3 коротких предложения, без markdown, таблиц, списков и эмодзи, если владелец сам не попросил подробностей. Отвечай на языке владельца (обычно русский).
 
@@ -253,6 +257,13 @@ export class Brain {
         case "journal_note": res = await j.actNote(String(need("text"))); break;
         case "reminder_add": res = await j.actReminder(String(need("text")), Number(need("minutes")) * 60); break;
         case "projects_status": res = await j.actProjectStatus(a.project || null); break;
+        case "projects_synthesis": {
+          if (a.create) { res = await j.actSynthesisCreate(String(a.create)); break; }
+          const syn = j.actSynthesis();
+          j.emit("open_synthesis", {});
+          res = { projects: syn.projects.map((p) => ({ name: p.name, notes: p.notes, open_tasks: p.open_tasks })), candidates: syn.candidates };
+          break;
+        }
         case "project_delegate": {
           const item = j.actDelegate(String(need("project")), String(need("task")));
           pending = item;

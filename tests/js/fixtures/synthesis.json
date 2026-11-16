@@ -1,0 +1,384 @@
+{
+ "files": [
+  {
+   "path": "Projects/IPAStore.md",
+   "title": "IPAStore",
+   "folder": "Projects",
+   "ext": ".md",
+   "tags": [
+    "ipastore"
+   ],
+   "links": [],
+   "type": "project"
+  },
+  {
+   "path": "Projects/IPAStore/Встреча.md",
+   "title": "Встреча",
+   "folder": "Projects/IPAStore",
+   "ext": ".md",
+   "tags": [],
+   "links": [],
+   "type": ""
+  },
+  {
+   "path": "Ideas/Оплата Stars.md",
+   "title": "Оплата Stars",
+   "folder": "Ideas",
+   "ext": ".md",
+   "tags": [
+    "ipastore"
+   ],
+   "links": [],
+   "type": ""
+  },
+  {
+   "path": "Notes/Обзор рынка.md",
+   "title": "Обзор рынка",
+   "folder": "Notes",
+   "ext": ".md",
+   "tags": [],
+   "links": [
+    "IPAStore"
+   ],
+   "type": ""
+  },
+  {
+   "path": "Ремонт/Кухня.md",
+   "title": "Кухня",
+   "folder": "Ремонт",
+   "ext": ".md",
+   "tags": [
+    "ремонт"
+   ],
+   "links": [],
+   "type": ""
+  },
+  {
+   "path": "Ремонт/Ванная.md",
+   "title": "Ванная",
+   "folder": "Ремонт",
+   "ext": ".md",
+   "tags": [],
+   "links": [],
+   "type": ""
+  },
+  {
+   "path": "Ремонт/Смета.md",
+   "title": "Смета",
+   "folder": "Ремонт",
+   "ext": ".md",
+   "tags": [],
+   "links": [
+    "Кухня"
+   ],
+   "type": ""
+  },
+  {
+   "path": "Ideas/Кофейня 1.md",
+   "title": "Кофейня 1",
+   "folder": "Ideas",
+   "ext": ".md",
+   "tags": [
+    "кофейня"
+   ],
+   "links": [],
+   "type": ""
+  },
+  {
+   "path": "Ideas/Кофейня 2.md",
+   "title": "Кофейня 2",
+   "folder": "Ideas",
+   "ext": ".md",
+   "tags": [
+    "кофейня",
+    "идея"
+   ],
+   "links": [],
+   "type": ""
+  },
+  {
+   "path": "Inbox/Подкаст.md",
+   "title": "Подкаст",
+   "folder": "Inbox",
+   "ext": ".md",
+   "tags": [],
+   "links": [],
+   "type": "project"
+  },
+  {
+   "path": "Notes/Книга.md",
+   "title": "Книга",
+   "folder": "Notes",
+   "ext": ".md",
+   "tags": [],
+   "links": [],
+   "type": ""
+  },
+  {
+   "path": "Notes/Глава 1.md",
+   "title": "Глава 1",
+   "folder": "Notes",
+   "ext": ".md",
+   "tags": [],
+   "links": [
+    "Книга"
+   ],
+   "type": ""
+  },
+  {
+   "path": "Notes/Глава 2.md",
+   "title": "Глава 2",
+   "folder": "Notes",
+   "ext": ".md",
+   "tags": [],
+   "links": [
+    "Книга"
+   ],
+   "type": ""
+  },
+  {
+   "path": "Notes/План.md",
+   "title": "План",
+   "folder": "Notes",
+   "ext": ".md",
+   "tags": [],
+   "links": [
+    "Книга",
+    "Подкаст"
+   ],
+   "type": ""
+  },
+  {
+   "path": "Journal/2026-11-09.md",
+   "title": "2026-11-09",
+   "folder": "Journal",
+   "ext": ".md",
+   "tags": [
+    "ремонт"
+   ],
+   "links": [],
+   "type": ""
+  },
+  {
+   "path": "Templates/Встреча.md",
+   "title": "Встреча",
+   "folder": "Templates",
+   "ext": ".md",
+   "tags": [
+    "встреча"
+   ],
+   "links": [],
+   "type": ""
+  },
+  {
+   "path": "Projects/Сайт.md",
+   "title": "Сайт",
+   "folder": "Projects",
+   "ext": ".md",
+   "tags": [],
+   "links": [],
+   "type": "project"
+  },
+  {
+   "path": "Home.md",
+   "title": "Home",
+   "folder": "",
+   "ext": ".md",
+   "tags": [],
+   "links": [
+    "IPAStore",
+    "Ремонт/Кухня",
+    "Projects/Сайт"
+   ],
+   "type": ""
+  }
+ ],
+ "projects": [
+  {
+   "name": "IPAStore",
+   "note": "Projects/IPAStore.md",
+   "tag": "ipastore",
+   "status": "active"
+  },
+  {
+   "name": "Сайт",
+   "note": "Projects/Сайт.md",
+   "tag": "сайт",
+   "status": "idea"
+  }
+ ],
+ "tasks": [
+  {
+   "path": "Tasks/Inbox.md",
+   "tags": [
+    "кофейня"
+   ],
+   "open": true
+  },
+  {
+   "path": "Notes/Обзор рынка.md",
+   "tags": [
+    "ipastore"
+   ],
+   "open": true
+  }
+ ],
+ "expected": {
+  "projects": [
+   {
+    "name": "IPAStore",
+    "note": "Projects/IPAStore.md",
+    "tag": "ipastore",
+    "status": "active",
+    "notes": [
+     "Projects/IPAStore.md",
+     "Ideas/Оплата Stars.md",
+     "Notes/Обзор рынка.md",
+     "Projects/IPAStore/Встреча.md"
+    ],
+    "open_tasks": 1
+   },
+   {
+    "name": "Сайт",
+    "note": "Projects/Сайт.md",
+    "tag": "сайт",
+    "status": "idea",
+    "notes": [
+     "Projects/Сайт.md"
+    ],
+    "open_tasks": 0
+   }
+  ],
+  "candidates": [
+   {
+    "name": "Подкаст",
+    "tag": "подкаст",
+    "kinds": [
+     "note"
+    ],
+    "reasons": [
+     "заметка помечена как проект (type: project)"
+    ],
+    "notes": [
+     "Inbox/Подкаст.md",
+     "Notes/План.md"
+    ],
+    "open_tasks": 0,
+    "score": 7
+   },
+   {
+    "name": "Книга",
+    "tag": "книга",
+    "kinds": [
+     "hub"
+    ],
+    "reasons": [
+     "на заметку ссылаются 3 других"
+    ],
+    "notes": [
+     "Notes/Глава 1.md",
+     "Notes/Глава 2.md",
+     "Notes/Книга.md",
+     "Notes/План.md"
+    ],
+    "open_tasks": 0,
+    "score": 5
+   },
+   {
+    "name": "Ремонт",
+    "tag": "ремонт",
+    "kinds": [
+     "folder"
+    ],
+    "reasons": [
+     "папка Ремонт/: заметок — 3"
+    ],
+    "notes": [
+     "Ремонт/Ванная.md",
+     "Ремонт/Кухня.md",
+     "Ремонт/Смета.md"
+    ],
+    "open_tasks": 0,
+    "score": 4
+   },
+   {
+    "name": "Кофейня",
+    "tag": "кофейня",
+    "kinds": [
+     "tag"
+    ],
+    "reasons": [
+     "тег #кофейня: заметок — 2, открытых задач — 1"
+    ],
+    "notes": [
+     "Ideas/Кофейня 1.md",
+     "Ideas/Кофейня 2.md"
+    ],
+    "open_tasks": 1,
+    "score": 3
+   }
+  ],
+  "highlight": {
+   "Projects/IPAStore.md": {
+    "kind": "project",
+    "project": "IPAStore"
+   },
+   "Ideas/Оплата Stars.md": {
+    "kind": "project",
+    "project": "IPAStore"
+   },
+   "Notes/Обзор рынка.md": {
+    "kind": "project",
+    "project": "IPAStore"
+   },
+   "Projects/IPAStore/Встреча.md": {
+    "kind": "project",
+    "project": "IPAStore"
+   },
+   "Projects/Сайт.md": {
+    "kind": "project",
+    "project": "Сайт"
+   },
+   "Inbox/Подкаст.md": {
+    "kind": "candidate",
+    "project": "Подкаст"
+   },
+   "Notes/План.md": {
+    "kind": "candidate",
+    "project": "Подкаст"
+   },
+   "Notes/Глава 1.md": {
+    "kind": "candidate",
+    "project": "Книга"
+   },
+   "Notes/Глава 2.md": {
+    "kind": "candidate",
+    "project": "Книга"
+   },
+   "Notes/Книга.md": {
+    "kind": "candidate",
+    "project": "Книга"
+   },
+   "Ремонт/Ванная.md": {
+    "kind": "candidate",
+    "project": "Ремонт"
+   },
+   "Ремонт/Кухня.md": {
+    "kind": "candidate",
+    "project": "Ремонт"
+   },
+   "Ремонт/Смета.md": {
+    "kind": "candidate",
+    "project": "Ремонт"
+   },
+   "Ideas/Кофейня 1.md": {
+    "kind": "candidate",
+    "project": "Кофейня"
+   },
+   "Ideas/Кофейня 2.md": {
+    "kind": "candidate",
+    "project": "Кофейня"
+   }
+  }
+ }
+}

@@ -1,4 +1,4 @@
-"""Хранилище в GitHub-репозитории для серверного Jarvis + запуск с туннелем."""
+"""Хранилище в GitHub-репозитории для серверного Atom + запуск с туннелем."""
 import asyncio
 import subprocess
 from pathlib import Path
@@ -44,25 +44,25 @@ def test_clone_sync_and_union_merge(tmp_path):
         assert "скачано" in note and (vault / "Tasks" / "Inbox.md").exists()
         assert gs.branch == "main" and (vault / ".gitattributes").read_text().startswith("*.md merge=union")
 
-        # Jarvis записал задачу → она уходит в репозиторий
+        # Atom записал задачу → она уходит в репозиторий
         j = make_jarvis(tmp_path / "j", seed=False, vault_path=vault)
-        await j.handle("добавь задачу от Jarvis завтра")
+        await j.handle("добавь задачу от Atom завтра")
         await gs.sync()
         sh("pull", "-q", "--no-rebase", cwd=phone)
-        assert "от Jarvis" in (phone / "Tasks" / "Inbox.md").read_text(encoding="utf-8")
+        assert "от Atom" in (phone / "Tasks" / "Inbox.md").read_text(encoding="utf-8")
 
-        # одновременно: телефон и Jarvis дописали один и тот же файл — сохраняются обе строки
+        # одновременно: телефон и Atom дописали один и тот же файл — сохраняются обе строки
         inbox = phone / "Tasks" / "Inbox.md"
         inbox.write_text(inbox.read_text(encoding="utf-8") + "- [ ] ещё с телефона\n", encoding="utf-8")
         sh("commit", "-q", "-am", "phone", cwd=phone)
         sh("push", "-q", "origin", "HEAD:main", cwd=phone)
-        await j.handle("добавь задачу ещё от Jarvis")
+        await j.handle("добавь задачу ещё от Atom")
         changed = await gs.sync()
         assert "Tasks/Inbox.md" in changed
         text = (vault / "Tasks" / "Inbox.md").read_text(encoding="utf-8")
-        assert "ещё с телефона" in text and "ещё от Jarvis" in text and "<<<<" not in text
+        assert "ещё с телефона" in text and "ещё от Atom" in text and "<<<<" not in text
         sh("pull", "-q", "--no-rebase", cwd=phone)
-        assert "ещё от Jarvis" in inbox.read_text(encoding="utf-8")
+        assert "ещё от Atom" in inbox.read_text(encoding="utf-8")
         assert await gs.sync() == []
         await j.close()
     asyncio.run(run())

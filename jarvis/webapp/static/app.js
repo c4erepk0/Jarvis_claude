@@ -1,8 +1,8 @@
-// J.A.R.V.I.S. — дашборд. Без сборки и фреймворков: модули ES.
+// A.T.O.M. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=15";
-import { Voice } from "./voice.js?v=15";
+import { Reactor } from "./reactor.js?v=16";
+import { Voice } from "./voice.js?v=16";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -24,7 +24,7 @@ let diag = null;
 let taskView = "today";
 let ws = null;
 let greeted = false;
-let local = null;             // ядро Jarvis в браузере (режим «только iPhone»)
+let local = null;             // ядро Atom в браузере (режим «только iPhone»)
 let SA = null;                // модуль standalone.js
 const reactor = new Reactor($("#reactor"));
 const voice = new Voice({
@@ -58,8 +58,8 @@ async function boot() {
   for (const l of lines) { log.textContent += l + "\n"; await new Promise((r) => setTimeout(r, 170)); }
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
-    // сервера нет (GitHub Pages / с экрана «Домой») — Jarvis работает прямо на телефоне
-    SA = await import("./standalone.js?v=15");
+    // сервера нет (GitHub Pages / с экрана «Домой») — Atom работает прямо на телефоне
+    SA = await import("./standalone.js?v=16");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -111,7 +111,7 @@ async function start() {
   setInterval(() => loadWeather(), 15 * 60000);
   loadWeather();
   api("/api/diagnostics").then(renderDiag).catch(() => {});
-  say(`${greeting()}, ${S.title}. J.A.R.V.I.S. на связи. ${S.llm ? "" : "Работаю в режиме команд."}`, { speak: false });
+  say(`${greeting()}, ${S.title}. A.T.O.M. на связи. ${S.llm ? "" : "Работаю в режиме команд."}`, { speak: false });
 }
 
 function greeting() {
@@ -123,7 +123,7 @@ let stateTimer = null;
 async function loadState(first = false) {
   S = await api("/api/state");
   if (first) {
-    voice.wake = (S.voice.wake_word || "джарвис").toLowerCase();
+    voice.wake = (S.voice.wake_word || "атом").toLowerCase();
     voice.serverTTS = S.voice.server;
     if (SA) voice.preferredVoice = SA.loadSettings().voiceName;
     voice.muted = S.voice.muted || store.get("muted", false);
@@ -169,6 +169,7 @@ function handleEvent(e) {
       case "open_note": openNote(d.path); break;
       case "open_files": openFiles(); break;
       case "open_project": openFiles({ kind: "project", name: d.name }); break;
+      case "open_synthesis": openFiles({ kind: "synthesis", name: null }); break;
       case "vault":
         notes?.refresh();
         fm?.refresh();
@@ -485,7 +486,7 @@ function renderDiag(d) {
     meter("ПАМЯТЬ", d.ram.percent, `${d.ram.used_gb} / ${d.ram.total_gb} ГБ`),
     d.disk ? meter("ДИСК", d.disk.percent, `свободно ${d.disk.free_gb} ГБ`) : "",
     meter("СЕТЬ", Math.min(100, (d.net.rx_kbs + d.net.tx_kbs) / 50), `↓${d.net.rx_kbs} ↑${d.net.tx_kbs} КБ/с`),
-    `<div class="diag-foot"><span>АПТАЙМ ${d.uptime_h} Ч</span>${d.temp ? `<span>T ${d.temp}°</span>` : ""}${d.battery ? `<span>БАТ ${d.battery.percent}%${d.battery.plugged ? "⚡" : ""}</span>` : ""}<span>JARVIS ${d.jarvis.rss_mb} МБ</span></div>`,
+    `<div class="diag-foot"><span>АПТАЙМ ${d.uptime_h} Ч</span>${d.temp ? `<span>T ${d.temp}°</span>` : ""}${d.battery ? `<span>БАТ ${d.battery.percent}%${d.battery.plugged ? "⚡" : ""}</span>` : ""}<span>ATOM ${d.jarvis.rss_mb} МБ</span></div>`,
   ].join("");
   updateMetrics();
 }
@@ -749,7 +750,7 @@ tick(); setInterval(tick, 1000);
 let fm = null;
 async function fileManager() {
   if (fm) return fm;
-  const { FileManager } = await import("./files.js?v=15");
+  const { FileManager } = await import("./files.js?v=16");
   fm = new FileManager($("#fm"), {
     api, toast, store,
     projects: () => (S ? S.projects : []),
@@ -770,7 +771,9 @@ let notes = null;          // панель заметки в голограмм�
 let holoTitles = new Map();   // название заметки (строчными) → путь — для [[ссылок]]
 
 async function loadGraph() {
-  const g = await api("/api/graph");
+  const [g, syn] = await Promise.all([api("/api/graph"), api("/api/synthesis").catch(() => null)]);
+  // синтез проектов: кандидаты в проекты светятся в графе золотым
+  for (const n of g.nodes) n.syn = syn?.highlight?.[n.id]?.kind || "";
   holoTitles = new Map(g.nodes.map((n) => [n.title.toLowerCase(), n.id]));
   holo.setData(g);
 }
@@ -780,7 +783,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=15");
+    const { Hologram } = await import("./hologram.js?v=16");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -803,7 +806,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=15");
+  const { NotePanel } = await import("./note-panel.js?v=16");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -843,7 +846,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=15");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=16");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -894,7 +897,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=15").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=16").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -915,7 +918,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=15");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=16");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -928,7 +931,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=15");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=16");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),

@@ -1,5 +1,5 @@
-# J.A.R.V.I.S. в Docker.
-#   docker compose up -d                       — только Jarvis (папка ./vault — память Obsidian)
+# A.T.O.M. в Docker.
+#   docker compose up -d                       — только Atom (папка ./vault — память Obsidian)
 #   docker compose --profile livesync up -d    — + CouchDB и мост для Self-hosted LiveSync (iPhone, Android, ПК)
 #   docker compose --profile syncthing up -d   — + Syncthing (ПК, Android, сервер)
 # Подробно — docs/sync.md.

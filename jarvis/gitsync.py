@@ -1,9 +1,9 @@
-"""Хранилище Obsidian в GitHub-репозитории — для серверного Jarvis.
+"""Хранилище Obsidian в GitHub-репозитории — для серверного Atom.
 
-Тот же приватный репозиторий, что использует Obsidian на iPhone (плагин Obsidian Git) и Jarvis для
-iPhone: при старте Jarvis скачивает хранилище (`git clone`), а потом каждые ~20 секунд забирает
+Тот же приватный репозиторий, что использует Obsidian на iPhone (плагин Obsidian Git) и Atom для
+iPhone: при старте Atom скачивает хранилище (`git clone`), а потом каждые ~20 секунд забирает
 правки с телефона и отправляет свои. Заметки сливаются построчно (`*.md merge=union`): задача,
-дописанная на телефоне, и трата, записанная Jarvis в тот же файл, сохраняются обе.
+дописанная на телефоне, и трата, записанная Atom в тот же файл, сохраняются обе.
 
 Токен не пишется в .git/config — он передаётся каждой команде git через заголовок.
 """
@@ -90,7 +90,7 @@ class GitSync:
                 if backup:
                     note += f"; прежняя локальная папка сохранена как {backup.name}"
             else:
-                # пустой репозиторий — переносим туда то, что было локально (или Jarvis засеет шаблон)
+                # пустой репозиторий — переносим туда то, что было локально (или Atom засеет шаблон)
                 await self.git("checkout", "-q", "-b", "main", check=False)
                 self.branch = "main"
                 if backup:
@@ -115,7 +115,7 @@ class GitSync:
         if code == 1:
             _, names = await self.git("diff", "--cached", "--name-only")
             files = [n for n in names.splitlines() if n][:3]
-            await self.git("commit", "-q", "-m", "Jarvis: " + ", ".join(files))
+            await self.git("commit", "-q", "-m", "Atom: " + ", ".join(files))
         changed: list[str] = []
         remote_branch = await self._remote_branch()
         if remote_branch:

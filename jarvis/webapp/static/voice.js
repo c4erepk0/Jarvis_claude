@@ -1,10 +1,10 @@
-// Голос: распознавание речи (Web Speech API, слово-активатор «Джарвис») и озвучка ответов.
+// Голос: распознавание речи (Web Speech API, слово-активатор «Атом») и озвучка ответов.
 // Озвучка идёт через Web Audio: лёгкая «металлическая» окраска и эхо, как у ИИ из фильма.
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 export class Voice {
-  constructor({ wakeWord = "джарвис", onCommand, onState, onLevel, onHeard }) {
+  constructor({ wakeWord = "атом", onCommand, onState, onLevel, onHeard }) {
     this.wake = wakeWord.toLowerCase();
     this.onCommand = onCommand;
     this.onState = onState || (() => {});
@@ -194,7 +194,7 @@ export class Voice {
     return true;
   }
 
-  /** Диктовка (✌ в правке заметки): одна фраза → текст. Команду Jarvis не отправляет. */
+  /** Диктовка (✌ в правке заметки): одна фраза → текст. Команду Atom не отправляет. */
   dictate() {
     if (!this.supported) return Promise.reject(new Error("этот браузер не распознаёт речь"));
     this.unlock();
@@ -213,7 +213,7 @@ export class Voice {
           reject(new Error(error === "not-allowed" ? "нет доступа к микрофону" : error));
         } else resolve(text);
       };
-      r.finish = finish;            // stopRec() (например, Jarvis заговорил) — отдаём то, что успели услышать
+      r.finish = finish;            // stopRec() (например, Atom заговорил) — отдаём то, что успели услышать
       r.onresult = (e) => {
         interim = "";
         for (let i = e.resultIndex; i < e.results.length; i++) {

@@ -67,7 +67,8 @@ export class Notes {
       const tags = isNote ? noteTags(text) : [];
       for (const t of tags) counts.set(t, (counts.get(t) || 0) + 1);
       files.push({ path: rel, title: title(rel), folder: folderOf(rel), ext: ext(rel),
-        size: new TextEncoder().encode(text).length, mtime: null, tags, type: String(meta.type || "") });
+        size: new TextEncoder().encode(text).length, mtime: null, tags, type: String(meta.type || ""),
+        links: isNote ? linkTargets(text) : [] });
     }
     const res = { files, folders: this.vault.listDirs(),
       templates: files.filter((f) => f.path.startsWith(`${this.templates}/`) && f.ext === ".md").map((f) => f.path),
@@ -90,6 +91,22 @@ export class Notes {
     return out;
   }
 
+  /** Заметки, на которые ссылается эта, — как outlinks в Python. */
+  outlinks(rel) {
+    const titles = new Map();
+    for (const f of this.index().files) {
+      if (!titles.has(f.title.toLowerCase())) titles.set(f.title.toLowerCase(), f.path);
+      if (!titles.has(noExt(f.path).toLowerCase())) titles.set(noExt(f.path).toLowerCase(), f.path);
+    }
+    const out = [];
+    for (const t of linkTargets(this.vault.files.get(rel) ?? "")) {
+      const low = TEXT_EXT.includes(ext(t)) ? noExt(t).toLowerCase() : t.toLowerCase();
+      const dst = titles.get(low) || titles.get(low.split("/").pop());
+      if (dst && dst !== rel && !out.some((o) => o.path === dst)) out.push({ path: dst, title: title(dst) });
+    }
+    return out;
+  }
+
   async create(rel, { template = null, now, content = null } = {}) {
     rel = String(rel || "").trim().replace(/^\/+|\/+$/g, "");
     if (!rel) throw new VaultError("введите название заметки");
@@ -98,7 +115,7 @@ export class Notes {
     if (this.vault.exists(rel)) throw new VaultError(`заметка «${rel}» уже есть`);
     const name = title(rel);
     if (content == null) content = template ? fillTemplate(this.vault.read(template), name, now) : `# ${name}\n\n`;
-    const out = await this.vault.write(rel, content, `Jarvis: новая заметка ${rel}`);
+    const out = await this.vault.write(rel, content, `Atom: новая заметка ${rel}`);
     this.vault.dirs.delete(folderOf(out));
     return out;
   }
@@ -119,7 +136,7 @@ export class Notes {
         const text = this.vault.files.get(rel);
         let next = text;
         for (const [a, b] of renames) next = rewriteLinks(next, a, b);
-        if (next !== text) { await this.vault.write(rel, next, `Jarvis: ссылки на ${dst}`); updated.push(rel); }
+        if (next !== text) { await this.vault.write(rel, next, `Atom: ссылки на ${dst}`); updated.push(rel); }
       }
     }
     return { path: dst, moved: moved.length, updated };

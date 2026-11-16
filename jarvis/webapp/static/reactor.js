@@ -1,10 +1,10 @@
-// Ядро-«реактор»: кольца вращаются, свечение реагирует на голос (микрофон / речь Jarvis).
+// Ядро-«реактор»: кольца вращаются, свечение реагирует на голос (микрофон / речь Atom).
 // Внешние дуги — показатели дня: задачи, бюджет, нагрузка сервера.
 
 const TAU = Math.PI * 2;
 const COLORS = {
-  idle: [62, 232, 255], listening: [120, 245, 255], thinking: [62, 200, 255], speaking: [150, 250, 255],
-  alert: [255, 179, 71], error: [255, 77, 94],
+  idle: [255, 59, 48], listening: [255, 110, 90], thinking: [255, 40, 60], speaking: [255, 140, 115],
+  alert: [255, 179, 71], error: [255, 45, 111],
 };
 
 export class Reactor {
@@ -79,7 +79,7 @@ export class Reactor {
       ctx.shadowBlur = 0;
       ctx.beginPath(); ctx.arc(0, 0, arcR, start, start + span); ctx.stroke();
       const v = Math.max(0, Math.min(1, m.value || 0));
-      ctx.strokeStyle = v >= 1 ? "rgba(255,77,94,.95)" : v >= 0.8 ? "rgba(255,179,71,.95)" : this.rgba(0.9);
+      ctx.strokeStyle = v >= 1 ? "rgba(255,45,111,.95)" : v >= 0.8 ? "rgba(255,179,71,.95)" : this.rgba(0.9);
       ctx.shadowBlur = 10;
       ctx.beginPath(); ctx.arc(0, 0, arcR, start, start + span * v); ctx.stroke();
       // подпись

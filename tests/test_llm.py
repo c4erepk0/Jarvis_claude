@@ -1,5 +1,5 @@
 """Мозг на GigaChat и YandexGPT (jarvis/llm.py): поддельные API в формате из официальной документации —
-авторизация, вызов инструментов Jarvis, история, ошибки."""
+авторизация, вызов инструментов Atom, история, ошибки."""
 import asyncio
 import json
 import uuid
@@ -55,12 +55,12 @@ class FakeGigaChat:
 
     async def chat(self, request):
         body = await request.json()
-        if self.expire_first:                                   # токен протух — Jarvis должен взять новый
+        if self.expire_first:                                   # токен протух — Atom должен взять новый
             self.expire_first = False
             return web.json_response({"status": 401, "message": "Token has expired"}, status=401)
         assert request.headers["Authorization"] == f"Bearer tok{self.oauth_calls}"
         assert body["model"] == "GigaChat-2-Max" and body["function_call"] == "auto"
-        assert body["messages"][0]["role"] == "system" and "J.A.R.V.I.S." in body["messages"][0]["content"]
+        assert body["messages"][0]["role"] == "system" and "A.T.O.M." in body["messages"][0]["content"]
         assert {f["name"] for f in body["functions"]} >= {"task_add", "money_add"}
         self.chat_calls.append(body)
         if body["messages"][-1]["role"] == "user":

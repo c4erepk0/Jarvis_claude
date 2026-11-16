@@ -58,3 +58,19 @@ export function renameTarget(path, name, { dir = false } = {}) {
   const parent = parentOf(path);
   return parent ? `${parent}/${full}` : full;
 }
+
+/**
+ * Подсветка синтеза проектов (/api/synthesis → highlight: путь → { kind, project }) для дерева: заметки и папки,
+ * в которых они лежат. В папке с заметками проекта и кандидата — проект (он важнее).
+ */
+export function markSynthesis(highlight = {}) {
+  const marks = new Map();
+  for (const [path, mark] of Object.entries(highlight)) {
+    marks.set(path, mark);
+    for (let p = parentOf(path); p; p = parentOf(p)) {
+      const cur = marks.get(p);
+      if (!cur || (cur.kind === "candidate" && mark.kind === "project")) marks.set(p, { kind: mark.kind, project: mark.project });
+    }
+  }
+  return marks;
+}

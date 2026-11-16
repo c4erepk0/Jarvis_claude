@@ -103,7 +103,8 @@ class Notes:
                 counts[t] = counts.get(t, 0) + 1
             files.append({"path": rel, "title": Path(rel).stem, "folder": rel.rsplit("/", 1)[0] if "/" in rel else "",
                           "ext": Path(rel).suffix.lower(), "size": st.st_size, "mtime": int(st.st_mtime),
-                          "tags": tags, "type": str(meta.get("type") or "")})
+                          "tags": tags, "type": str(meta.get("type") or ""),
+                          "links": link_targets(text) if text else []})
         folders = sorted(self.vault.list_dirs())
         templates = [f["path"] for f in files if f["path"].startswith(self.templates + "/") and f["ext"] == ".md"]
         res = {"files": files, "folders": folders, "templates": templates,
@@ -127,6 +128,20 @@ class Notes:
                 if low == (path if "/" in t else title):
                     out.append({"path": other, "title": Path(other).stem})
                     break
+        return out
+
+    def outlinks(self, rel: str) -> list[dict]:
+        """Заметки, на которые ссылается эта ([[…]] в её тексте), — без несуществующих и без повторов."""
+        titles: dict[str, str] = {}
+        for f in self.index()["files"]:
+            titles.setdefault(f["title"].lower(), f["path"])
+            titles.setdefault(_noext(f["path"]).lower(), f["path"])
+        out: list[dict] = []
+        for t in link_targets(self.vault.read(rel, "")):
+            low = _noext(t).lower() if Path(t).suffix.lower() in TEXT_EXT else t.lower()
+            dst = titles.get(low) or titles.get(low.rsplit("/", 1)[-1])
+            if dst and dst != rel and all(o["path"] != dst for o in out):
+                out.append({"path": dst, "title": Path(dst).stem})
         return out
 
     # ---------- изменения ----------

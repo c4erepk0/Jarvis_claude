@@ -38,7 +38,7 @@ def test_frontmatter_and_search_and_graph(tmp_path):
     v = Vault(tmp_path)
     v.write("Projects/IPAStore.md", "---\ntype: project\nrepo: c4erepk0/IPAStore\ntags: [a, b]\nhealth:\n---\n"
                                     "Магазин приложений. Сертификаты Apple. [[Jarvis]]")
-    v.write("Projects/Jarvis.md", "# Jarvis\nАссистент с голосом.")
+    v.write("Projects/Jarvis.md", "# Atom\nАссистент с голосом.")
     meta, body = parse_frontmatter(v.read("Projects/IPAStore.md"))
     assert meta["repo"] == "c4erepk0/IPAStore" and meta["tags"] == ["a", "b"] and meta["health"] == []
     assert body.startswith("Магазин")

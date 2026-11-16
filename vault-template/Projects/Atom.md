@@ -3,9 +3,9 @@ type: project
 status: active
 repo: c4erepk0/Jarvis_claude
 path: ~/Jarvis_claude
-tag: jarvis
+tag: atom
 ---
-# Jarvis
+# Atom
 
 Личный ассистент: дашборд, голос, память в Obsidian.
 

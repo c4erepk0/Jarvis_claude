@@ -61,12 +61,12 @@ def banner(url: str, code: str, created: bool = False, again: bool = False) -> s
             f"{'  (сохранён в .env)' if created else ''}\n"
             "  Не набирайте localhost — Safari его не видит; только эту ссылку.\n"
             "  Терминал держите открытым: если iOS его усыпит, ссылка отдаст «no tunnel»,\n"
-            "  а после возврата в терминал Jarvis поднимет новую и покажет её здесь.\n"
+            "  а после возврата в терминал Atom поднимет новую и покажет её здесь.\n"
             f"  Затем «Поделиться» → «На экран „Домой“».\n{bar}\n")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="python -m jarvis", description="J.A.R.V.I.S.")
+    p = argparse.ArgumentParser(prog="python -m jarvis", description="A.T.O.M.")
     p.add_argument("--tunnel", nargs="?", const="auto", choices=["auto", "cloudflare", "localhostrun", "pinggy"],
                    help="открыть по https-ссылке в Safari/с телефона через бесплатный туннель")
     return p.parse_args(argv)
@@ -117,7 +117,7 @@ async def main(argv: list[str] | None = None) -> None:
     if telegram:
         background.append(asyncio.create_task(telegram.poll(), name="telegram"))
     shown = "localhost" if cfg.is_local_only else cfg.host
-    log.info("J.A.R.V.I.S. онлайн: http://%s:%s  · память: %s%s · мозг: %s · голос: %s", shown, cfg.port,
+    log.info("A.T.O.M. онлайн: http://%s:%s  · память: %s%s · мозг: %s · голос: %s", shown, cfg.port,
              jarvis.vault.root, f" ⇄ {cfg.vault_git}" if git else "",
              cfg.model if jarvis.brain.available else "только команды", cfg.tts_engine)
     tunnel = None
@@ -134,7 +134,7 @@ async def main(argv: list[str] | None = None) -> None:
                 pass
             if again and telegram:
                 try:
-                    await telegram.notify(f"Новая ссылка на Jarvis: {url}", "info")
+                    await telegram.notify(f"Новая ссылка на Atom: {url}", "info")
                 except Exception:  # noqa: BLE001
                     log.warning("Не удалось отправить новую ссылку в Telegram")
 

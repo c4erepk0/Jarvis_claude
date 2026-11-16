@@ -1,4 +1,4 @@
-"""Ядро Jarvis: все сервисы и действия в одном месте.
+"""Ядро Atom: все сервисы и действия в одном месте.
 
 Действия (`act_*`) вызывают и локальный разбор команд, и Claude (через инструменты), и REST API
 дашборда — поэтому поведение везде одинаковое. Внешние и необратимые действия (задача для @claude,
@@ -26,6 +26,7 @@ from .memory import Memory
 from .notes import Notes, note_tags
 from .projects import STATUSES, Projects
 from .reminders import Reminders
+from .synthesis import description as synthesis_description, synthesize
 from .tasks import TaskBook
 from .vault import Vault, VaultError, content_version
 from .voice import Voice
@@ -386,8 +387,26 @@ class Jarvis:
 
     def act_project_overview(self, name: str) -> dict:
         project = self._project(name)
-        return self.projects.overview(project, self.tasks.all(), self.notes.index()["files"],
-                                      self.notes.backlinks(project.note))
+        linked = self.notes.backlinks(project.note)
+        linked += [n for n in self.notes.outlinks(project.note) if n not in linked]   # «Материалы» проекта
+        return self.projects.overview(project, self.tasks.all(), self.notes.index()["files"], linked)
+
+    # ---------- синтез проектов ----------
+    def act_synthesis(self) -> dict:
+        """Какие заметки относятся к проектам и какие проекты ещё не оформлены (jarvis/synthesis.py)."""
+        tasks = [{"path": t.path, "tags": t.tags, "open": t.is_open} for t in self.tasks.all()]
+        return synthesize(self.notes.index()["files"], [p.as_dict() for p in self.projects.list()], tasks,
+                          projects_dir=self.cfg.projects_dir)
+
+    async def act_synthesis_create(self, name: str, status: str = "idea") -> dict:
+        """Оформить кандидата из синтеза проектом: заметка с его тегом и ссылками на материалы."""
+        key = name.lower().strip()
+        cands = self.act_synthesis()["candidates"]
+        c = next((c for c in cands if key in (c["name"].lower(), c["tag"])), None) \
+            or next((c for c in cands if key and key in c["name"].lower()), None)
+        if not c:
+            raise ValueError(f"в синтезе нет кандидата «{name}»")
+        return await self.act_project_create(c["name"], synthesis_description(c), tag=c["tag"], status=status)
 
     async def act_note(self, text: str) -> dict:
         when = self.now()
@@ -552,6 +571,9 @@ class Jarvis:
                          kind="ok", data=res)
         if it.name == "project_status":
             return await self._projects_reply(a.get("project"))
+        if it.name == "synthesis":
+            await self.hub.emit("open_synthesis", {}, log_it=False)
+            return self._synthesis_reply()
         if it.name == "delegate":
             item = self.act_delegate(a["project"], a["task"], a.get("mode", "github"))
             where = "запущу Claude Code на этом компьютере" if item.kind == "delegate_local" else \
@@ -618,6 +640,18 @@ class Jarvis:
             return Reply(f"Проектов пока нет. Создайте заметку в {self.cfg.projects_dir}/ с полем repo.")
         parts = [project_line(s) for s in statuses]
         return Reply(" ".join(parts), data=statuses)
+
+    def _synthesis_reply(self) -> Reply:
+        syn = self.act_synthesis()
+        cands = syn["candidates"]
+        linked = sum(len(p["notes"]) for p in syn["projects"])
+        head = f"Проектов: {len(syn['projects'])}, заметок при них: {linked}."
+        if not cands:
+            return Reply(f"{head} Новых проектов в хранилище не вижу, {self.title}.", data=syn)
+        names = ", ".join(
+            f"{c['name']} ({len(c['notes'])} {ru.plural(len(c['notes']), 'заметка', 'заметки', 'заметок')})"
+            for c in cands[:4])
+        return Reply(f"{head} Похоже на проекты: {names}. Подсветил их в хранилище.", kind="ok", data=syn)
 
     # ---------- состояние для дашборда ----------
     async def state(self, with_projects: bool = False) -> dict:
@@ -696,7 +730,8 @@ HELP = """Вот что я умею, {t}:
 • «Открой заметку IPAStore» — покажу её в голограмме; там же её можно поправить.
 • «Открой хранилище» — заметки и проекты: папки, теги, шаблоны, корзина.
 • «Создай проект Кофейня» · «открой проект IPAStore» — страница проекта: задачи, прогресс, заметки.
+• «Синтез проектов» — найду в хранилище заметки проектов и то, что похоже на новый проект, и подсвечу.
 • «Статус проектов» · «поручи IPAStore: добавить экспорт в CSV» (задача для @claude) ·
-  «поручи локально Jarvis: …» (Claude Code на этом компьютере) · «задеплой IPAStore».
+  «поручи локально Atom: …» (Claude Code на этом компьютере) · «задеплой IPAStore».
 • Протоколы: Утро, Фокус, Итоги дня, Неделя, Диагностика, Чистый лист, Вечеринка, Тишина и ваши из Obsidian.
 • С ключом Claude — свободный разговор, поиск в интернете и анализ фото (чеков, документов)."""

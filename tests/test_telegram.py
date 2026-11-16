@@ -1,5 +1,5 @@
 """Telegram, когда api.telegram.org недоступен или тормозит (например, закрыт у хостера):
-оповещения не тормозят Jarvis, журнал не засоряется, после возврата связи всё работает."""
+оповещения не тормозят Atom, журнал не засоряется, после возврата связи всё работает."""
 import asyncio
 import logging
 import time
@@ -66,7 +66,7 @@ def test_notify_does_not_wait_for_slow_telegram(tmp_path, caplog):
             await tg.close()                            # при выходе последние оповещения успевают уйти
             assert api.sent == ["🔴 Сборка IPAStore упала"]
 
-            # недоступен совсем: оповещение не роняет Jarvis, причина — в журнале
+            # недоступен совсем: оповещение не роняет Atom, причина — в журнале
             dead = Telegram(j, "T", OWNER, api="http://127.0.0.1:9", send_timeout=2)
             with caplog.at_level(logging.WARNING, logger="jarvis.telegram"):
                 await dead.notify("тест")
@@ -97,4 +97,4 @@ def test_poll_backs_off_logs_once_and_recovers(tmp_path, caplog):
     assert len(warnings) == 1 and "Conflict" in warnings[0].getMessage()   # 4 сбоя — одна запись
     assert "GitHub Actions" in warnings[0].getMessage()
     assert "снова доступен" in caplog.text
-    assert api.sent and "J.A.R.V.I.S. на связи" in api.sent[0]               # после возврата отвечает
+    assert api.sent and "A.T.O.M. на связи" in api.sent[0]               # после возврата отвечает

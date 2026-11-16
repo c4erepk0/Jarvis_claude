@@ -1,9 +1,9 @@
-"""Долговременная память Jarvis в Obsidian.
+"""Долговременная память Atom в Obsidian.
 
 - `Jarvis/Memory.md` — факты о владельце: «- 2026-11-08 — предпочитает кофе без сахара»;
-- `Jarvis/Profile.md` — свободный текст «обо мне», который Jarvis учитывает в каждом разговоре;
+- `Jarvis/Profile.md` — свободный текст «обо мне», который Atom учитывает в каждом разговоре;
 - `Jarvis/Conversations/2026-11-08.md` — журнал разговоров по дням;
-- `Journal/2026-11-08.md` — ежедневная заметка, куда Jarvis пишет события дня.
+- `Journal/2026-11-08.md` — ежедневная заметка, куда Atom пишет события дня.
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class Memory:
             return {"date": None, "text": fact, "duplicate": True}
         day = when.date().isoformat()
         self.vault.append_to_section(self.memory_path, "Факты", f"- {day} — {fact}",
-                                     header="# Память Jarvis\n\nЗдесь Jarvis хранит то, что узнал о вас. "
+                                     header="# Память Atom\n\nЗдесь Atom хранит то, что узнал о вас. "
                                             "Можно править вручную.\n\n")
         return {"date": day, "text": fact}
 
@@ -78,13 +78,13 @@ class Memory:
     def log_event(self, text: str, when: datetime) -> None:
         path = self.journal_path(when)
         header = f"# {when.date().isoformat()}\n\n"
-        self.vault.append_to_section(path, "Журнал Jarvis", f"- {when:%H:%M} {text}", header=header)
+        self.vault.append_to_section(path, "Журнал Atom", f"- {when:%H:%M} {text}", header=header)
 
     def log_dialog(self, user_text: str, reply: str, when: datetime, source: str = "") -> None:
         path = f"{self.dir}/Conversations/{when.date().isoformat()}.md"
         src = f" · {source}" if source and source != "dashboard" else ""
         block = (f"\n**Вы ({when:%H:%M}{src}):** {user_text.strip()}\n\n"
-                 f"**Jarvis:** {reply.strip()}\n")
+                 f"**Atom:** {reply.strip()}\n")
         self.vault.append(path, block, header=f"# Разговоры — {when.date().isoformat()}\n")
 
     def recent_dialog(self, when: datetime, limit_chars: int = 2500) -> str:
