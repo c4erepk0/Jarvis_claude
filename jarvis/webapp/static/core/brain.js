@@ -39,6 +39,11 @@ export const TOOLS = [
   { name: "note_edit", description: "Точечно поправить заметку: заменить фрагмент find на replace. find — точная копия куска "
     + "из note_read, встречается в заметке ровно один раз; пустой replace — удалить фрагмент.",
     input_schema: obj({ path: S, find: S, replace: S }, ["path", "find", "replace"]) },
+  { name: "note_move", description: "Переименовать или переместить заметку либо папку. Ссылки [[…]] на неё правятся во всех заметках.",
+    input_schema: obj({ path: { ...S, description: "что переместить: путь заметки или папки" },
+      to: { ...S, description: "новый путь, например Archive/Старая идея.md" } }, ["path", "to"]) },
+  { name: "note_delete", description: "Удалить заметку или папку — в корзину Obsidian (.trash). Требует подтверждения владельца.",
+    input_schema: obj({ path: { ...S, description: "путь или название заметки" } }, ["path"]) },
   { name: "journal_note", description: "Короткая запись в сегодняшнюю ежедневную заметку.",
     input_schema: obj({ text: S }, ["text"]) },
   { name: "reminder_add", description: "Напоминание через N минут (голосом и в Telegram).",
@@ -48,6 +53,13 @@ export const TOOLS = [
   { name: "project_delegate", description: "Поручить работу над кодом проекта: задача для @claude в репозитории "
     + "(он откроет PR). Требует подтверждения владельца.",
     input_schema: obj({ project: S, task: { ...S, description: "подробное техзадание" } }, ["project", "task"]) },
+  { name: "project_create", description: "Создать проект: заметка в папке проектов с полями и разделами Задачи, Заметки, Журнал.",
+    input_schema: obj({ name: S, description: S, repo: { ...S, description: "owner/repo на GitHub, если есть" },
+      status: { type: "string", enum: ["idea", "active", "paused", "done"] } }, ["name"]) },
+  { name: "project_update", description: "Сменить статус проекта (idea, active, paused, done) или его repo.",
+    input_schema: obj({ project: S, status: { type: "string", enum: ["idea", "active", "paused", "done"] }, repo: S }, ["project"]) },
+  { name: "project_overview", description: "Страница проекта: прогресс, открытые и выполненные задачи, заметки проекта, журнал.",
+    input_schema: obj({ project: S }, ["project"]) },
   { name: "project_deploy", description: "Запустить деплой проекта (GitHub Actions). Требует подтверждения.",
     input_schema: obj({ project: S }, ["project"]) },
   { name: "run_protocol", description: "Запустить протокол (утро, фокус, итоги, неделя, диагностика, чистый лист, "
@@ -68,7 +80,7 @@ const PERSONA = `Ты — J.A.R.V.I.S., личный ИИ-ассистент в�
 - Задачи, деньги, статусы проектов бери только из инструментов, ничего не выдумывай.
 - Деньги — в рублях; расход — отрицательная сумма. Категории: Еда, Кафе, Транспорт, Подписки, Связь, Дом, Здоровье, Спорт, Развлечения, Одежда, Образование, Бизнес, Подарки, Доход, Прочее.
 - Работа над кодом — через project_delegate с ясным техзаданием. Внешние действия ждут подтверждения владельца — так и скажи.
-- Заметки: показать владельцу — note_show (откроется в голограмме); найти — memory_search или notes_list; поправить — note_read, затем note_edit точным фрагментом; дописать — note_append; новая — note_create. Заметки правит и сам владелец в Obsidian — не переписывай их целиком без просьбы.
+- Заметки: показать владельцу — note_show (откроется в голограмме); найти — memory_search или notes_list; поправить — note_read, затем note_edit точным фрагментом; дописать — note_append; новая — note_create; переименовать или переложить — note_move; удалить — note_delete (в корзину, после подтверждения). Заметки правит и сам владелец в Obsidian — не переписывай их целиком без просьбы.
 - Каждое сообщение владельца начинается со служебной строки в квадратных скобках: дата, время, источник; если там указана открытая в голограмме заметка — «эта заметка», «здесь» означают её.
 
 Профиль владельца:
@@ -248,6 +260,28 @@ export class Brain {
             note: "Скажи владельцу, что действие ждёт подтверждения (кнопка или «подтверждаю»)." };
           break;
         }
+        case "note_move": {
+          let src = String(need("path"));
+          if (!j.vault.exists(src) && !j.vault.isDir(src)) src = j.vault.findNote(src) || src;
+          res = await j.actMoveNote(src, String(need("to")));
+          break;
+        }
+        case "note_delete": {
+          const item = j.askTrash(String(need("path")));
+          pending = item;
+          res = { status: "awaiting_confirmation", action_id: item.id, title: item.title };
+          break;
+        }
+        case "project_create":
+          res = await j.actProjectCreate(String(need("name")), String(a.description || ""), String(a.repo || ""), "", String(a.status || "active"));
+          break;
+        case "project_update": {
+          res = null;
+          for (const key of ["status", "repo"]) if (a[key]) res = await j.actProjectUpdate(String(need("project")), key, String(a[key]));
+          if (!res) throw new Error("укажи status или repo");
+          break;
+        }
+        case "project_overview": res = j.actProjectOverview(String(need("project"))); break;
         case "project_deploy": {
           const item = j.actDeploy(String(need("project")));
           pending = item;

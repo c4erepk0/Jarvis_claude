@@ -112,6 +112,31 @@ def dump_frontmatter(meta: dict[str, Any]) -> str:
     return f"---\n{body}\n---\n"
 
 
+def _noext_path(rel: str) -> str:
+    suffix = Path(rel).suffix
+    return rel[: -len(suffix)] if suffix else rel
+
+
+def set_frontmatter_field(text: str, key: str, value: Any) -> str:
+    """Меняет одно поле frontmatter, не трогая остальные строки (их правит человек в Obsidian).
+    Нет поля — дописывает в конец frontmatter, нет frontmatter — создаёт его."""
+    line = dump_frontmatter({key: value}).splitlines()[1]
+    lines = text.splitlines(keepends=True)
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            stripped = lines[i].rstrip("\r\n")
+            if stripped.strip() == "---":
+                lines.insert(i, line + "\n")
+                return "".join(lines)
+            if re.match(rf"^{re.escape(key)}\s*:", stripped):
+                j = i + 1      # значение-список `- x` на следующих строках — тоже заменяем
+                while j < len(lines) and re.match(r"^\s+-", lines[j]):
+                    j += 1
+                lines[i:j] = [line + "\n"]
+                return "".join(lines)
+    return f"---\n{line}\n---\n" + text
+
+
 RU_ENDINGS = re.compile(r"(иями|ями|ами|ого|его|ому|ему|ыми|ими|ов|ев|ей|ам|ям|ах|ях|ою|ею|ой|ий|ый|ая|яя|ое|ее|"
                         r"ые|ие|ую|юю|ом|ем|а|я|о|е|ы|и|у|ю|ь)$")
 
@@ -224,6 +249,64 @@ class Vault:
             insert -= 1
         lines.insert(insert, line)
         return self.write(rel, "\n".join(lines) + "\n")
+
+    # ---------- папки, перемещение, корзина ----------
+    def is_dir(self, rel: str) -> bool:
+        try:
+            return self.resolve(rel).is_dir()
+        except VaultError:
+            return False
+
+    def list_dirs(self) -> list[str]:
+        """Все папки хранилища, и пустые тоже (без служебных и скрытых)."""
+        out: list[str] = []
+        for dirpath, dirnames, _ in os.walk(self.root):
+            dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS and not d.startswith(".")]
+            out += [Path(dirpath, d).relative_to(self.root).as_posix() for d in dirnames]
+        return sorted(out)
+
+    def mkdir(self, rel: str) -> str:
+        path = self.resolve(rel)
+        if path.exists():
+            raise VaultError(f"«{rel}» уже есть")
+        path.mkdir(parents=True)
+        self.version += 1
+        return self.rel(path)
+
+    def move(self, src: str, dst: str) -> list[tuple[str, str]]:
+        """Переместить файл или папку. Возвращает пары (было, стало) для каждого перемещённого файла."""
+        a = self.resolve(src)
+        b = self.resolve(dst, for_write=not a.is_dir())
+        if not a.exists():
+            raise FileNotFoundError(src)
+        if b.exists():
+            raise VaultError(f"«{self.rel(b)}» уже есть")
+        if a.is_dir() and (b == a or a in b.parents):
+            raise VaultError("нельзя переместить папку внутрь неё самой")
+        if a == self.root:
+            raise VaultError("недопустимый путь")
+        old_base, new_base = self.rel(a), b.relative_to(self.root).as_posix()
+        files = [old_base] if a.is_file() else self.list_files(old_base, exts=set(TEXT_EXT))
+        b.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(a, b)
+        self.version += 1
+        return [(old, new_base + old[len(old_base):]) for old in files]
+
+    def trash(self, rel: str) -> str:
+        """Переносит файл или папку в `.trash/` (корзина Obsidian). Возвращает путь в корзине."""
+        path = self.resolve(rel)
+        if not path.exists() or path == self.root:
+            raise FileNotFoundError(rel)
+        name = self.rel(path)
+        target = self.root / ".trash" / name
+        n = 2
+        while target.exists():
+            target = self.root / ".trash" / f"{_noext_path(name)} {n}{path.suffix}"
+            n += 1
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(path, target)
+        self.version += 1
+        return target.relative_to(self.root).as_posix()
 
     def note(self, rel: str) -> tuple[dict[str, Any], str]:
         return parse_frontmatter(self.read(rel))

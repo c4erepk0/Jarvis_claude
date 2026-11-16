@@ -1,8 +1,8 @@
 // J.A.R.V.I.S. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=14";
-import { Voice } from "./voice.js?v=14";
+import { Reactor } from "./reactor.js?v=15";
+import { Voice } from "./voice.js?v=15";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -59,7 +59,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Jarvis работает прямо на телефоне
-    SA = await import("./standalone.js?v=14");
+    SA = await import("./standalone.js?v=15");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -164,10 +164,14 @@ function handleEvent(e) {
       case "refresh":
         refreshSoon(d.what);
         if (d.what === "notes" || d.what === "memory") notes?.refresh();
+        if (["notes", "memory", "tasks", "projects", "all"].includes(d.what)) fm?.refresh();
         break;
       case "open_note": openNote(d.path); break;
+      case "open_files": openFiles(); break;
+      case "open_project": openFiles({ kind: "project", name: d.name }); break;
       case "vault":
         notes?.refresh();
+        fm?.refresh();
         chip("#chip-sync", "on", true);
         addLog({ type: "log", ts: e.ts, data: { text: `Obsidian: изменено заметок — ${d.count}` } });
         break;
@@ -193,7 +197,9 @@ function handleEvent(e) {
 const TOOL_NAMES = { memory_search: "ищу в памяти", tasks_list: "смотрю задачи", task_add: "записываю задачу",
   money_add: "записываю операцию", finance_report: "считаю финансы", projects_status: "проверяю проекты",
   memory_remember: "запоминаю", note_read: "читаю заметку", web_search: "ищу в интернете", project_delegate: "готовлю поручение",
-  notes_list: "смотрю заметки", note_show: "открываю заметку", note_create: "создаю заметку", note_edit: "правлю заметку" };
+  notes_list: "смотрю заметки", note_show: "открываю заметку", note_create: "создаю заметку", note_edit: "правлю заметку",
+  note_move: "перекладываю заметку", note_delete: "готовлю удаление", project_create: "создаю проект",
+  project_update: "меняю проект", project_overview: "смотрю проект" };
 const toolName = (n) => TOOL_NAMES[n] || n;
 
 // ---------- диалог ----------
@@ -410,20 +416,23 @@ function renderProjects() {
         <button class="btn" data-act="delegate">◆ ПОРУЧИТЬ CLAUDE</button>
         ${p.deploy_workflow ? `<button class="btn warn" data-act="deploy">▲ ДЕПЛОЙ</button>` : ""}
         ${gh.url ? `<a class="btn ghost" href="${esc(gh.url)}" target="_blank" rel="noopener">GITHUB</a>` : ""}
-        <button class="btn ghost" data-act="note" data-path="${esc(p.note)}">ЗАМЕТКА</button>
+        <button class="btn ghost" data-act="page">▤ СТРАНИЦА</button>
       </div></div>`;
   }).join("");
 }
 $("#projects").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const name = b.closest(".proj").dataset.name;
-  if (b.dataset.act === "note") openNote(b.dataset.path);
+  if (b.dataset.act === "page") openFiles({ kind: "project", name });
   if (b.dataset.act === "deploy") {
     try { const r = await api(`/api/projects/${encodeURIComponent(name)}/deploy`, { method: "POST", body: {} }); renderConfirms([r.confirm]); }
     catch (err) { toast(err.message, "error"); }
   }
   if (b.dataset.act === "delegate") delegateForm(name);
 });
+$("#projects-new").addEventListener("click", async () => { (await fileManager()).newProject(); });
+$("#mem-files").addEventListener("click", () => openFiles());
+$("#btn-files").addEventListener("click", () => openFiles());
 $("#projects-refresh").addEventListener("click", () => { $("#projects").style.opacity = ".5"; loadProjects().finally(() => { $("#projects").style.opacity = ""; }); });
 
 function delegateForm(name) {
@@ -708,7 +717,11 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "/" && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
     e.preventDefault(); $("#cmd").focus();
   }
-  if (e.key === "Escape") { if (notes?.isOpen && notes.mode === "view") notes.close(); else closeModal(); }
+  if (e.key === "Escape") {
+    if (!$("#modal").classList.contains("hidden")) closeModal();
+    else if (!$("#holo").classList.contains("hidden")) { if (notes?.isOpen && notes.mode === "view") notes.close(); }
+    else if (fm?.isOpen) fm.escape();
+  }
 });
 
 // вкладки на телефоне
@@ -718,7 +731,10 @@ function setTab(tab) {
   $(map[tab]).classList.add("active");
   $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
 }
-$("#tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setTab(b.dataset.tab); });
+$("#tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.tab === "files") openFiles(); else setTab(b.dataset.tab);
+});
 setTab("core");
 
 // часы
@@ -728,6 +744,25 @@ function tick() {
   $("#clock-date").textContent = n.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" });
 }
 tick(); setInterval(tick, 1000);
+
+// ---------- хранилище: менеджер заметок и проектов (files.js) ----------
+let fm = null;
+async function fileManager() {
+  if (fm) return fm;
+  const { FileManager } = await import("./files.js?v=15");
+  fm = new FileManager($("#fm"), {
+    api, toast, store,
+    projects: () => (S ? S.projects : []),
+    openHolo: (path) => openNote(path),
+    delegate: (name) => delegateForm(name),
+    dictate: voice.supported ? () => voice.dictate() : null,
+    today: () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; },
+  });
+  return fm;
+}
+async function openFiles(view = null) {
+  try { await (await fileManager()).show(view); } catch (err) { toast(err.message, "error"); }
+}
 
 // ---------- голограмма ----------
 let holo = null;
@@ -745,7 +780,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=14");
+    const { Hologram } = await import("./hologram.js?v=15");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -768,7 +803,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=14");
+  const { NotePanel } = await import("./note-panel.js?v=15");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -808,7 +843,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=14");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=15");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -859,7 +894,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=14").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=15").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -880,7 +915,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=14");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=15");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -893,7 +928,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=14");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=15");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),

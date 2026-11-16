@@ -1,5 +1,8 @@
 // Проекты: заметки Projects/*.md + живой статус GitHub, health и метрики (например, IPAStore /jarvis/stats).
-import { parseFrontmatter, title } from "./vault.js";
+import { VaultError, dumpFrontmatter, parseFrontmatter, setFrontmatterField, title } from "./vault.js";
+
+export const STATUSES = { idea: "идея", active: "в работе", paused: "на паузе", done: "завершён" };
+export const slug = (name) => String(name).trim().toLowerCase().replace(/[^\p{L}\p{N}_-]+/gu, "-").replace(/^[-_]+|[-_]+$/g, "") || "project";
 
 const s = (meta, k) => {
   const v = meta[k];
@@ -23,7 +26,8 @@ export class Projects {
     const out = [];
     for (const rel of this.vault.list(this.folder)) {
       const [meta, body] = parseFrontmatter(this.vault.read(rel));
-      if (meta.type && meta.type !== "project") continue;
+      const nested = rel.slice(this.folder.length + 1).includes("/");     // Projects/IPAStore/Встреча.md — заметка проекта
+      if ((meta.type && meta.type !== "project") || (nested && meta.type !== "project")) continue;
       const name = title(rel);
       const desc = body.split("\n").map((l) => l.trim()).find((l) => l && !/^[#\-|>]/.test(l)) || "";
       out.push({ name, note: rel, status: s(meta, "status") || "active", repo: s(meta, "repo"), path: s(meta, "path"),
@@ -84,6 +88,59 @@ export class Projects {
   }
 
   statusAll() { return Promise.all(this.list().map((p) => this.status(p))); }
+
+  getExact(name) {
+    const key = String(name || "").toLowerCase().trim();
+    return this.list().find((p) => p.name.toLowerCase() === key) || null;
+  }
+
+  folderOf(p) { return p.note.replace(/\.[^./]+$/, ""); }
+
+  /** Новый проект — как Projects.create в jarvis/projects.py. stamp — «ГГГГ-ММ-ДД ЧЧ:ММ». */
+  async create(name, stamp, { description = "", repo = "", tag = "", status = "active" } = {}) {
+    name = String(name || "").replace(/[\\/:*?"<>|#^[\]]+/g, " ").trim();
+    if (!name) throw new Error("назовите проект");
+    if (this.getExact(name)) throw new Error(`проект «${name}» уже есть`);
+    if (!STATUSES[status]) throw new Error("статус: idea, active, paused или done");
+    const rel = `${this.folder}/${name}.md`;
+    if (this.vault.exists(rel)) throw new VaultError(`заметка «${rel}» уже есть`);
+    const meta = { type: "project", status, tag: slug(tag || name), repo: String(repo).trim(), created: stamp.slice(0, 10) };
+    const body = `# ${name}\n\n${String(description).trim() || "Описание проекта."}\n\n## Задачи\n\n## Заметки\n\n## Журнал\n- ${stamp} Проект создан\n`;
+    await this.vault.write(rel, dumpFrontmatter(meta) + body, `Jarvis: новый проект ${name}`);
+    return this.getExact(name);
+  }
+
+  async setField(p, key, value) {
+    if (key === "status" && !STATUSES[value]) throw new Error("статус: idea, active, paused или done");
+    if (!["status", "repo", "tag", "url", "health", "path", "deploy_workflow"].includes(key)) {
+      throw new Error(`поле ${key} так не меняется — поправьте заметку проекта`);
+    }
+    await this.vault.update(p.note, (cur) => setFrontmatterField(cur ?? "", key, String(value).trim()), `Jarvis: ${p.name} — ${key}`);
+    return this.getExact(p.name) || p;
+  }
+
+  /** Страница проекта: задачи (по тегу, в заметке и папке проекта), прогресс, заметки, журнал. */
+  overview(p, tasks, files, linked) {
+    const folder = `${this.folderOf(p)}/`;
+    const mine = tasks.filter((t) => t.tags.includes(p.tag) || t.path === p.note || t.path.startsWith(folder));
+    const open = mine.filter((t) => t.status === "todo" || t.status === "doing")
+      .sort((a, b) => b.priority - a.priority || (a.due || "9999").localeCompare(b.due || "9999") || a.text.localeCompare(b.text));
+    const done = mine.filter((t) => t.status === "done").sort((a, b) => (b.done || "").localeCompare(a.done || ""));
+    const journal = [];
+    let inJournal = false;
+    for (const line of this.vault.read(p.note).split("\n")) {
+      if (/^#{1,2} /.test(line)) inJournal = line.trim().toLowerCase() === "## журнал";
+      else if (inJournal && line.trim().startsWith("- ")) journal.push(line.trim().slice(2));
+    }
+    const notes = files.filter((f) => f.path.startsWith(folder));
+    const seen = new Set([...notes.map((n) => n.path), p.note]);
+    for (const n of linked) if (!seen.has(n.path)) notes.push(n);
+    const total = open.length + done.length;
+    return { ...p, status_label: STATUSES[p.status] || p.status, folder: folder.slice(0, -1),
+      progress: { done: done.length, total, percent: total ? Math.round((100 * done.length) / total) : 0 },
+      tasks: open, done: done.slice(0, 10), notes: notes.map((n) => ({ path: n.path, title: n.title })),
+      journal: journal.slice(-12).reverse() };
+  }
 
   async log(p, text, stamp) {
     await this.vault.appendToSection(p.note, "Журнал", `- ${stamp} ${text}`);

@@ -23,7 +23,8 @@ from .finance import Ledger
 from .github import GitHub, GitHubError
 from .hub import Hub
 from .memory import Memory
-from .projects import Projects
+from .notes import Notes, note_tags
+from .projects import STATUSES, Projects
 from .reminders import Reminders
 from .tasks import TaskBook
 from .vault import Vault, VaultError, content_version
@@ -71,6 +72,7 @@ class Jarvis:
         self.tasks = TaskBook(self.vault, cfg.tasks_file, skip=(f"{cfg.jarvis_dir}/Conversations/",))
         self.ledger = Ledger(self.vault, cfg.finance_dir, cfg.currency)
         self.memory = Memory(self.vault, cfg.jarvis_dir, cfg.journal_dir)
+        self.notes = Notes(self.vault)
         self.github = github or GitHub(cfg.github_token)
         self.projects = Projects(self.vault, cfg.projects_dir, self.github, claude_bin=cfg.claude_code_bin,
                                  permission_mode=cfg.claude_code_permission_mode,
@@ -194,6 +196,10 @@ class Jarvis:
             await self.log(f"Деплой запущен: {', '.join(done)}")
             await self.changed("projects")
             return Reply(f"Деплой запущен: {', '.join(done)}. Слежу за GitHub Actions.", kind="ok")
+        if item.kind == "trash":
+            res = await self.act_trash_note(p["path"])
+            name = self.vault.title_of(p["path"])
+            return Reply(f"Заметка «{name}» — в корзине Obsidian ({res['trash']}).", kind="ok")
         if item.kind == "forget":
             n = self.memory.forget(p["query"])
             await self.changed("memory")
@@ -208,12 +214,14 @@ class Jarvis:
 
     # ---------- действия ----------
     async def act_add_task(self, text: str, due: str | None = None, priority: str | None = None,
-                           project: str | None = None) -> dict:
+                           project: str | None = None, to_note: bool = False) -> dict:
+        """to_note — записать задачу в раздел «Задачи» заметки проекта, а не во входящие."""
         note, tags = None, []
         if project:
             proj = self.projects.get(project)
             if proj:
                 tags = [proj.tag]
+                note = proj.note if to_note else None
             else:
                 tags = [project.lower()]
         due_d = date.fromisoformat(due) if due else None
@@ -289,7 +297,8 @@ class Jarvis:
         rel = self.vault.rel(self.vault.resolve(path))
         return {"path": rel, "title": self.vault.title_of(rel), "content": text[:NOTE_LIMIT],
                 "version": content_version(text), "truncated": len(text) > NOTE_LIMIT,
-                "editable": len(text) <= NOTE_LIMIT and Path(rel).suffix.lower() in (".md", ".txt")}
+                "editable": len(text) <= NOTE_LIMIT and Path(rel).suffix.lower() in (".md", ".txt"),
+                "tags": note_tags(text), "backlinks": self.notes.backlinks(rel)}
 
     async def act_open_note(self, query: str) -> dict:
         """Показать заметку на экране — в голограмме на всех открытых дашбордах."""
@@ -320,6 +329,65 @@ class Jarvis:
             raise ValueError("фрагмент не найден — сначала прочитай заметку (note_read)" if not count else
                              f"фрагмент встречается {count} раз — возьми фрагмент длиннее, чтобы он был единственным")
         return await self.act_save_note(path, text.replace(find, replace, 1), content_version(text))
+
+    # ---------- менеджер заметок ----------
+    def act_files(self) -> dict:
+        return self.notes.index()
+
+    async def act_create_note(self, path: str, template: str | None = None, content: str | None = None) -> dict:
+        rel = self.notes.create(path, template=template or None, when=self.now(), content=content)
+        await self.log(f"Новая заметка «{self.vault.title_of(rel)}»", journal=False)
+        await self.changed("notes")
+        return {"path": rel, "version": content_version(self.vault.read(rel))}
+
+    async def act_mkdir(self, path: str) -> dict:
+        rel = self.notes.mkdir(path)
+        await self.changed("notes")
+        return {"path": rel}
+
+    async def act_move_note(self, src: str, dst: str) -> dict:
+        """Переименовать / переместить заметку или папку; ссылки [[…]] на неё правятся во всём хранилище."""
+        res = self.notes.move(src, dst)
+        if res.get("moved"):
+            extra = f", ссылки поправлены в {len(res['updated'])} заметках" if res["updated"] else ""
+            await self.log(f"«{src}» → «{res['path']}»{extra}", journal=False)
+        await self.changed("notes")
+        return res
+
+    async def act_trash_note(self, path: str) -> dict:
+        res = self.notes.trash(path)
+        await self.log(f"В корзину: «{path}»", journal=False)
+        await self.changed("notes")
+        return res
+
+    def ask_trash(self, path: str) -> PendingAction:
+        """Для мозга и голоса: удаление — только после подтверждения владельца."""
+        rel = path if self.vault.exists(path) or self.vault.is_dir(path) else self.vault.find_note(path)
+        if not rel:
+            raise ValueError(f"не нашёл заметку «{path}»")
+        return self.ask_confirm("trash", f"Переместить «{rel}» в корзину", {"path": rel})
+
+    # ---------- проекты: создание, статус, страница ----------
+    async def act_project_create(self, name: str, description: str = "", repo: str = "", tag: str = "",
+                                 status: str = "active") -> dict:
+        project = self.projects.create(name, self.now(), description=description, repo=repo, tag=tag, status=status)
+        await self.log(f"Новый проект: {project.name}")
+        await self.changed("projects")
+        await self.changed("notes")
+        return project.as_dict()
+
+    async def act_project_update(self, name: str, key: str, value: str) -> dict:
+        project = self._project(name)
+        updated = self.projects.set_field(project, key, value)
+        if key == "status":
+            self.projects.log(updated, f"Статус: {STATUSES.get(value, value)}", self.now())
+        await self.changed("projects")
+        return updated.as_dict()
+
+    def act_project_overview(self, name: str) -> dict:
+        project = self._project(name)
+        return self.projects.overview(project, self.tasks.all(), self.notes.index()["files"],
+                                      self.notes.backlinks(project.note))
 
     async def act_note(self, text: str) -> dict:
         when = self.now()
@@ -458,6 +526,20 @@ class Jarvis:
         if it.name == "note_open":
             res = await self.act_open_note(a["query"])
             return Reply(f"Открываю «{res['title']}» в голограмме, {t}.", kind="ok", data={"open_note": res["path"]})
+        if it.name == "files":
+            await self.hub.emit("open_files", {}, log_it=False)
+            return Reply(f"Открываю хранилище, {t}.", kind="ok", data={"open_files": True})
+        if it.name == "note_delete":
+            item = self.ask_trash(a["query"])
+            return Reply(f"{item.title}? Подтвердите.", kind="warn", confirm=item.as_dict())
+        if it.name == "project_create":
+            res = await self.act_project_create(a["name"])
+            await self.hub.emit("open_project", {"name": res["name"]}, log_it=False)
+            return Reply(f"Проект «{res['name']}» создан, {t}. Заметка — {res['note']}.", kind="ok", data=res)
+        if it.name == "project_open":
+            project = self._project(a["project"])
+            await self.hub.emit("open_project", {"name": project.name}, log_it=False)
+            return Reply(f"Открываю проект {project.name}, {t}.", kind="ok", data={"open_project": project.name})
         if it.name == "recall":
             return self._recall_reply(a.get("query", ""))
         if it.name == "note":
@@ -612,6 +694,8 @@ HELP = """Вот что я умею, {t}:
 • «Потратил 450 на кофе» · «получил 50 000 зарплата» · «сколько я потратил в этом месяце».
 • «Напомни через 20 минут позвонить» · «запомни, что …» · «найди в заметках …» · «заметка: …».
 • «Открой заметку IPAStore» — покажу её в голограмме; там же её можно поправить.
+• «Открой хранилище» — заметки и проекты: папки, теги, шаблоны, корзина.
+• «Создай проект Кофейня» · «открой проект IPAStore» — страница проекта: задачи, прогресс, заметки.
 • «Статус проектов» · «поручи IPAStore: добавить экспорт в CSV» (задача для @claude) ·
   «поручи локально Jarvis: …» (Claude Code на этом компьютере) · «задеплой IPAStore».
 • Протоколы: Утро, Фокус, Итоги дня, Неделя, Диагностика, Чистый лист, Вечеринка, Тишина и ваши из Obsidian.

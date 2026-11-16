@@ -77,6 +77,13 @@ TOOLS: list[dict] = [
      "description": "Точечно поправить заметку: заменить фрагмент find на replace. find — точная копия куска "
                     "из note_read, встречается в заметке ровно один раз; пустой replace — удалить фрагмент.",
      "input_schema": _obj({"path": S, "find": S, "replace": S}, ["path", "find", "replace"])},
+    {"name": "note_move",
+     "description": "Переименовать или переместить заметку либо папку. Ссылки [[…]] на неё правятся во всех заметках.",
+     "input_schema": _obj({"path": {**S, "description": "что переместить: путь заметки или папки"},
+                           "to": {**S, "description": "новый путь, например Archive/Старая идея.md"}}, ["path", "to"])},
+    {"name": "note_delete",
+     "description": "Удалить заметку или папку — в корзину Obsidian (.trash). Требует подтверждения владельца.",
+     "input_schema": _obj({"path": {**S, "description": "путь или название заметки"}}, ["path"])},
     {"name": "journal_note", "description": "Короткая запись в сегодняшнюю ежедневную заметку.",
      "input_schema": _obj({"text": S}, ["text"])},
     {"name": "reminder_add", "description": "Напоминание через N минут (голосом на дашборде и в Telegram).",
@@ -88,6 +95,16 @@ TOOLS: list[dict] = [
                     "(он откроет PR); mode=local — Claude Code на этом компьютере. Требует подтверждения владельца.",
      "input_schema": _obj({"project": S, "task": {**S, "description": "подробное техзадание"},
                            "mode": {"type": "string", "enum": ["github", "local"]}}, ["project", "task", "mode"])},
+    {"name": "project_create",
+     "description": "Создать проект: заметка в папке проектов с полями и разделами Задачи, Заметки, Журнал.",
+     "input_schema": _obj({"name": S, "description": S, "repo": {**S, "description": "owner/repo на GitHub, если есть"},
+                           "status": {"type": "string", "enum": ["idea", "active", "paused", "done"]}}, ["name"])},
+    {"name": "project_update", "description": "Сменить статус проекта (idea, active, paused, done) или его repo.",
+     "input_schema": _obj({"project": S, "status": {"type": "string", "enum": ["idea", "active", "paused", "done"]},
+                           "repo": S}, ["project"])},
+    {"name": "project_overview",
+     "description": "Страница проекта: прогресс, открытые и выполненные задачи, заметки проекта, журнал.",
+     "input_schema": _obj({"project": S}, ["project"])},
     {"name": "project_deploy", "description": "Запустить деплой проекта (GitHub Actions). Требует подтверждения.",
      "input_schema": _obj({"project": S}, ["project"])},
     {"name": "run_protocol", "description": "Запустить протокол (утро, фокус, итоги, неделя, диагностика, "
@@ -118,7 +135,8 @@ PERSONA = """Ты — J.A.R.V.I.S., личный ИИ-ассистент вла�
 - Работа над кодом проектов — через project_delegate: составь ясное техзадание. Внешние действия \
 (задача для @claude, Claude Code, деплой) ждут подтверждения владельца — так и скажи.
 - Заметки: показать владельцу — note_show (откроется в голограмме); найти — memory_search или notes_list; \
-поправить — note_read, затем note_edit точным фрагментом; дописать — note_append; новая — note_create. \
+поправить — note_read, затем note_edit точным фрагментом; дописать — note_append; новая — note_create; \
+переименовать или переложить — note_move; удалить — note_delete (в корзину, после подтверждения). \
 Заметки правит и сам владелец в Obsidian — не переписывай их целиком без просьбы.
 - Каждое сообщение владельца начинается со служебной строки в квадратных скобках: дата, время, источник; \
 если там указана открытая в голограмме заметка — «эта заметка», «здесь» означают её.
@@ -417,6 +435,14 @@ class Brain:
                 rel = j.vault.append(path, str(args["text"]))
                 await j.changed("memory")
                 res = {"ok": True, "path": rel}
+            elif name == "note_move":
+                src = str(args["path"])
+                src = src if j.vault.exists(src) or j.vault.is_dir(src) else (j.vault.find_note(src) or src)
+                res = await j.act_move_note(src, str(args["to"]))
+            elif name == "note_delete":
+                item = j.ask_trash(str(args["path"]))
+                pending = item.as_dict()
+                res = {"status": "awaiting_confirmation", "action_id": item.id, "title": item.title}
             elif name == "journal_note":
                 res = await j.act_note(str(args["text"]))
             elif name == "reminder_add":
@@ -428,6 +454,19 @@ class Brain:
                 pending = item.as_dict()
                 res = {"status": "awaiting_confirmation", "action_id": item.id, "title": item.title,
                        "note": "Скажи владельцу, что действие ждёт подтверждения (кнопка или «подтверждаю»)."}
+            elif name == "project_create":
+                res = await j.act_project_create(str(args["name"]), str(args.get("description") or ""),
+                                                 str(args.get("repo") or ""),
+                                                 status=str(args.get("status") or "active"))
+            elif name == "project_update":
+                res = {}
+                for key in ("status", "repo"):
+                    if args.get(key):
+                        res = await j.act_project_update(str(args["project"]), key, str(args[key]))
+                if not res:
+                    raise ValueError("укажи status или repo")
+            elif name == "project_overview":
+                res = j.act_project_overview(str(args["project"]))
             elif name == "project_deploy":
                 item = j.act_deploy(str(args["project"]))
                 pending = item.as_dict()

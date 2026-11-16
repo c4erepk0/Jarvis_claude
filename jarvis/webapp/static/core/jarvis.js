@@ -6,7 +6,8 @@ import { Vault, VaultError, checkPath, contentVersion } from "./vault.js";
 import { TaskBook } from "./tasks.js";
 import { Ledger } from "./finance.js";
 import { Memory, hhmm } from "./memory.js";
-import { Projects, projectLine } from "./projects.js";
+import { Projects, STATUSES, projectLine } from "./projects.js";
+import { Notes, noteTags } from "./notes.js";
 import { Briefing } from "./briefing.js";
 import { Brain } from "./brain.js";
 import { Protocols } from "./protocols.js";
@@ -19,6 +20,8 @@ export const HELP = `Вот что я умею, {t}:
 • «Потратил 450 на кофе» · «получил 50 000 зарплата» · «сколько я потратил в этом месяце».
 • «Напомни через 20 минут позвонить» · «запомни, что …» · «найди в заметках …» · «заметка: …».
 • «Открой заметку IPAStore» — покажу её в голограмме; там же её можно поправить.
+• «Открой хранилище» — заметки и проекты: папки, теги, шаблоны, корзина.
+• «Создай проект Кофейня» · «открой проект IPAStore» — страница проекта: задачи, прогресс, заметки.
 • «Статус проектов» · «поручи IPAStore: добавить экспорт в CSV» (задача для @claude) · «задеплой IPAStore».
 • Протоколы: Утро, Фокус, Итоги дня, Неделя, Диагностика, Чистый лист, Вечеринка, Тишина и ваши из Obsidian.
 • С ключом Claude — свободный разговор, поиск в интернете и разбор фото чеков.`;
@@ -31,6 +34,7 @@ export class Jarvis {
     this.tasks = new TaskBook(this.vault, "Tasks/Inbox.md", ["Jarvis/Conversations/"]);
     this.ledger = new Ledger(this.vault, "Finance", settings.currency || "RUB");
     this.memory = new Memory(this.vault);
+    this.notes = new Notes(this.vault);
     this.github = github;
     this.projects = new Projects(this.vault, "Projects", github, { fetchImpl,
       statsToken: (p) => (settings.statsTokens || {})[p.name] || "" });
@@ -121,6 +125,10 @@ export class Jarvis {
       this.changed("projects");
       return { text: `Деплой запущен: ${names.join(", ")}. Слежу за GitHub Actions.`, kind: "ok" };
     }
+    if (item.kind === "trash") {
+      const r = await this.actTrashNote(item.params.path);
+      return { text: `Заметка «${item.params.path.split("/").pop().replace(/\.[^.]+$/, "")}» — в корзине Obsidian (${r.trash}).`, kind: "ok" };
+    }
     if (item.kind === "forget") {
       const n = await this.memory.forget(item.params.query);
       this.changed("memory");
@@ -135,10 +143,15 @@ export class Jarvis {
   }
 
   // ---------- действия ----------
-  async actAddTask(text, due = null, priority = null, project = null) {
-    let tags = [];
-    if (project) { const p = this.projects.get(project); tags = [p ? p.tag : project.toLowerCase()]; }
-    const t = await this.tasks.add(text, this.today(), { due, priority, tags });
+  // toNote — записать задачу в раздел «Задачи» заметки проекта, а не во входящие
+  async actAddTask(text, due = null, priority = null, project = null, toNote = false) {
+    let tags = [], note = null;
+    if (project) {
+      const p = this.projects.get(project);
+      tags = [p ? p.tag : project.toLowerCase()];
+      if (p && toNote) note = p.note;
+    }
+    const t = await this.tasks.add(text, this.today(), { due, priority, tags, note });
     await this.log(`Новая задача: ${t.text}`);
     this.changed("tasks");
     return t;
@@ -185,7 +198,8 @@ export class Jarvis {
     const rel = checkPath(path);
     return { path: rel, title: rel.split("/").pop().replace(/\.[^.]+$/, ""), content: text.slice(0, NOTE_LIMIT),
       version: contentVersion(text), truncated: text.length > NOTE_LIMIT,
-      editable: text.length <= NOTE_LIMIT && /\.(md|txt)$/i.test(rel) };
+      editable: text.length <= NOTE_LIMIT && /\.(md|txt)$/i.test(rel),
+      tags: noteTags(text), backlinks: this.notes.backlinks(rel) };
   }
   actOpenNote(query) {
     const path = this.vault.findNote(query);
@@ -210,6 +224,52 @@ export class Jarvis {
         : `фрагмент встречается ${count} раз — возьми фрагмент длиннее, чтобы он был единственным`);
     }
     return this.actSaveNote(path, text.replace(find, () => replace), contentVersion(text));
+  }
+
+  // ---------- менеджер заметок ----------
+  actFiles() { return this.notes.index(); }
+  async actCreateNote(path, template = null, content = null) {
+    const rel = await this.notes.create(path, { template, now: this.now(), content });
+    await this.log(`Новая заметка «${rel.split("/").pop().replace(/\.[^.]+$/, "")}»`, false);
+    this.changed("notes");
+    return { path: rel, version: contentVersion(this.vault.read(rel)) };
+  }
+  async actMkdir(path) { const rel = this.notes.mkdir(path); this.changed("notes"); return { path: rel }; }
+  async actMoveNote(src, dst) {
+    const r = await this.notes.move(src, dst);
+    if (r.moved) await this.log(`«${src}» → «${r.path}»${r.updated.length ? `, ссылки поправлены в ${r.updated.length} заметках` : ""}`, false);
+    this.changed("notes");
+    return r;
+  }
+  async actTrashNote(path) {
+    const r = await this.notes.trash(path);
+    await this.log(`В корзину: «${path}»`, false);
+    this.changed("notes");
+    return r;
+  }
+  askTrash(path) {
+    const rel = this.vault.exists(path) || this.vault.isDir(path) ? path : this.vault.findNote(path);
+    if (!rel) throw new Error(`не нашёл заметку «${path}»`);
+    return this.askConfirm("trash", `Переместить «${rel}» в корзину`, { path: rel });
+  }
+
+  // ---------- проекты: создание, статус, страница ----------
+  async actProjectCreate(name, description = "", repo = "", tag = "", status = "active") {
+    const p = await this.projects.create(name, `${this.today()} ${this.hhmm()}`, { description, repo, tag, status });
+    await this.log(`Новый проект: ${p.name}`);
+    this.changed("projects");
+    this.changed("notes");
+    return p;
+  }
+  async actProjectUpdate(name, key, value) {
+    const p = await this.projects.setField(this.project(name), key, value);
+    if (key === "status") await this.projects.log(p, `Статус: ${STATUSES[value] || value}`, `${this.today()} ${this.hhmm()}`);
+    this.changed("projects");
+    return p;
+  }
+  actProjectOverview(name) {
+    const p = this.project(name);
+    return this.projects.overview(p, this.tasks.all(), this.notes.index().files, this.notes.backlinks(p.note));
   }
 
   async actNote(text) {
@@ -310,6 +370,21 @@ export class Jarvis {
       case "note_open": {
         const r = this.actOpenNote(a.query);
         return { text: `Открываю «${r.title}» в голограмме, ${t}.`, kind: "ok", data: { open_note: r.path } };
+      }
+      case "files": this.emit("open_files", {}); return { text: `Открываю хранилище, ${t}.`, kind: "ok", data: { open_files: true } };
+      case "note_delete": {
+        const item = this.askTrash(a.query);
+        return { text: `${item.title}? Подтвердите.`, kind: "warn", confirm: item };
+      }
+      case "project_create": {
+        const p = await this.actProjectCreate(a.name);
+        this.emit("open_project", { name: p.name });
+        return { text: `Проект «${p.name}» создан, ${t}. Заметка — ${p.note}.`, kind: "ok", data: p };
+      }
+      case "project_open": {
+        const p = this.project(a.project);
+        this.emit("open_project", { name: p.name });
+        return { text: `Открываю проект ${p.name}, ${t}.`, kind: "ok", data: { open_project: p.name } };
       }
       case "recall": return this.recallReply(a.query);
       case "note": { const r = await this.actNote(a.text); return { text: `Записал в журнал, ${t}.`, kind: "ok", data: r }; }
@@ -462,7 +537,25 @@ export class Jarvis {
     }
     if (p === "/api/finance" && method === "GET") return this.actFinance(q.month || null);
     if (p === "/api/finance") return this.actMoney(Math.round(Number(String(body.amount).replace(",", ".")) * 100), body.category || "Прочее", body.note || "", body.date || null);
+    if (p === "/api/projects" && method === "POST") {
+      return this.actProjectCreate(String(body.name || ""), String(body.description || ""), String(body.repo || ""),
+        String(body.tag || ""), String(body.status || "active"));
+    }
     if (p === "/api/projects") return this.actProjectStatus();
+    if ((m = /^\/api\/projects\/([^/]+)$/.exec(p)) && method === "GET") return this.actProjectOverview(decodeURIComponent(m[1]));
+    if ((m = /^\/api\/projects\/([^/]+)\/update$/.exec(p))) {
+      return this.actProjectUpdate(decodeURIComponent(m[1]), String(body.key || "status"), String(body.value || ""));
+    }
+    if ((m = /^\/api\/projects\/([^/]+)\/task$/.exec(p))) {
+      return this.actAddTask(String(body.text || ""), body.due || null, body.priority || null, decodeURIComponent(m[1]), true);
+    }
+    if (p === "/api/files" && method === "GET") return this.actFiles();
+    if ((m = /^\/api\/files\/(new|folder|move|trash)$/.exec(p))) {
+      if (m[1] === "new") return this.actCreateNote(String(body.path || ""), body.template || null, body.content ?? null);
+      if (m[1] === "folder") return this.actMkdir(String(body.path || ""));
+      if (m[1] === "move") return this.actMoveNote(String(body.from || ""), String(body.to || ""));
+      return this.actTrashNote(String(body.path || ""));
+    }
     if ((m = /^\/api\/projects\/([^/]+)\/(delegate|deploy)$/.exec(p))) {
       const name = decodeURIComponent(m[1]);
       const item = m[2] === "delegate" ? this.actDelegate(name, String(body.task || "").trim() || (() => { throw new Error("не указано, что сделать"); })())

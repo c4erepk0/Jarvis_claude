@@ -208,10 +208,43 @@ def build_app(jarvis: Jarvis) -> web.Application:
                                   str(d.get("mode") or "github"))
         elif action == "deploy":
             item = j.act_deploy(name)
+        elif action == "update":
+            return ok(await j.act_project_update(name, str(d.get("key") or "status"), str(d.get("value") or "")))
+        elif action == "task":
+            return ok(await j.act_add_task(str(d.get("text", "")), d.get("due") or None, d.get("priority") or None,
+                                           name, to_note=True))
         else:
             raise ValueError("неизвестное действие")
         await j.hub.emit("pending", {"id": item.id, "state": "new", "item": item.as_dict()}, log_it=False)
         return ok({"confirm": item.as_dict()})
+
+    async def project_create(request):
+        d = await body(request)
+        return ok(await j.act_project_create(str(d.get("name", "")), str(d.get("description") or ""),
+                                             str(d.get("repo") or ""), str(d.get("tag") or ""),
+                                             str(d.get("status") or "active")))
+
+    async def project_get(request):
+        return ok(j.act_project_overview(request.match_info["name"]))
+
+    # ---------- менеджер заметок ----------
+    async def files_get(_):
+        loop = asyncio.get_running_loop()
+        return ok(await loop.run_in_executor(None, j.act_files))
+
+    async def files_action(request):
+        d, action = await body(request), request.match_info["action"]
+        if action == "new":
+            content = d.get("content")
+            return ok(await j.act_create_note(str(d.get("path", "")), str(d.get("template") or "") or None,
+                                              None if content is None else str(content)))
+        if action == "folder":
+            return ok(await j.act_mkdir(str(d.get("path", ""))))
+        if action == "move":
+            return ok(await j.act_move_note(str(d.get("from", "")), str(d.get("to", ""))))
+        if action == "trash":
+            return ok(await j.act_trash_note(str(d.get("path", ""))))
+        raise ValueError("неизвестное действие")
 
     async def job_get(request):
         job = j.projects.jobs.get(request.match_info["id"])
@@ -351,7 +384,11 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/finance", finance_get)
     r.add_post("/api/finance", finance_add)
     r.add_get("/api/projects", projects_get)
+    r.add_post("/api/projects", project_create)
+    r.add_get("/api/projects/{name}", project_get)
     r.add_post("/api/projects/{name}/{action}", project_action)
+    r.add_get("/api/files", files_get)
+    r.add_post("/api/files/{action}", files_action)
     r.add_get("/api/jobs/{id}", job_get)
     r.add_post("/api/jobs/{id}/cancel", job_cancel)
     r.add_post("/api/confirm/{id}", confirm)

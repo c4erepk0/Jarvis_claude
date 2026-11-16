@@ -50,6 +50,9 @@ FEW_SHOT: dict[str, list[dict]] = {
     "note_show": [{"request": "открой заметку про IPAStore", "params": {"path": "IPAStore"}}],
     "notes_list": [{"request": "какие у меня есть заметки по проектам", "params": {"folder": "Projects"}}],
     "run_protocol": [{"request": "включи режим фокуса", "params": {"name": "фокус"}}],
+    "project_create": [{"request": "создай проект Сайт студии", "params": {"name": "Сайт студии"}}],
+    "note_move": [{"request": "переименуй заметку Идея в Идея кофейни",
+                   "params": {"path": "Идея", "to": "Идея кофейни.md"}}],
 }
 
 
