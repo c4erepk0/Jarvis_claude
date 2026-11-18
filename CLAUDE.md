@@ -3,8 +3,9 @@
 Этот файл читают Claude Code и `@claude` в GitHub. При заметных изменениях — обновляйте.
 
 ## Что это
-Личный ассистент владельца (@c4erepk0) — **Atom** (бывший Jarvis): голос + HUD-дашборд в духе «Железного человека»
-(палитра — красная), память в хранилище Obsidian (markdown), проекты (IPAStore и др.), задачи, финансы.
+Личный ассистент владельца (@c4erepk0) — **Atom** (бывший Jarvis): голос + дашборд (тёплый графит с красным
+акцентом; спокойный стиль без «HUD-клише» — без сканлайнов, неона и уголков-прицелов, шрифт Manrope, заголовки обычным
+регистром), память в хранилище Obsidian (markdown), проекты (IPAStore и др.), задачи, финансы.
 Интерфейс, тексты, комментарии, README и описания PR — **на русском**.
 Внутренние имена после ребрендинга прежние (пакет `jarvis`, `JARVIS_*`, класс `Jarvis`, папка `Jarvis/` в хранилище) —
 ради совместимости с установками; в текстах для человека — «Atom» / «Атом».
@@ -25,7 +26,16 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `docs/brain.md`. В JS-ядро для iPhone не перенесено намеренно: из браузера к этим API не обратиться.
 - `jarvis/protocols.py` — протоколы (встроенные + `Jarvis/Protocols.md`).
 - `jarvis/vault.py` — безопасные пути, атомарная запись, frontmatter, поиск, граф, наблюдение за изменениями.
-- `jarvis/tasks.py` (формат Obsidian Tasks) · `jarvis/finance.py` (таблицы по месяцам, копейки) · `jarvis/memory.py`.
+- `jarvis/tasks.py` (формат Obsidian Tasks) · `jarvis/finance.py` (таблицы по месяцам, копейки; `analytics()` —
+  динамика, категории к среднему, регулярные платежи, частые операции, выводы) · `jarvis/memory.py`.
+- `jarvis/assets.py` — активы и долги (`Finance/Assets.md`), котировки без ключей (`Quotes`: Мосбиржа ISS, CoinGecko,
+  ЦБ; в тестах — фейк из `conftest.py`), оценка имущества по виду (`PROPERTY`), долги из проектов с тегом `долг`,
+  история капитала (`Finance/Capital.md`). `GET /api/finance/analytics`, `GET/POST /api/finance/assets`, интенты
+  `finance_analytics`, `assets_report`, инструменты Claude с теми же именами. JS — `core/finance.js` (`analytics`),
+  `core/assets.js`; ответ обязан совпадать с Python: общий `tests/js/fixtures/finance.json`
+  (`REGEN_FIXTURES=1 python -m pytest tests/test_assets.py`). Окно — `static/finance.js`, графики — `static/fin-charts.js`.
+- `jarvis/apps.py` — каталог приложений: проекты с `catalog: true` и заметки `type: app`; `GET/POST /api/apps`,
+  JS — `core/apps.js`, панель «Приложения» в `app.js`.
 - `jarvis/notes.py` — менеджер заметок: индекс хранилища (`/api/files`), теги, обратные ссылки, шаблоны
   (`Templates/`), перенос/переименование с правкой `[[ссылок]]`, корзина `.trash/` (как в Obsidian); то же —
   `core/notes.js`. Тест — `tests/test_files.py` и `tests/js/files.test.mjs`.
@@ -40,7 +50,9 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   в заметке и папке `Projects/<Проект>/`, прогресс, заметки, журнал). Заметки в папке проекта — не проекты.
 - `jarvis/web.py` — REST + WebSocket + вход; `jarvis/hub.py` — шина событий; `jarvis/watchers.py` — фоновые датчики.
 - `jarvis/voice.py` (TTS), `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
-- `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`.
+- `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`. `reactor.js` — живая
+  сфера ядра (класс `Reactor` — имя прежнее). Граф памяти: размер точки по связям, перетаскивание точек с запоминанием
+  (`static/graph-pins.js`, localStorage `jarvis.holo_pins`, тест — `tests/js/graph-pins.test.mjs`).
 - `static/files.js` — окно «Хранилище» (менеджер заметок и проектов): дерево, теги, недавние, поиск, страница проекта,
   перетаскивание; заметку показывает та же `NotePanel` (`extraActions`/`onAction`/`onTag`/`templates`). Логика без DOM —
   `static/file-tree.js` (тест — `tests/js/files.test.mjs`). Диалоги — свои, не `prompt()`/`confirm()`.

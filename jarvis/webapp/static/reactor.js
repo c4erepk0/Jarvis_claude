@@ -1,10 +1,10 @@
-// Ядро-«реактор»: кольца вращаются, свечение реагирует на голос (микрофон / речь Atom).
-// Внешние дуги — показатели дня: задачи, бюджет, нагрузка сервера.
+// Ядро Atom: живая сфера — дышит в покое, волнуется от голоса (микрофон / речь Atom), «думает» отблеском по краю.
+// Тонкие дуги вокруг — показатели дня: задачи, бюджет, нагрузка сервера. Имя класса прежнее — ради совместимости.
 
 const TAU = Math.PI * 2;
 const COLORS = {
-  idle: [255, 59, 48], listening: [255, 110, 90], thinking: [255, 40, 60], speaking: [255, 140, 115],
-  alert: [255, 179, 71], error: [255, 95, 162],
+  idle: [255, 69, 58], listening: [255, 120, 100], thinking: [255, 82, 82], speaking: [255, 140, 115],
+  alert: [255, 179, 71], error: [255, 111, 168],
 };
 // «уменьшить движение» в системе — кольца вращаются в несколько раз медленнее (свечение от голоса остаётся)
 const CALM = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
@@ -54,156 +54,91 @@ export class Reactor {
   rgba(a) { const [r, g, b] = this.color.map(Math.round); return `rgba(${r},${g},${b},${a})`; }
 
   draw() {
+    // Спокойная «живая» сфера вместо реактора: дышит в покое, реагирует на голос, думает — по краю бежит отблеск.
     const { ctx, size: S } = this;
     const cx = S / 2, cy = S / 2, R = S * 0.46;
     const lvl = this.level, t = this.t;
     ctx.clearRect(0, 0, S, S);
-
-    // мягкое свечение
-    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
-    glow.addColorStop(0, this.rgba(0.32 + lvl * 0.4));
-    glow.addColorStop(0.35, this.rgba(0.08 + lvl * 0.12));
-    glow.addColorStop(1, this.rgba(0));
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, S, S);
-
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.shadowColor = this.rgba(0.9);
 
-    // внешние дуги показателей
-    const arcR = R * 0.95;
+    // тонкие дуги показателей дня
+    const arcR = R * 0.94;
     this.metrics.forEach((m, i) => {
-      const start = -Math.PI / 2 + i * (TAU / 3) + 0.08;
-      const span = TAU / 3 - 0.16;
-      ctx.lineWidth = S * 0.012;
-      ctx.strokeStyle = this.rgba(0.12);
-      ctx.shadowBlur = 0;
-      ctx.beginPath(); ctx.arc(0, 0, arcR, start, start + span); ctx.stroke();
+      const start = -Math.PI / 2 + i * (TAU / 3) + 0.14;
+      const span = TAU / 3 - 0.28;
       const v = Math.max(0, Math.min(1, m.value || 0));
-      ctx.strokeStyle = v >= 1 ? "rgba(255,45,111,.95)" : v >= 0.8 ? "rgba(255,179,71,.95)" : this.rgba(0.9);
-      ctx.shadowBlur = 10;
-      ctx.beginPath(); ctx.arc(0, 0, arcR, start, start + span * v); ctx.stroke();
-      // подпись
+      ctx.lineCap = "round";
+      ctx.lineWidth = Math.max(2, S * 0.008);
+      ctx.strokeStyle = "rgba(255,255,255,.07)";
+      ctx.beginPath(); ctx.arc(0, 0, arcR, start, start + span); ctx.stroke();
+      if (v > 0) {
+        ctx.strokeStyle = v >= 1 ? "rgba(255,111,168,.95)" : v >= 0.8 ? "rgba(255,179,71,.95)" : this.rgba(0.85);
+        ctx.beginPath(); ctx.arc(0, 0, arcR, start, start + span * v); ctx.stroke();
+      }
       const mid = start + span / 2;
-      const bottom = Math.sin(mid) > 0.2;   // внизу пишем «по дуге снаружи», чтобы текст не был вверх ногами
+      const bottom = Math.sin(mid) > 0.2;
       ctx.save();
       ctx.rotate(bottom ? mid - Math.PI / 2 : mid + Math.PI / 2);
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = this.rgba(0.65);
-      ctx.font = `600 ${Math.max(8, S * 0.022)}px Orbitron, sans-serif`;
+      ctx.fillStyle = "rgba(236,230,228,.55)";
+      ctx.font = `600 ${Math.max(9, S * 0.026)}px Manrope, system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = bottom ? "top" : "alphabetic";
-      ctx.fillText(`${m.label} ${Math.round(v * 100)}%`, 0, bottom ? arcR + S * 0.02 : -arcR - S * 0.02);
+      const label = m.label.charAt(0) + m.label.slice(1).toLowerCase();
+      ctx.fillText(`${label} ${Math.round(v * 100)}%`, 0, bottom ? arcR + S * 0.022 : -arcR - S * 0.022);
       ctx.restore();
     });
 
-    // таймер фокуса
+    // таймер фокуса — янтарное кольцо внутри дуг
     if (this.focus && this.focus.until) {
       const left = Math.max(0, this.focus.until - Date.now() / 1000);
-      const frac = left / this.focus.total;
-      ctx.lineWidth = S * 0.006;
+      ctx.lineWidth = Math.max(2, S * 0.006);
       ctx.strokeStyle = "rgba(255,179,71,.9)";
-      ctx.shadowColor = "rgba(255,179,71,.9)";
-      ctx.shadowBlur = 8;
-      ctx.beginPath(); ctx.arc(0, 0, R * 0.865, -Math.PI / 2, -Math.PI / 2 + TAU * frac); ctx.stroke();
-      ctx.shadowColor = this.rgba(0.9);
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.84, -Math.PI / 2, -Math.PI / 2 + TAU * (left / this.focus.total)); ctx.stroke();
     }
 
-    // кольцо делений
-    ctx.save();
-    ctx.rotate(-t * 0.35);
-    for (let i = 0; i < 120; i++) {
-      const a = (i / 120) * TAU;
-      const long = i % 10 === 0;
-      const r1 = R * 0.8, r2 = R * (long ? 0.74 : 0.77);
-      ctx.strokeStyle = this.rgba(long ? 0.8 : 0.3);
-      ctx.lineWidth = long ? 2 : 1;
-      ctx.shadowBlur = long ? 6 : 0;
+    // мягкий ореол
+    const r0 = R * (0.5 + Math.sin(t * 1.6) * 0.012 + lvl * 0.06);
+    const halo = ctx.createRadialGradient(0, 0, r0 * 0.6, 0, 0, R * 0.9);
+    halo.addColorStop(0, this.rgba(0.16 + lvl * 0.2));
+    halo.addColorStop(1, this.rgba(0));
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(0, 0, R * 0.9, 0, TAU); ctx.fill();
+
+    // сфера: край чуть «живой», голос даёт волну
+    const blob = (r, amp, phase) => {
       ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
-      ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    // прерывистое кольцо (сканер)
-    ctx.save();
-    ctx.rotate(t * 0.9);
-    ctx.lineWidth = S * 0.008;
-    ctx.shadowBlur = 12;
-    const scan = this.state === "thinking" ? 6 : 3;
-    for (let i = 0; i < scan; i++) {
-      const a = (i / scan) * TAU;
-      ctx.strokeStyle = this.rgba(0.85);
-      ctx.beginPath(); ctx.arc(0, 0, R * 0.69, a, a + (this.state === "thinking" ? 0.45 : 0.9)); ctx.stroke();
-    }
-    ctx.restore();
-
-    // катушки реактора (10 сегментов)
-    ctx.save();
-    ctx.rotate(t * 0.18);
-    const coils = 10, rIn = R * (0.4 + lvl * 0.03), rOut = R * (0.6 + lvl * 0.05);
-    for (let i = 0; i < coils; i++) {
-      const a = (i / coils) * TAU, w = (TAU / coils) * 0.62;
-      ctx.beginPath();
-      ctx.arc(0, 0, rOut, a, a + w);
-      ctx.arc(0, 0, rIn, a + w * 0.92, a + w * 0.08, true);
-      ctx.closePath();
-      const g = ctx.createRadialGradient(0, 0, rIn, 0, 0, rOut);
-      g.addColorStop(0, this.rgba(0.55 + lvl * 0.4));
-      g.addColorStop(1, this.rgba(0.12 + lvl * 0.2));
-      ctx.fillStyle = g;
-      ctx.shadowBlur = 14 + lvl * 20;
-      ctx.fill();
-      ctx.strokeStyle = this.rgba(0.9);
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    // внутреннее кольцо
-    ctx.lineWidth = S * 0.01;
-    ctx.strokeStyle = this.rgba(0.9);
-    ctx.shadowBlur = 18;
-    ctx.beginPath(); ctx.arc(0, 0, R * 0.34, 0, TAU); ctx.stroke();
-
-    // треугольник в центре (как в Mk II — но свой)
-    ctx.save();
-    ctx.rotate(-t * 0.5);
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = this.rgba(0.6);
-    ctx.beginPath();
-    for (let i = 0; i < 3; i++) {
-      const a = -Math.PI / 2 + (i / 3) * TAU;
-      ctx[i ? "lineTo" : "moveTo"](Math.cos(a) * R * 0.27, Math.sin(a) * R * 0.27);
-    }
-    ctx.closePath(); ctx.stroke();
-    ctx.restore();
-
-    // ядро
-    const coreR = R * (0.2 + lvl * 0.07 + Math.sin(this.t * 3) * 0.005);
-    const core = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR);
-    core.addColorStop(0, "rgba(255,255,255,1)");
-    core.addColorStop(0.35, this.rgba(0.95));
-    core.addColorStop(1, this.rgba(0.05));
-    ctx.fillStyle = core;
-    ctx.shadowBlur = 40 + lvl * 40;
-    ctx.beginPath(); ctx.arc(0, 0, coreR, 0, TAU); ctx.fill();
-
-    // звуковая волна по кругу
-    if (lvl > 0.02) {
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = this.rgba(0.7);
-      ctx.shadowBlur = 8;
-      ctx.beginPath();
-      for (let i = 0; i <= 96; i++) {
-        const a = (i / 96) * TAU;
-        const wob = Math.sin(a * 8 + this.t * 9) * Math.sin(a * 3 - this.t * 4);
-        const r = R * 0.36 + wob * R * 0.06 * lvl;
-        ctx[i ? "lineTo" : "moveTo"](Math.cos(a) * r, Math.sin(a) * r);
+      for (let i = 0; i <= 120; i++) {
+        const a = (i / 120) * TAU;
+        const w = Math.sin(a * 3 + t * 1.3 + phase) * 0.5 + Math.sin(a * 5 - t * 1.7 + phase) * 0.3
+          + Math.sin(a * 9 + t * 6) * lvl * 0.9;
+        const rr = r * (1 + w * amp);
+        ctx[i ? "lineTo" : "moveTo"](Math.cos(a) * rr, Math.sin(a) * rr);
       }
-      ctx.stroke();
+      ctx.closePath();
+    };
+    const body = ctx.createRadialGradient(-r0 * 0.35, -r0 * 0.4, r0 * 0.05, 0, 0, r0 * 1.05);
+    body.addColorStop(0, "rgba(255,236,232,.95)");
+    body.addColorStop(0.25, this.rgba(0.95));
+    body.addColorStop(1, this.rgba(0.35));
+    ctx.fillStyle = body;
+    blob(r0, 0.018 + lvl * 0.06, 0);
+    ctx.fill();
+    // второй контур — тонкая обводка, чуть смещённая по фазе
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = "rgba(255,255,255,.18)";
+    blob(r0 * 1.08, 0.025 + lvl * 0.08, 1.7);
+    ctx.stroke();
+
+    // думаю — по окружности бежит отблеск
+    if (this.state === "thinking") {
+      const a = t * 2.2;
+      ctx.lineWidth = Math.max(2, S * 0.008);
+      ctx.lineCap = "round";
+      const g = ctx.createConicGradient ? ctx.createConicGradient(a, 0, 0) : null;
+      if (g) { g.addColorStop(0, this.rgba(0.9)); g.addColorStop(0.25, this.rgba(0)); g.addColorStop(1, this.rgba(0)); }
+      ctx.strokeStyle = g || this.rgba(0.8);
+      ctx.beginPath(); ctx.arc(0, 0, r0 * 1.22, a, a + 1.4); ctx.stroke();
     }
     ctx.restore();
   }

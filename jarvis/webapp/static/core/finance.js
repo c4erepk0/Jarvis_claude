@@ -1,5 +1,5 @@
 // Финансы: «Finance/2026-11.md» с таблицей операций, лимиты — «Finance/Budget.md». Порт jarvis/finance.py.
-import { MONTHS_NOM, money, parseMoneyCell } from "./ru.js";
+import { MONTHS_NOM, money, parseMoneyCell, plural } from "./ru.js";
 
 export const CATEGORY_HINTS = {
   "Еда": ["еда", "продукт", "магазин", "пятёрочк", "пятерочк", "перекрёст", "перекрест", "вкусвилл", "ашан", "лавк",
@@ -130,4 +130,111 @@ export class Ledger {
     if (pct >= 80) return `Бюджет «${category}» израсходован на ${pct}%: осталось ${money(limit - spent, this.currency)}.`;
     return null;
   }
+}
+
+// ---------- аналитика: тот же расчёт, что analytics() в jarvis/finance.py (общий тест — fixtures/finance.json) ----------
+export const shiftMonth = (month, n) => {
+  const [y, m] = month.split("-").map(Number);
+  const k = y * 12 + (m - 1) + n;
+  return `${String(Math.floor(k / 12)).padStart(4, "0")}-${String((k % 12) + 1).padStart(2, "0")}`;
+};
+/** Ключ повторяющейся операции: «Spotify 11/2026» и «spotify» — одно и то же. */
+export const opKey = (note) => String(note || "").toLowerCase().replace(/ё/g, "е").replace(/[\d.,:/#№-]+/g, " ")
+  .replace(/\s+/g, " ").trim();
+/** Процент с округлением половины вверх — как pct() в Python. */
+export const pct = (part, whole) => Math.floor((part * 200 + whole) / (2 * whole));
+const median = (v) => { const s = [...v].sort((a, b) => a - b); return s.length ? s[s.length >> 1] : 0; };
+const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const cmpTuple = (a, b) => { for (let i = 0; i < a.length; i++) { const c = cmp(a[i], b[i]); if (c) return c; } return 0; };
+
+export function analytics(ledger, ref, months = 6) {
+  const cur = ref.slice(0, 7);
+  months = Math.max(2, Math.min(24, months));
+  const span = Array.from({ length: months }, (_, i) => shiftMonth(cur, i - months + 1));
+  const byMonth = Object.fromEntries(span.map((m) => [m, ledger.entries(m)]));
+  const trend = span.map((m) => {
+    const items = byMonth[m];
+    const inc = items.filter((e) => e.amount > 0).reduce((s, e) => s + e.amount, 0);
+    const exp = -items.filter((e) => e.amount < 0).reduce((s, e) => s + e.amount, 0);
+    return { month: m, income: inc, expense: exp, net: inc - exp, count: items.length };
+  });
+  const now = trend[trend.length - 1];
+  const prev = trend.slice(-4, -1).filter((t) => t.count);
+  const avgExp = prev.length ? Math.floor(Math.floor(prev.reduce((s, t) => s + t.expense, 0) / prev.length) / 100) * 100 : 0;
+  const cats = (items) => {
+    const out = {};
+    for (const e of items) if (e.amount < 0) out[e.category] = (out[e.category] || 0) - e.amount;
+    return out;
+  };
+  const thisCats = cats(byMonth[cur]);
+  const prevCats = prev.map((t) => cats(byMonth[t.month]));
+  const names = [...new Set([...Object.keys(thisCats), ...prevCats.flatMap((pc) => Object.keys(pc))])]
+    .sort((a, b) => cmpTuple([-(thisCats[a] || 0), a], [-(thisCats[b] || 0), b]));
+  const categories = names.map((c) => {
+    const avg = prevCats.length ? Math.floor(prevCats.reduce((s, pc) => s + (pc[c] || 0), 0) / prevCats.length) : 0;
+    const spent = thisCats[c] || 0;
+    return { category: c, spent, average: avg, change: avg ? pct(spent - avg, avg) : null,
+      share: now.expense ? pct(spent, now.expense) : 0 };
+  });
+
+  const groups = new Map();
+  for (const m of span.slice(-4)) {
+    for (const e of byMonth[m]) {
+      if (e.amount >= 0 || !opKey(e.note)) continue;
+      const k = `${opKey(e.note)}\u0000${e.category}`;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(e);
+    }
+  }
+  const recurring = [];
+  for (const [k, items] of groups) {
+    const seen = [...new Set(items.map((e) => e.date.slice(0, 7)))].sort();
+    if (seen.length < 2) continue;
+    const last = items.reduce((a, e) => (e.date > a.date ? e : a));
+    recurring.push({ note: last.note, category: k.split("\u0000")[1], amount: median(items.map((e) => -e.amount)),
+      months: seen.length, last: last.date, day: Number(last.date.slice(8)), paid: seen.includes(cur) });
+  }
+  recurring.sort((a, b) => cmpTuple([a.paid ? 1 : 0, -a.amount, a.note], [b.paid ? 1 : 0, -b.amount, b.note]));
+  const pending = recurring.filter((r) => !r.paid).reduce((s, r) => s + r.amount, 0);
+
+  const counter = new Map();
+  for (const m of span.slice(-3)) {
+    for (const e of byMonth[m]) {
+      const key = [opKey(e.note) || e.category.toLowerCase(), e.category, e.amount > 0];
+      const id = key.join("\u0000");
+      if (!counter.has(id)) counter.set(id, { key, n: 0, sample: [], note: "" });
+      const c = counter.get(id);
+      c.n++; c.sample.push(e.amount); c.note = e.note || e.category;
+    }
+  }
+  const frequent = [...counter.values()]
+    .sort((a, b) => cmpTuple([-a.n, a.key[0], a.key[1], a.key[2] ? 1 : 0], [-b.n, b.key[0], b.key[1], b.key[2] ? 1 : 0]))
+    .slice(0, 8).filter((c) => c.n >= 2)
+    .map((c) => ({ note: c.note, category: c.key[1], amount: median(c.sample), count: c.n }));
+
+  const [y, mo] = cur.split("-").map(Number);
+  const daysIn = new Date(y, mo, 0).getDate();
+  const day = Number(ref.slice(8, 10));
+  const forecast = Math.floor(Math.floor(now.expense / day) / 100) * 100 * daysIn;
+  const m = (k) => money(k, ledger.currency);
+  const insights = [];
+  if (now.income) {
+    const rate = pct(now.net, now.income);
+    insights.push(rate >= 0 ? `Сбережения месяца: ${rate}% дохода (${m(now.net)}).` : `Расходы превышают доходы на ${m(-now.net)}.`);
+  }
+  if (avgExp && forecast > avgExp * 1.15) insights.push(`Темп трат выше обычного: к концу месяца выйдет ~${m(forecast)} при среднем ${m(avgExp)}.`);
+  else if (avgExp && forecast < avgExp * 0.85) insights.push(`Тратите меньше обычного: прогноз ${m(forecast)} при среднем ${m(avgExp)}.`);
+  for (const c of categories) {
+    if (c.change !== null && c.change >= 30 && c.spent - c.average >= 100000) {
+      insights.push(`«${c.category}»: ${m(c.spent)} — на ${c.change}% больше среднего.`);
+    }
+  }
+  if (pending) {
+    const n = recurring.filter((r) => !r.paid).length;
+    insights.push(`Ещё не было ${n} ${plural(n, "регулярного платежа", "регулярных платежей", "регулярных платежей")} на ${m(pending)}.`);
+  }
+  const top = byMonth[cur].filter((e) => e.amount < 0).sort((a, b) => a.amount - b.amount).slice(0, 5);
+  return { month: cur, currency: ledger.currency, trend, average_expense: avgExp, forecast,
+    savings_rate: now.income ? pct(now.net, now.income) : null, categories, recurring, recurring_pending: pending,
+    frequent, top, insights: insights.slice(0, 6) };
 }

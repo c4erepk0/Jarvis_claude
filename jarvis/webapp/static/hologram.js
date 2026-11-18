@@ -1,4 +1,7 @@
 // Голограмма памяти: 3D-граф заметок Obsidian (узлы — заметки, нити — [[ссылки]]).
+// Размер точки — по числу связей (проекты крупнее), нити окрашены цветами своих концов; наведение подсвечивает соседей.
+// Точку можно перетащить мышью или пальцем: соседи тянутся за ней, а место запоминается (graph-pins.js, localStorage);
+// «⟲» в шапке возвращает автоматическую раскладку.
 // Открытая заметка подсвечивается вместе со связями, граф поворачивается к ней (focus), вид сдвигается,
 // чтобы узел не прятался под панелью заметки (setInset).
 // Управление мышью/пальцами или жестами рук перед камерой (MediaPipe Hand Landmarker):
@@ -9,16 +12,28 @@
 // Управление взглядом (MediaPipe Face Landmarker, gaze.js): взгляд — курсор, примагниченный к ближайшей кнопке
 //   или узлу; короткий щипок — нажать то, на что смотрите; щипок и движение — вращать граф или листать заметку.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=17";
-import { DEFAULT_MAGNET, GazeSync, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=17";
+import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=18";
+import { degrees, follow, labelled, loadPins, nodeSize, pin, prune, savePins } from "./graph-pins.js?v=18";
+import { DEFAULT_MAGNET, GazeSync, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=18";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const HAND_MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
-const EDGE = [0xff / 255, 0x3b / 255, 0x30 / 255];   // цвет нитей-связей
 const CANDIDATE = 0xffd23b;   // заметки «похоже на проект» из синтеза проектов
-const PALETTE = [0xff3b30, 0x5dffb0, 0xffb347, 0xb48cff, 0xff6b9a, 0xff8a7a, 0xe6ff6b, 0xff8f5a];
+// спокойная палитра групп (папок): различима, но без кислотного неона
+const PALETTE = [0xff6a5f, 0x5fd99a, 0xffb85c, 0x8fa8ff, 0xd58cff, 0x5fd3e6, 0xe6d36b, 0xff9e8f];
+const DIM = 0.14;             // насколько гаснет всё, что не связано с выбранным узлом
+
+// Точки — свой шейдер: размер из атрибута (в PointsMaterial он один на всех), мягкий диск с ободком.
+const POINT_VS = `attribute float size; attribute vec3 color; varying vec3 vColor; uniform float scale;
+void main() { vColor = color; vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_PointSize = size * scale / -mv.z; gl_Position = projectionMatrix * mv; }`;
+const POINT_FS = `varying vec3 vColor;
+void main() { vec2 c = gl_PointCoord - 0.5; float r = length(c); if (r > 0.5) discard;
+  float core = smoothstep(0.5, 0.38, r); float rim = smoothstep(0.34, 0.42, r) * (1.0 - smoothstep(0.42, 0.5, r));
+  float halo = (1.0 - smoothstep(0.0, 0.5, r)) * 0.35;
+  gl_FragColor = vec4(vColor * (0.82 + 0.35 * rim) + 0.06, max(core * 0.95, halo)); }`;
 const DWELL_MS = 1000;                // задержка пальца, чтобы открыть узел или нажать кнопку
 // что можно «нажать» пальцем в воздухе: кнопки, галочки задач и [[ссылки]] заметки, кнопки с data-air
 const AIR_TARGETS = ".np button:not([disabled]), .np a.md-link, .np li.md-task, [data-air]:not([disabled])";
@@ -39,7 +54,7 @@ function glowSprite() {
   return new THREE.CanvasTexture(c);
 }
 
-function layout(nodes, links, prev = new Map()) {
+function layout(nodes, links, prev = new Map(), fixed = new Set()) {
   const groups = [...new Set(nodes.map((n) => n.group))];
   const centers = new Map(groups.map((g, i) => {
     const phi = Math.acos(1 - (2 * (i + 0.5)) / groups.length), th = Math.PI * (1 + Math.sqrt(5)) * i;
@@ -68,7 +83,7 @@ function layout(nodes, links, prev = new Map()) {
       const d = pos[b].clone().sub(pos[a]).multiplyScalar(0.02);
       f[a].add(d); f[b].sub(d);
     }
-    pos.forEach((p, i) => p.add(f[i].clampLength(0, 2)));
+    pos.forEach((p, i) => { if (!fixed.has(nodes[i].id)) p.add(f[i].clampLength(0, 2)); });
   }
   return { pos, edges, groups };
 }
@@ -128,74 +143,99 @@ export class Hologram {
   }
 
   decor() {
-    const ring = (r, y, op) => {
-      const g = new THREE.RingGeometry(r, r + 0.25, 128);
-      const m = new THREE.MeshBasicMaterial({ color: 0xff3b30, transparent: true, opacity: op, side: THREE.DoubleSide });
-      const mesh = new THREE.Mesh(g, m);
-      mesh.rotation.x = Math.PI / 2;
-      mesh.position.y = y;
-      this.scene.add(mesh);
-      return mesh;
-    };
-    this.rings = [ring(58, -48, 0.35), ring(48, -48.5, 0.2), ring(66, -49, 0.12)];
-    const sphere = new THREE.LineSegments(
-      new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(62, 2)),
-      new THREE.LineBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.05 }));
-    this.world.add(sphere);
-    const beams = new THREE.BufferGeometry();
-    const pts = [];
-    for (let i = 0; i < 48; i++) {
-      const a = (i / 48) * Math.PI * 2;
-      pts.push(Math.cos(a) * 58, -48, Math.sin(a) * 58, Math.cos(a) * 40, 40, Math.sin(a) * 40);
-    }
-    beams.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    this.scene.add(new THREE.LineSegments(beams, new THREE.LineBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.025 })));
+    // одно тихое кольцо-«пол» вместо сетки-сферы и лучей: граф — главное на экране
+    const g = new THREE.RingGeometry(60, 60.3, 160);
+    const m = new THREE.MeshBasicMaterial({ color: 0xff6a5f, transparent: true, opacity: 0.12, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(g, m);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = -50;
+    this.scene.add(ring);
+    this.rings = [ring];
   }
 
   setData({ nodes, links }) {
     if (this.points) { this.world.remove(this.points); this.world.remove(this.lines); }
     const prev = new Map((this.nodes || []).map((n, i) => [n.id, this.positions[i]]));
+    this.pins = prune(loadPins(), nodes.map((n) => n.id));
+    for (const [id, p] of Object.entries(this.pins)) if (!prev.has(id)) prev.set(id, new THREE.Vector3(...p));
     this.nodes = nodes;
-    const { pos, edges, groups } = layout(nodes, links, prev);
+    const { pos, edges, groups } = layout(nodes, links, prev, new Set(Object.keys(this.pins)));
     this.byId = new Map(nodes.map((n, i) => [n.id, i]));
     this.neighbors = new Map(nodes.map((n) => [n.id, new Set()]));
-    for (const [a, b] of edges) { this.neighbors.get(nodes[a].id).add(nodes[b].id); this.neighbors.get(nodes[b].id).add(nodes[a].id); }
+    this.adj = nodes.map(() => []);
+    for (const [a, b] of edges) {
+      this.neighbors.get(nodes[a].id).add(nodes[b].id); this.neighbors.get(nodes[b].id).add(nodes[a].id);
+      this.adj[a].push(b); this.adj[b].push(a);
+    }
     this.edges = edges;
+    const deg = degrees(nodes.length, edges);
     const colors = [], positions = [], sizes = [];
     nodes.forEach((n, i) => {
       const col = new THREE.Color(n.syn === "candidate" ? CANDIDATE : PALETTE[groups.indexOf(n.group) % PALETTE.length]);
       colors.push(col.r, col.g, col.b);
       positions.push(pos[i].x, pos[i].y, pos[i].z);
-      sizes.push(n.type === "project" ? 7 : 3 + Math.min(4, Math.log10(1 + n.size)));
+      sizes.push(nodeSize(n, deg[i]) * (nodes.length > 300 ? 0.75 : 1));
     });
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    g.setAttribute("size", new THREE.Float32BufferAttribute(sizes, 1));
     this.baseColors = Float32Array.from(colors);
-    const size = nodes.length < 50 ? 7 : nodes.length < 200 ? 5 : 4;
-    this.points = new THREE.Points(g, new THREE.PointsMaterial({ size, map: glowSprite(), vertexColors: true,
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+    this.points = new THREE.Points(g, new THREE.ShaderMaterial({ vertexShader: POINT_VS, fragmentShader: POINT_FS,
+      uniforms: { scale: { value: this.pointScale() } }, transparent: true, depthWrite: false }));
     this.world.add(this.points);
     const lp = [], lc = [];
-    for (const [a, b] of edges) lp.push(pos[a].x, pos[a].y, pos[a].z, pos[b].x, pos[b].y, pos[b].z);
+    for (const [a, b] of edges) {
+      lp.push(pos[a].x, pos[a].y, pos[a].z, pos[b].x, pos[b].y, pos[b].z);
+      lc.push(colors[a * 3], colors[a * 3 + 1], colors[a * 3 + 2], colors[b * 3], colors[b * 3 + 1], colors[b * 3 + 2]);
+    }
     const lg = new THREE.BufferGeometry();
     lg.setAttribute("position", new THREE.Float32BufferAttribute(lp, 3));
-    for (let k = 0; k < edges.length * 2; k++) lc.push(...EDGE.map((c) => c * 0.55));
     lg.setAttribute("color", new THREE.Float32BufferAttribute(lc, 3));
-    this.lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.4,
-      blending: THREE.AdditiveBlending, depthWrite: false }));
+    this.baseLineColors = Float32Array.from(lc);
+    this.lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.32,
+      depthWrite: false }));
     this.world.add(this.lines);
     this.positions = pos;
     this.tags.innerHTML = "";
-    this.tagEls = nodes.length <= 80 ? nodes.map((n) => {
+    const show = new Set(labelled(nodes, deg));
+    this.tagIdx = [...show];
+    this.tagEls = nodes.map((n, i) => {
+      if (!show.has(i)) return null;
       const el = document.createElement("span");
       el.textContent = n.title;
+      if (n.type === "project" || deg[i] >= 6) el.className = "hub";
       this.tags.append(el);
       return el;
-    }) : [];
+    });
     if (nodes.length < 50 && !prev.size) this.target.z = 90;
     this.highlight(this.selected && this.byId.has(this.selected) ? this.selected : null);
-    this.onStatus(`${nodes.length} заметок · ${edges.length} связей`);
+    const pinned = Object.keys(this.pins).length;
+    this.onStatus(`${nodes.length} заметок · ${edges.length} связей${pinned ? ` · закреплено ${pinned}` : ""}`);
+  }
+
+  /** Сбросить закрепления: точки снова раскладываются сами. */
+  resetLayout() {
+    this.pins = {};
+    savePins({});
+    if (!this.nodes) return;
+    const data = { nodes: this.nodes, links: this.edges.map(([a, b]) => ({ source: this.nodes[a].id, target: this.nodes[b].id })) };
+    this.nodes = null; this.positions = [];
+    this.setData(data);
+  }
+
+  /** Обновить положение узла i на экране: точка, его нити, маркер выбора. */
+  syncNode(i) {
+    const p = this.positions[i];
+    const pa = this.points.geometry.attributes.position;
+    pa.setXYZ(i, p.x, p.y, p.z); pa.needsUpdate = true;
+    const la = this.lines.geometry.attributes.position;
+    this.edges.forEach(([a, b], e) => {
+      if (a === i) la.setXYZ(e * 2, p.x, p.y, p.z);
+      else if (b === i) la.setXYZ(e * 2 + 1, p.x, p.y, p.z);
+    });
+    la.needsUpdate = true;
+    if (this.marker.visible && this.byId.get(this.selected) === i) this.marker.position.copy(p);
   }
 
   /** Подсветить заметку и её связи (остальное приглушается); null — снять подсветку. */
@@ -203,25 +243,32 @@ export class Hologram {
     this.selected = id && this.byId?.has(id) ? id : null;
     if (!this.points) return;
     const i0 = this.selected ? this.byId.get(this.selected) : -1;
+    this.paint(i0, this.selected ? this.neighbors.get(this.selected) : null, true);
     const near = this.selected ? this.neighbors.get(this.selected) : null;
-    const col = this.points.geometry.attributes.color;
-    this.nodes.forEach((n, i) => {
-      const k = !near || i === i0 || near.has(n.id) ? 1 : 0.16;
-      for (let c = 0; c < 3; c++) col.array[i * 3 + c] = i === i0 ? 1 : this.baseColors[i * 3 + c] * k;
-    });
-    col.needsUpdate = true;
-    const lc = this.lines.geometry.attributes.color;
-    this.edges.forEach(([a, b], e) => {
-      const k = !near ? 0.55 : a === i0 || b === i0 ? 1.4 : 0.08;
-      for (let v = 0; v < 6; v++) lc.array[e * 6 + v] = EDGE[v % 3] * k;
-    });
-    lc.needsUpdate = true;
     this.tagEls.forEach((el, i) => {
+      if (!el) return;
       el.classList.toggle("sel", i === i0);
       el.classList.toggle("dim", Boolean(near) && i !== i0 && !near.has(this.nodes[i].id));
     });
     this.marker.visible = i0 >= 0;
     if (i0 >= 0) this.marker.position.copy(this.positions[i0]);
+  }
+
+  /** Раскрасить: i0 и его соседи near — ярко, остальное гаснет; near = null — всё в своих цветах. */
+  paint(i0, near, strong = false) {
+    const col = this.points.geometry.attributes.color;
+    this.nodes.forEach((n, i) => {
+      const k = !near || i === i0 || near.has(n.id) ? 1 : DIM;
+      for (let c = 0; c < 3; c++) col.array[i * 3 + c] = i === i0 && strong ? 1 : this.baseColors[i * 3 + c] * k;
+    });
+    col.needsUpdate = true;
+    const lc = this.lines.geometry.attributes.color;
+    this.edges.forEach(([a, b], e) => {
+      const k = !near ? 1 : a === i0 || b === i0 ? 2.2 : 0.12;
+      for (let v = 0; v < 6; v++) lc.array[e * 6 + v] = Math.min(1, this.baseLineColors[e * 6 + v] * k);
+    });
+    lc.needsUpdate = true;
+    this.painted = i0;
   }
 
   /** Плавно повернуть граф так, чтобы заметка оказалась впереди, по центру. */
@@ -245,23 +292,86 @@ export class Hologram {
 
   bindPointer() {
     const el = this.renderer.domElement;
-    let drag = null, pinch = null, moved = 0;
-    el.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY }; moved = 0; el.setPointerCapture(e.pointerId); });
-    el.addEventListener("pointermove", (e) => {
+    let drag = null, pinch = null, moved = 0, node = null;
+    el.addEventListener("pointerdown", (e) => {
       this.setMouse(e.clientX, e.clientY);
-      if (!drag || pinch) return;
+      moved = 0;
+      el.setPointerCapture(e.pointerId);
+      const hit = e.button === 0 && !pinch ? this.hovered() : null;
+      if (hit) node = this.startNodeDrag(hit.id);
+      else drag = { x: e.clientX, y: e.clientY };
+    });
+    el.addEventListener("pointermove", (e) => {
+      const dx0 = this.hoverAt ? e.clientX - this.hoverAt.x : 0, dy0 = this.hoverAt ? e.clientY - this.hoverAt.y : 0;
+      this.setMouse(e.clientX, e.clientY);
+      if (pinch) return;
+      if (node) {
+        moved += Math.abs(dx0) + Math.abs(dy0);
+        if (moved >= 6) this.moveNode(node);
+        return;
+      }
+      if (!drag) return;
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       moved += Math.abs(dx) + Math.abs(dy);
       this.rotate(dx * 0.006, dy * 0.004);
       drag = { x: e.clientX, y: e.clientY };
     });
-    el.addEventListener("pointerup", () => { if (drag && moved < 6) this.openHovered(); drag = null; });
+    const up = () => {
+      if (node) {
+        if (moved < 6) this.onOpen(node.id);
+        else this.endNodeDrag(node);
+      } else if (drag && moved < 6) this.openHovered();
+      drag = null; node = null;
+      el.classList.remove("dragging");
+    };
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", () => { if (node) this.endNodeDrag(node); drag = null; node = null; });
     el.addEventListener("wheel", (e) => { e.preventDefault(); this.zoom(e.deltaY * 0.08); }, { passive: false });
-    el.addEventListener("touchstart", (e) => { if (e.touches.length === 2) pinch = this.touchDist(e); }, { passive: true });
+    el.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 2) { pinch = this.touchDist(e); if (node) { this.endNodeDrag(node); node = null; } }
+    }, { passive: true });
     el.addEventListener("touchmove", (e) => {
       if (e.touches.length === 2 && pinch) { const d = this.touchDist(e); this.zoom((pinch - d) * 0.4); pinch = d; }
     }, { passive: true });
     el.addEventListener("touchend", () => { pinch = null; });
+  }
+
+  /** Начать перетаскивание узла: плоскость — через узел, лицом к камере. */
+  startNodeDrag(id) {
+    const i = this.byId.get(id);
+    this.world.updateMatrixWorld();
+    const wp = this.positions[i].clone().applyMatrix4(this.world.matrixWorld);
+    const normal = new THREE.Vector3();
+    this.camera.getWorldDirection(normal);
+    this.spinWas = this.spin;
+    this.spin = 0;
+    this.target.ry = this.world.rotation.y; this.target.rx = this.world.rotation.x;   // граф не крутится под рукой
+    this.renderer.domElement.classList.add("dragging");
+    return { id, i, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, wp), fixed: new Set(Object.keys(this.pins || {}).map((k) => this.byId.get(k))) };
+  }
+
+  moveNode(d) {
+    this.ray.setFromCamera(this.mouse, this.camera);
+    const hit = new THREE.Vector3();
+    if (!this.ray.ray.intersectPlane(d.plane, hit)) return;
+    this.world.updateMatrixWorld();
+    this.positions[d.i].copy(this.world.worldToLocal(hit));
+    // соседи мягко тянутся за точкой (закреплённые стоят)
+    const arr = this.adj[d.i].map((j) => [this.positions[j].x, this.positions[j].y, this.positions[j].z]);
+    const pos = [[this.positions[d.i].x, this.positions[d.i].y, this.positions[d.i].z], ...arr];
+    const fixed = new Set(this.adj[d.i].map((j, k) => (d.fixed.has(j) ? k + 1 : -1)).filter((k) => k > 0));
+    follow(pos, 0, arr.map((_, k) => k + 1), fixed);
+    this.adj[d.i].forEach((j, k) => { this.positions[j].set(...pos[k + 1]); this.syncNode(j); });
+    this.syncNode(d.i);
+    d.moved = true;
+  }
+
+  endNodeDrag(d) {
+    this.renderer.domElement.classList.remove("dragging");
+    if (!d.moved) return;
+    this.pins = pin(this.pins || {}, d.id, this.positions[d.i].toArray());
+    savePins(this.pins);
+    this.onStatus(`${this.nodes.length} заметок · ${this.edges.length} связей · закреплено ${Object.keys(this.pins).length}`);
   }
 
   touchDist(e) { const [a, b] = e.touches; return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
@@ -287,7 +397,11 @@ export class Hologram {
     if (right || bottom) this.camera.setViewOffset(w, h, right / 2, bottom / 2, w, h);
     else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
+    if (this.points) this.points.material.uniforms.scale.value = this.pointScale();
   }
+
+  /** Масштаб точек шейдера: размер в пикселях экрана не зависит от его высоты и плотности. */
+  pointScale() { return innerHeight * 0.28 * this.renderer.getPixelRatio(); }
 
   loop(ts) {
     if (!this.running) return;
@@ -299,6 +413,10 @@ export class Hologram {
     this.rings.forEach((r, i) => { r.rotation.z = ts * 0.0001 * (i % 2 ? -1 : 1); });
     if (this.marker.visible) this.marker.scale.setScalar(7 + Math.sin(ts / 260) * 1.2);
     const n = this.hovered();
+    if (!this.selected && this.points) {          // наведение: соседи узла ярче, пока ничего не выбрано
+      const hi = n ? this.byId.get(n.id) : -1;
+      if (hi !== (this.painted ?? -1)) this.paint(hi, n ? this.neighbors.get(n.id) : null);
+    }
     if (n && this.hoverAt) {
       this.label.textContent = n.title;
       this.label.style.left = `${this.hoverAt.x}px`;
@@ -308,10 +426,11 @@ export class Hologram {
     if (this.gaze) this.projectNodes();
     if (this.hands) this.trackHands(ts);
     this.renderer.render(this.scene, this.camera);
-    if (this.tagEls.length) {
+    if (this.tagIdx?.length) {
       this.world.updateMatrixWorld();
       const v = new THREE.Vector3();
       this.tagEls.forEach((el, i) => {
+        if (!el) return;
         v.copy(this.positions[i]).applyMatrix4(this.world.matrixWorld).project(this.camera);
         const x = (v.x * 0.5 + 0.5) * innerWidth, y = (-v.y * 0.5 + 0.5) * innerHeight;
         el.style.transform = `translate(${x + 8}px, ${y - 6}px)`;

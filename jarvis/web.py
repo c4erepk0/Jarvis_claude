@@ -11,6 +11,7 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
+from .finance import guess_category
 from .core import Jarvis
 from .gaze import save_record as save_gaze_record
 from .vault import VaultConflict, VaultError, content_version
@@ -194,8 +195,30 @@ def build_app(jarvis: Jarvis) -> web.Application:
             amount = int(round(float(str(d.get("amount", "0")).replace(",", ".")) * 100))
         except ValueError:
             raise ValueError("сумма должна быть числом")
-        return ok(await j.act_money(amount, str(d.get("category") or "Прочее"), str(d.get("note") or ""),
-                                    d.get("date") or None))
+        note = str(d.get("note") or "")
+        category = str(d.get("category") or "") or guess_category(note, income=amount > 0)
+        return ok(await j.act_money(amount, category, note, d.get("date") or None))
+
+    async def finance_analytics(request):
+        try:
+            months = int(request.query.get("months") or 6)
+        except ValueError:
+            months = 6
+        return ok(j.act_finance_analytics(months))
+
+    async def assets_get(request):
+        return ok(await j.act_assets(record=request.query.get("record", "1") != "0"))
+
+    async def assets_add(request):
+        d = await body(request)
+        return ok(await j.act_asset_add(str(d.get("action") or "asset"), d))
+
+    async def apps_get(_):
+        return ok(j.act_apps())
+
+    async def apps_set(request):
+        d = await body(request)
+        return ok(await j.act_app_catalog(str(d.get("name") or ""), d.get("on", True) is not False))
 
     async def projects_get(_):
         return ok(await j.act_project_status())
@@ -392,6 +415,11 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_post("/api/tasks/{id:.+}/status", task_status)
     r.add_get("/api/finance", finance_get)
     r.add_post("/api/finance", finance_add)
+    r.add_get("/api/finance/analytics", finance_analytics)
+    r.add_get("/api/finance/assets", assets_get)
+    r.add_post("/api/finance/assets", assets_add)
+    r.add_get("/api/apps", apps_get)
+    r.add_post("/api/apps", apps_set)
     r.add_get("/api/projects", projects_get)
     r.add_post("/api/projects", project_create)
     r.add_get("/api/projects/{name}", project_get)

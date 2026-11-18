@@ -181,6 +181,11 @@ def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: st
             note = re.sub(r"^(?:от|за|с|из)\s+", "", rest, flags=re.I).strip() or "доход"
             return Intent("income", {"amount": abs(amount), "category": guess_category(note, income=True),
                                      "note": note})
+    if re.search(r"(мо[иеё] актив|мой капитал|капитал|портфел|сколько я стою|мои долги|сколько я должен)", low):
+        return Intent("assets_report", {})
+    if re.search(r"((анализ|проанализируй|разбери).{0,24}(финанс|расход|трат|деньг)|регулярн\w* (платеж|трат|расход))",
+                 low):
+        return Intent("finance_analytics", {})
     if re.search(r"(сколько (я )?(потратил|трачу|заработал)|финанс|бюджет|баланс|мои расходы|траты|расходы)", low):
         return Intent("finance_report", {"period": "today" if "сегодня" in low else "month"})
 

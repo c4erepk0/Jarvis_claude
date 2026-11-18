@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from jarvis.assets import Quotes
 from jarvis.briefing import Briefing
 from jarvis.config import Config
 from jarvis.core import Jarvis
@@ -30,6 +31,10 @@ class FakeBriefing(Briefing):
         return {"USD": {"value": 81.5, "delta": 0.2}, "EUR": {"value": 92.1, "delta": -0.1}}
 
 
+async def _offline(url, params):
+    raise OSError("в тестах нет сети")
+
+
 def make_config(tmp: Path, **kw) -> Config:
     base = dict(vault_path=tmp / "vault", data_dir=tmp / "data", tts_engine="browser", github_token="",
                 briefing_time="", claude_code_bin="definitely-not-installed-claude")
@@ -41,7 +46,8 @@ def make_jarvis(tmp: Path, *, seed: bool = True, github: GitHub | None = None, l
     cfg = make_config(tmp, **kw)
     if seed:
         shutil.copytree(ROOT / "vault-template", cfg.vault_path, dirs_exist_ok=True)
-    return Jarvis(cfg, github=github or GitHub("", base_url="http://127.0.0.1:9"), briefing=FakeBriefing(), llm=llm)
+    return Jarvis(cfg, github=github or GitHub("", base_url="http://127.0.0.1:9"), briefing=FakeBriefing(), llm=llm,
+                  quotes=Quotes(_offline))
 
 
 @pytest.fixture

@@ -19,7 +19,9 @@ from typing import Any, Awaitable, Callable
 from . import diagnostics, intents, ru
 from .briefing import Briefing
 from .config import Config
-from .finance import Ledger
+from .apps import catalog, set_in_catalog
+from .assets import Portfolio, Quotes
+from .finance import Ledger, analytics
 from .github import GitHub, GitHubError
 from .hub import Hub
 from .memory import Memory
@@ -64,9 +66,16 @@ class PendingAction:
         return asdict(self)
 
 
+def _kopecks(value: Any) -> int:
+    try:
+        return int(round(float(str(value or "0").replace(" ", "").replace(",", ".").replace("−", "-")) * 100))
+    except ValueError:
+        raise ValueError("сумма должна быть числом") from None
+
+
 class Jarvis:
     def __init__(self, cfg: Config, *, github: GitHub | None = None, briefing: Briefing | None = None,
-                 llm: Any = None):
+                 llm: Any = None, quotes: Quotes | None = None):
         self.cfg = cfg
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self.vault = Vault(cfg.vault_path)
@@ -78,6 +87,8 @@ class Jarvis:
         self.projects = Projects(self.vault, cfg.projects_dir, self.github, claude_bin=cfg.claude_code_bin,
                                  permission_mode=cfg.claude_code_permission_mode,
                                  allowed_tools=cfg.claude_code_allowed_tools)
+        self.portfolio = Portfolio(self.vault, cfg.finance_dir, cfg.currency, self.projects)
+        self.quotes = quotes or Quotes()
         self.voice = Voice(cfg.tts_engine, cfg.tts_voice, cfg.tts_rate, cfg.tts_pitch, cfg.data_dir / "tts",
                            cfg.piper_bin, cfg.piper_model)
         self.reminders = Reminders(self.vault, f"{cfg.jarvis_dir}/Reminders.md", ru.now(cfg.timezone).tzinfo)
@@ -114,6 +125,7 @@ class Jarvis:
         await self.github.close()
         await self.projects.close()
         await self.briefing.close()
+        await self.quotes.close()
 
     # ---------- события и оповещения ----------
     async def log(self, text: str, *, journal: bool = True) -> None:
@@ -281,6 +293,51 @@ class Jarvis:
     def act_finance_report(self, month: str | None = None) -> dict:
         month = month or self.today().strftime("%Y-%m")
         return self.ledger.summary(month, self.today())
+
+    def act_finance_analytics(self, months: int = 6) -> dict:
+        return analytics(self.ledger, self.today(), months)
+
+    async def act_assets(self, record: bool = True) -> dict:
+        """Активы и долги с котировками; record — строка дня в Finance/Capital.md (динамика капитала)."""
+        assets, debts = self.portfolio.read()
+        quotes = await self.quotes.get(assets)
+        report = self.portfolio.valuate(assets, debts, quotes, self.today())
+        report["history"] = self.portfolio.record(self.today(), report) if record else self.portfolio.history()
+        return report
+
+    async def act_asset_add(self, action: str, data: dict) -> dict:
+        """action: init — создать Finance/Assets.md; asset — строка актива; debt — строка долга."""
+        if action == "init":
+            path = self.portfolio.init()
+            await self.changed("finance")
+            return {"path": path}
+        if action == "debt":
+            res = self.portfolio.add_debt(str(data.get("name") or ""), _kopecks(data.get("amount")),
+                                          str(data.get("due") or ""), str(data.get("note") or ""))
+            await self.log(f"Долг записан: {res['name']} — {ru.money(res['amount'], self.cfg.currency)}")
+        else:
+            qty = str(data.get("qty") or "1").replace(",", ".").replace(" ", "")
+            try:
+                qty_f = float(qty)
+            except ValueError:
+                raise ValueError("количество должно быть числом") from None
+            price = data.get("price")
+            res = self.portfolio.add_asset(str(data.get("name") or ""), str(data.get("kind") or ""), qty_f,
+                                           _kopecks(data.get("buy")), str(data.get("ticker") or ""),
+                                           str(data.get("date") or ""),
+                                           _kopecks(price) if price not in (None, "") else None)
+            await self.log(f"Актив записан: {res['name']}")
+        await self.changed("finance")
+        return res
+
+    def act_apps(self) -> dict:
+        return catalog(self.vault, self.projects)
+
+    async def act_app_catalog(self, name: str, on: bool = True) -> dict:
+        res = set_in_catalog(self.vault, self.projects, name, on)
+        await self.log(f"{'В каталог' if on else 'Из каталога'}: {name}", journal=False)
+        await self.changed("projects")
+        return res
 
     async def act_remember(self, fact: str) -> dict:
         res = self.memory.remember(fact, self.now())
@@ -533,6 +590,10 @@ class Jarvis:
             return Reply(s, kind="warn" if res.get("budget_alert") else "ok", data=res)
         if it.name == "finance_report":
             return self._finance_reply(a.get("period", "month"))
+        if it.name == "finance_analytics":
+            return self._analytics_reply()
+        if it.name == "assets_report":
+            return await self._assets_reply()
         if it.name == "remember":
             res = await self.act_remember(a["fact"])
             if res.get("duplicate"):
@@ -618,6 +679,27 @@ class Jarvis:
         if s["forecast"] and s["budget_total"] and s["forecast"] > s["budget_total"]:
             text += f" При таком темпе к концу месяца выйдет {ru.money(s['forecast'], cur)} — выше бюджета."
         return Reply(text, data=s)
+
+    def _analytics_reply(self) -> Reply:
+        a = self.act_finance_analytics()
+        lines = a["insights"] or ["Данных пока мало: нужно хотя бы несколько операций."]
+        cur = self.cfg.currency
+        rec = [r for r in a["recurring"] if not r["paid"]][:3]
+        if rec:
+            lines.append("Ожидаются: " + ", ".join(f"{r['note']} — {ru.money(r['amount'], cur)}" for r in rec) + ".")
+        return Reply(" ".join(lines), data=a)
+
+    async def _assets_reply(self) -> Reply:
+        r = await self.act_assets()
+        cur = self.cfg.currency
+        if not r["items"] and not r["debts"]:
+            return Reply(f"Активы пока не заведены, {self.title}. Откройте «Финансы → Активы» — я создам таблицу "
+                         f"в {self.portfolio.path}.", data=r)
+        text = (f"Активы — {ru.money(r['total'], cur)}, долги — {ru.money(r['debt'], cur)}, "
+                f"чистый капитал — {ru.money(r['net_worth'], cur)}.")
+        if r["pnl_pct"] is not None and r["cost"]:
+            text += f" К цене покупки: {'+' if r['pnl'] >= 0 else '−'}{ru.money(abs(r['pnl']), cur)} ({r['pnl_pct']}%)."
+        return Reply(text, data=r)
 
     def _recall_reply(self, query: str) -> Reply:
         if not query:

@@ -139,6 +139,12 @@ export function parse(text, ref, projects = [], wake = "атом") {
       return { name: "income", args: { amount: Math.abs(amount), category: guessCategory(note, true), note } };
     }
   }
+  if (rx("(мо[иеё] актив|мой капитал|капитал|портфел|сколько я стою|мои долги|сколько я должен)").test(low)) {
+    return { name: "assets_report", args: {} };
+  }
+  if (rx("((анализ|проанализируй|разбери).{0,24}(финанс|расход|трат|деньг)|регулярн\\S* (платеж|трат|расход))").test(low)) {
+    return { name: "finance_analytics", args: {} };
+  }
   if (rx("(сколько (я )?(потратил|трачу|заработал)|финанс|бюджет|баланс|мои расходы|траты|расходы)").test(low)) {
     return { name: "finance_report", args: { period: low.includes("сегодня") ? "today" : "month" } };
   }
