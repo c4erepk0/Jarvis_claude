@@ -8,6 +8,7 @@ import { Ledger, analytics, guessCategory } from "./finance.js";
 import { Portfolio, Quotes, assetsPhrase } from "./assets.js";
 import { catalog, setInCatalog } from "./apps.js";
 import { Places } from "./places.js";
+import { meetingText, meetings } from "./meetings.js";
 import { Memory, hhmm } from "./memory.js";
 import { Projects, STATUSES, projectLine } from "./projects.js";
 import { Notes, noteTags } from "./notes.js";
@@ -434,6 +435,7 @@ export class Jarvis {
         const r = this.actOpenNote(a.query);
         return { text: `Открываю «${r.title}» в голограмме, ${t}.`, kind: "ok", data: { open_note: r.path } };
       }
+      case "meetings": return this.meetingsReply(a.period);
       case "map": {
         this.emit("open_map", a);
         const text = a.route ? `Строю маршрут до «${a.route}», ${t}.` : a.query ? `Ищу на карте «${a.query}».`
@@ -504,6 +506,32 @@ export class Jarvis {
     if (top.length) text += ` Больше всего: ${top.map((c) => `${c.category} — ${money(c.spent, cur)}`).join(", ")}.`;
     if (s.budget_total && s.forecast > s.budget_total) text += ` При таком темпе к концу месяца выйдет ${money(s.forecast, cur)} — выше бюджета.`;
     return { text, data: s };
+  }
+
+  actMeetings() { return meetings(this.tasks.all(), this.today()); }
+  /** Встреча или задача (на iPhone без сервера операторов нет — поручения только себе). */
+  async actAssign(kind, d) {
+    const due = d.due ? String(d.due) : null;
+    if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) throw new VaultError("дата — в виде ГГГГ-ММ-ДД");
+    const text = kind === "meeting" ? meetingText(d.title || d.text, d.time || "", d.place || "") : String(d.text || "").trim();
+    if (!text) throw new VaultError("пустая задача");
+    const t = await this.tasks.add(text, this.today(), { due, priority: d.priority || null, tags: kind === "meeting" ? ["встреча"] : [] });
+    await this.log(`${kind === "meeting" ? "Встреча" : "Задача"}: ${t.text}`);
+    this.changed("tasks");
+    return t;
+  }
+  meetingsReply(period) {
+    const ref = this.today();
+    const plus = (n) => { const d = new Date(`${ref}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+    const day = { "сегодня": ref, "завтра": plus(1) }[period];
+    let up = this.actMeetings().upcoming;
+    if (day) up = up.filter((m) => m.due === day);
+    else if (period === "неделю") up = up.filter((m) => m.due && m.due <= plus(7));
+    const label = { "сегодня": "на сегодня", "завтра": "на завтра", "неделю": "на неделю" }[period] || "";
+    if (!up.length) return { text: `Встреч ${label || "впереди"} нет, ${this.title}.`, data: up };
+    const parts = up.slice(0, 6).map((m) => `${m.title}${m.time ? ` в ${m.time}` : ""}${day || !m.due ? "" : `, ${m.due.slice(8)}.${m.due.slice(5, 7)}`}`);
+    const n = up.length;
+    return { text: `${n} ${plural(n, "встреча", "встречи", "встреч")}${label ? " " + label : ""}: ${parts.join("; ")}.`, data: up };
   }
 
   analyticsReply() {
@@ -614,6 +642,8 @@ export class Jarvis {
       return t;
     }
     if (p === "/api/finance" && method === "GET") return this.actFinance(q.month || null);
+    if (p === "/api/meetings") return this.actMeetings();
+    if (p === "/api/admin/assign") return this.actAssign(String(body.kind || "task"), body);
     if (p === "/api/places" && method === "GET") return { places: this.places.list() };
     if (p === "/api/places") {
       if (body.action === "remove") { if (!(await this.places.remove(String(body.name || "")))) throw new VaultError("такого места нет"); }

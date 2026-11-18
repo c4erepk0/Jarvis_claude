@@ -1,9 +1,9 @@
 // A.T.O.M. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=20";
-import { Voice } from "./voice.js?v=20";
-import { countTo, stagger } from "./motion.js?v=20";
+import { Reactor } from "./reactor.js?v=21";
+import { Voice } from "./voice.js?v=21";
+import { countTo, stagger } from "./motion.js?v=21";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -60,7 +60,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Atom работает прямо на телефоне
-    SA = await import("./standalone.js?v=20");
+    SA = await import("./standalone.js?v=21");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -76,9 +76,79 @@ async function boot() {
     if (SA.needsSeed(local)) offerSeed();
     return;
   }
+  const invite = new URLSearchParams(location.search).get("invite");
+  if (invite) { hideBoot(); showGate("invite", invite); return; }
+  if (server.role === "operator") { hideBoot(); startOperator(); return; }
+  if (server.setup) { hideBoot(); showGate("setup"); return; }
   if (server.auth && !server.logged_in) { hideBoot(); showLogin(); return; }
   await start();
   hideBoot();
+}
+
+// ---------- первый запуск, приглашение, кабинет оператора ----------
+async function startOperator() {
+  document.querySelector("header.top")?.classList.add("hidden");
+  const { OperatorApp } = await import("./operator-app.js?v=21");
+  try { await new OperatorApp($("#opapp"), { api, toast }).start(); }
+  catch (e) { toast(`Кабинет оператора: ${e.message}`, "error"); }
+}
+
+async function acceptInvite(text) {
+  const { inviteToken } = await import("./team.js?v=21");
+  const token = inviteToken(text);
+  if (!token) throw new Error("Вставьте ссылку-приглашение целиком или код из неё");
+  await api("/api/invite/accept", { method: "POST", body: { token } });
+  location.replace(location.pathname);              // без ?invite= в адресе — и сразу кабинет оператора
+}
+
+async function showGate(mode, token = "") {
+  const g = $("#gate");
+  g.classList.remove("hidden");
+  if (mode === "invite") {
+    let name = "";
+    try { name = (await api(`/api/invite?token=${encodeURIComponent(token)}`)).name; }
+    catch (e) {
+      g.innerHTML = `<div class="gate-box panel"><div class="panel-h">Приглашение</div><p>${esc(e.message)}</p>
+        <p class="muted">Попросите владельца прислать новую ссылку.</p><a class="btn ghost" href="./">На главную</a></div>`;
+      return;
+    }
+    g.innerHTML = `<div class="gate-box panel"><div class="panel-h">Приглашение в Atom</div>
+      <p>Вас приглашают как оператора: <b>${esc(name)}</b>.</p>
+      <p class="muted">В кабинете — порученные вам задачи и встречи и чат с владельцем. Остальное в Atom вам не видно.</p>
+      <button class="btn primary" id="gate-accept">Принять приглашение</button><p class="err" id="gate-err"></p></div>`;
+    $("#gate-accept").addEventListener("click", () => acceptInvite(token).catch((e) => { $("#gate-err").textContent = e.message; }));
+    return;
+  }
+  g.innerHTML = `<div class="gate-wrap"><div class="gate-logo">A.T.O.M.</div><h2>Кто вы?</h2>
+    <div class="gate-cards">
+      <form class="gate-box panel" id="gate-owner"><div class="panel-h">Я владелец</div>
+        <p class="muted">Полный доступ: задачи, финансы, проекты, память, команда. Задайте пароль — тогда можно приглашать операторов.</p>
+        <input type="password" name="p1" placeholder="Пароль (от 6 символов)" minlength="6" autocomplete="new-password">
+        <input type="password" name="p2" placeholder="Ещё раз" autocomplete="new-password">
+        <button class="btn primary">Войти как владелец</button>
+        <button type="button" class="link" id="gate-open">Без пароля — Atom только у меня на компьютере</button>
+        <p class="err" id="gate-owner-err"></p></form>
+      <form class="gate-box panel" id="gate-op"><div class="panel-h">Я оператор</div>
+        <p class="muted">Владелец прислал вам ссылку-приглашение — вставьте её сюда (или просто откройте ссылку).</p>
+        <input name="link" placeholder="https://…/?invite=…" autocomplete="off" required>
+        <button class="btn">Войти как оператор</button><p class="err" id="gate-op-err"></p></form>
+    </div></div>`;
+  $("#gate-owner").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target, p1 = f.p1.value, p2 = f.p2.value;
+    if (p1.length < 6) { $("#gate-owner-err").textContent = "Пароль — от 6 символов (или войдите без пароля)"; return; }
+    if (p1 !== p2) { $("#gate-owner-err").textContent = "Пароли не совпадают"; return; }
+    try { await api("/api/setup", { method: "POST", body: { mode: "password", password: p1 } }); g.classList.add("hidden"); await start(); }
+    catch (err) { $("#gate-owner-err").textContent = err.message; }
+  });
+  $("#gate-open").addEventListener("click", async () => {
+    try { await api("/api/setup", { method: "POST", body: { mode: "open" } }); g.classList.add("hidden"); await start(); }
+    catch (err) { $("#gate-owner-err").textContent = err.message; }
+  });
+  $("#gate-op").addEventListener("submit", (e) => {
+    e.preventDefault();
+    acceptInvite(e.target.link.value).catch((err) => { $("#gate-op-err").textContent = err.message; });
+  });
 }
 function hideBoot() { $("#boot").classList.add("off"); setTimeout(() => $("#boot").remove(), 700); }
 
@@ -86,12 +156,18 @@ function showLogin() {
   $("#login").classList.remove("hidden");
   $("#login-code").focus();
 }
+$("#login-op").addEventListener("click", () => { $("#login").classList.add("hidden"); showGate("setup").then(() => {
+  $("#gate-owner")?.closest(".gate-box")?.remove();
+  document.querySelector(".gate-wrap h2").textContent = "Вход оператора";
+}); });
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("#login-err").textContent = "";
   try {
     await api("/api/login", { method: "POST", body: { code: $("#login-code").value } });
     $("#login").classList.add("hidden");
+    const s = await api("/api/session");
+    if (s.role === "operator") { startOperator(); return; }
     await start();
   } catch (err) { $("#login-err").textContent = err.message; }
 });
@@ -110,6 +186,8 @@ async function start() {
   } else connect();
   loadProjects();
   loadApps();
+  loadMeetings();
+  loadTeamBadge();
   setInterval(loadProjects, 120000);
   setInterval(() => loadWeather(), 15 * 60000);
   loadWeather();
@@ -140,6 +218,7 @@ function refreshSoon(what) {
   stateTimer = setTimeout(() => {
     loadState().catch(() => {});
     if (what === "projects" || what === "all") { loadProjects(); loadApps(); }
+    if (what === "tasks" || what === "all") loadMeetings();
   }, 250);
 }
 async function loadProjects() {
@@ -175,6 +254,11 @@ function handleEvent(e) {
       case "open_note": openNote(d.path); break;
       case "open_files": openFiles(); break;
       case "open_map": openMap(d); break;
+      case "chat":
+        if (d.message?.from === "operator") { toast(`${d.name}: ${d.message.text.slice(0, 140)}`, "info"); loadTeamBadge(); }
+        tw?.onEvent("chat", d);
+        break;
+      case "operators": tw?.onEvent("operators", d); loadTeamBadge(); break;
       case "open_project": openFiles({ kind: "project", name: d.name }); break;
       case "open_synthesis": openFiles({ kind: "synthesis", name: null }); break;
       case "vault":
@@ -203,7 +287,7 @@ function handleEvent(e) {
     }
 }
 const TOOL_NAMES = { memory_search: "ищу в памяти", tasks_list: "смотрю задачи", task_add: "записываю задачу",
-  map_open: "открываю карту", money_add: "записываю операцию", finance_report: "считаю финансы", finance_analytics: "анализирую финансы",
+  map_open: "открываю карту", meetings: "смотрю встречи", money_add: "записываю операцию", finance_report: "считаю финансы", finance_analytics: "анализирую финансы",
   assets_report: "оцениваю активы", projects_status: "проверяю проекты",
   memory_remember: "запоминаю", note_read: "читаю заметку", web_search: "ищу в интернете", project_delegate: "готовлю поручение",
   notes_list: "смотрю заметки", note_show: "открываю заметку", note_create: "создаю заметку", note_edit: "правлю заметку",
@@ -301,7 +385,7 @@ function renderTasks() {
   const done = taskView === "today" ? S.tasks.done_today : [];
   const sm = S.tasks.summary;
   $("#tasks-meta").textContent = `${sm.open} ОТКР · ${sm.done_today} ГОТОВО${sm.overdue ? ` · ${sm.overdue} ПРОСР` : ""}`;
-  const items = [...list, ...done];
+  const items = [...list, ...done].filter((t) => !(t.tags || []).includes("встреча"));   // встречи — в своей панели
   $("#tasks-list").innerHTML = items.length ? items.map((t) => `
     <li class="task ${t.status === "done" ? "done" : ""} prio-${t.priority}" data-id="${esc(t.id)}">
       <button class="check" aria-label="Выполнено" ${t.status === "done" ? "disabled" : ""}></button>
@@ -414,7 +498,7 @@ let fw = null;
 async function openFinance(tab = null) {
   try {
     if (!fw) {
-      const { FinanceWindow } = await import("./finance.js?v=20");
+      const { FinanceWindow } = await import("./finance.js?v=21");
       fw = new FinanceWindow($("#fw"), { api, toast, store, openNote, today: () => S.now.slice(0, 10) });
     }
     await fw.show(tab);
@@ -426,13 +510,56 @@ let mw = null;
 async function openMap(args = {}) {
   try {
     if (!mw) {
-      const { MapWindow } = await import("./map.js?v=20");
+      const { MapWindow } = await import("./map.js?v=21");
       mw = new MapWindow($("#mw"), { api, toast, store, speak: (t) => { if (!voice.muted) voice.say(t); } });
     }
     await mw.show(args || {});
   } catch (err) { toast(`Карта: ${err.message}`, "error"); }
 }
 $("#btn-map").addEventListener("click", () => openMap());
+
+// ---------- команда: операторы, чат, встречи (team-admin.js) ----------
+let tw = null;
+async function openTeam(opts = {}) {
+  try {
+    if (!tw) {
+      const { TeamWindow } = await import("./team-admin.js?v=21");
+      tw = new TeamWindow($("#ow"), { api, toast, store, today: () => S.now.slice(0, 10), standalone: Boolean(local) });
+    }
+    await tw.show(opts);
+    loadTeamBadge();
+  } catch (err) { toast(err.message, "error"); }
+}
+$("#btn-team").addEventListener("click", () => openTeam());
+$("#meet-open").addEventListener("click", () => openTeam({ tab: "meet" }));
+async function loadTeamBadge() {
+  if (local) return;
+  try {
+    const r = await api("/api/admin/operators");
+    const n = r.operators.reduce((s, o) => s + (o.unread || 0), 0);
+    $("#team-badge").textContent = n; $("#team-badge").classList.toggle("hidden", !n);
+  } catch { /* старый сервер */ }
+}
+
+// встречи на главной: ближайшие, отметить «состоялась»
+async function loadMeetings() {
+  let m;
+  try { m = await api("/api/meetings"); } catch { return; }
+  const today = S.now.slice(0, 10);
+  $("#meet-meta").textContent = m.today ? `${m.today} СЕГОДНЯ` : m.upcoming.length ? `${m.upcoming.length} ВПЕРЕДИ` : "";
+  $("#meet-list").innerHTML = m.upcoming.slice(0, 6).map((x) => `<li class="task meet" data-id="${esc(x.id)}">
+    <button class="check" aria-label="Состоялась"></button>
+    <div class="t-text"><b>${esc(x.title)}</b><small class="muted">${x.due ? esc(new Date(`${x.due}T00:00`).toLocaleDateString("ru-RU", { day: "numeric", month: "short" })) : ""}${x.time ? ` · ${esc(x.time)}` : ""}${x.place ? ` · 📍 ${esc(x.place)}` : ""}</small></div>
+    <div class="t-meta ${x.due && x.due < today ? "over" : x.due === today ? "today" : ""}">${x.due === today ? "СЕГОДНЯ" : ""}</div></li>`).join("")
+    || `<li class="empty">Встреч не назначено. «⤢» — назначить, или задача с тегом #встреча.</li>`;
+}
+$("#meet-list").addEventListener("click", async (e) => {
+  const b = e.target.closest(".check"); if (!b) return;
+  const li = b.closest("[data-id]");
+  li.classList.add("done");
+  try { await api(`/api/tasks/${encodeURIComponent(li.dataset.id)}/status`, { method: "POST", body: { status: "done" } }); toast("Встреча отмечена", "ok"); loadMeetings(); }
+  catch (err) { li.classList.remove("done"); toast(err.message, "error"); }
+});
 
 // ---------- каталог приложений ----------
 let apps = { apps: [], available: [] };
@@ -823,6 +950,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (!$("#modal").classList.contains("hidden")) closeModal();
     else if (mw?.isOpen) mw.escape();
+    else if (tw?.isOpen) tw.close();
     else if (fw?.isOpen) fw.close();
     else if (!$("#holo").classList.contains("hidden")) { if (notes?.isOpen && notes.mode === "view") notes.close(); }
     else if (fm?.isOpen) fm.escape();
@@ -854,7 +982,7 @@ tick(); setInterval(tick, 1000);
 let fm = null;
 async function fileManager() {
   if (fm) return fm;
-  const { FileManager } = await import("./files.js?v=20");
+  const { FileManager } = await import("./files.js?v=21");
   fm = new FileManager($("#fm"), {
     api, toast, store,
     projects: () => (S ? S.projects : []),
@@ -887,7 +1015,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=20");
+    const { Hologram } = await import("./hologram.js?v=21");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -910,7 +1038,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=20");
+  const { NotePanel } = await import("./note-panel.js?v=21");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -951,7 +1079,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=20");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=21");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1002,7 +1130,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=20").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=21").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -1023,7 +1151,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=20");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=21");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1036,7 +1164,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=20");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=21");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),

@@ -123,6 +123,11 @@ def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: st
     if SYNTHESIS.search(low):
         return Intent("synthesis", {})
 
+    # --- встречи ---
+    m = re.fullmatch(r"(?:какие |мои |покажи )?встречи(?: на (сегодня|завтра|неделю))?", low)
+    if m:
+        return Intent("meetings", {"period": m.group(1) or "all"})
+
     # --- карта и навигация ---
     nav = map_intent(low)
     if nav:

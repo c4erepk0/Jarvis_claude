@@ -94,6 +94,8 @@ export function parse(text, ref, projects = [], wake = "атом") {
   if (rx("^(нет|отмена|отменить|отмени|не надо|стоп|стой|отбой)$").test(low)) return { name: "cancel", args: {} };
   if (SYNTHESIS.test(low)) return { name: "synthesis", args: {} };
 
+  const meet = /^(?:какие |мои |покажи )?встречи(?: на (сегодня|завтра|неделю))?$/u.exec(low);
+  if (meet) return { name: "meetings", args: { period: meet[1] || "all" } };
   const nav = mapIntent(low);
   if (nav) return nav;
 
