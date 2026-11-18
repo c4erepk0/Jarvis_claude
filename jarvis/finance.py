@@ -234,6 +234,14 @@ def analytics(ledger: "Ledger", ref: date, months: int = 6) -> dict:
         return out
 
     this_cats = cats(by_month[cur])
+    # таблица «категория × месяц» для 3D-карты расходов: шесть самых затратных категорий за весь срок
+    per = {m: cats(by_month[m]) for m in span}
+    totals: dict[str, int] = defaultdict(int)
+    for m in span:
+        for c, v in per[m].items():
+            totals[c] += v
+    top_cats = [c for c, _ in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))[:6]]
+    matrix = {"months": span, "categories": top_cats, "values": [[per[m].get(c, 0) for m in span] for c in top_cats]}
     prev_cats = [cats(by_month[t["month"]]) for t in prev]
     categories = []
     for c in sorted(set(this_cats) | {k for pc in prev_cats for k in pc}, key=lambda c: (-this_cats.get(c, 0), c)):
@@ -301,5 +309,5 @@ def analytics(ledger: "Ledger", ref: date, months: int = 6) -> dict:
         "average_expense": avg_exp, "forecast": forecast,
         "savings_rate": pct(now["net"], now["income"]) if now["income"] else None,
         "categories": categories, "recurring": recurring, "recurring_pending": pending,
-        "frequent": frequent, "top": [e.as_dict() for e in big], "insights": insights[:6],
+        "frequent": frequent, "top": [e.as_dict() for e in big], "insights": insights[:6], "matrix": matrix,
     }

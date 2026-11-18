@@ -2,8 +2,8 @@
 // Сохранение — с версией, с которой начали править: если заметку тем временем изменили в Obsidian,
 // сервер (или ядро на iPhone) вернёт 409 и панель предложит выбрать версию — ничего не затирается молча.
 // Жестами (через голограмму): ✊ закрыть, ✌ править / диктовать строку, 👍 сохранить, взмах — назад/вперёд.
-import { esc, renderMarkdown, toggleTask } from "./markdown.js?v=18";
-import { Trail, insertDictation, noteAction, noteHint } from "./note-gestures.js?v=18";
+import { esc, renderMarkdown, toggleTask } from "./markdown.js?v=19";
+import { Trail, insertDictation, noteAction, noteHint } from "./note-gestures.js?v=19";
 
 const folderOf = (path) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 const titleOf = (path) => path.split("/").pop().replace(/\.[^.]+$/, "");
@@ -118,8 +118,8 @@ export class NotePanel {
           <input id="np-new" value="${esc(base ? `${base}/` : "")}" placeholder="Ideas/Новая идея" autocomplete="off" required>
           ${tpls.length ? `<label class="muted" for="np-tpl">Шаблон</label><select id="np-tpl"><option value="">— пустая заметка —</option>
             ${tpls.map((t) => `<option value="${esc(t)}">${esc(titleOf(t))}</option>`).join("")}</select>` : ""}
-          <div class="np-row"><button class="btn primary" type="submit">СОЗДАТЬ</button>
-          <button class="btn ghost" type="button" data-act="back">ОТМЕНА</button></div>
+          <div class="np-row"><button class="btn primary" type="submit">Создать</button>
+          <button class="btn ghost" type="button" data-act="back">Отмена</button></div>
         </form>`;
       const input = this.el.querySelector("#np-new");
       input.focus();
@@ -131,7 +131,7 @@ export class NotePanel {
       return;
     }
     if (mode === "edit") {
-      this.el.innerHTML = `${this.head('<button class="btn primary" data-act="save">СОХРАНИТЬ</button><button class="btn ghost" data-act="cancel">ОТМЕНА</button>')}
+      this.el.innerHTML = `${this.head('<button class="btn primary" data-act="save">Сохранить</button><button class="btn ghost" data-act="cancel">Отмена</button>')}
         <div class="np-tools">
           <button class="btn ghost" data-act="ins-task" title="Задача">☐ задача</button>
           <button class="btn ghost" data-act="ins-link" title="Ссылка на заметку">[[ ]]</button>
@@ -154,9 +154,9 @@ export class NotePanel {
         <div class="np-conflict">
           <p><b>Заметку изменили, пока вы её правили</b> — скорее всего, в Obsidian на телефоне.</p>
           <div class="np-row">
-            <button class="btn primary" data-act="mine">СОХРАНИТЬ МОЮ</button>
-            <button class="btn ghost" data-act="theirs">${theirs ? "ВЗЯТЬ ИЗ OBSIDIAN" : "ЗАКРЫТЬ"}</button>
-            <button class="btn ghost" data-act="back-edit">К ПРАВКЕ</button>
+            <button class="btn primary" data-act="mine">Сохранить мою</button>
+            <button class="btn ghost" data-act="theirs">${theirs ? "Взять из Obsidian" : "Закрыть"}</button>
+            <button class="btn ghost" data-act="back-edit">К правке</button>
           </div>
           <p class="muted">Ваши правки не потеряются: «Взять из Obsidian» скопирует их в буфер обмена.</p>
           ${theirs ? `<div class="np-sub muted">Версия в Obsidian:</div><div class="np-body md">${this.html(theirs.content)}</div>`
@@ -164,7 +164,7 @@ export class NotePanel {
         </div>`;
       return;
     }
-    const actions = (n.editable ? '<button class="btn ghost" data-act="edit">✎ ПРАВИТЬ</button>' : "")
+    const actions = (n.editable ? '<button class="btn ghost" data-act="edit">✎ Править</button>' : "")
       + this.extraActions(n) + '<button class="btn ghost" data-act="new" title="Новая заметка">＋</button>';
     this.el.innerHTML = `${this.head(actions)}
       <div class="np-body md">${this.html(n.content) || '<p class="muted">Пустая заметка.</p>'}</div>
@@ -180,7 +180,7 @@ export class NotePanel {
       <small class="muted">${esc(folderOf(b.path))}</small></li>`).join("");
     if (!tags && !back) return "";
     return `<div class="np-meta">${tags ? `<div class="np-tags">${tags}</div>` : ""}
-      ${back ? `<div class="np-sub muted">ССЫЛАЮТСЯ СЮДА · ${n.backlinks.length}</div><ul class="np-back">${back}</ul>` : ""}</div>`;
+      ${back ? `<div class="np-sub muted">Ссылаются сюда · ${n.backlinks.length}</div><ul class="np-back">${back}</ul>` : ""}</div>`;
   }
 
   html(content) { return renderMarkdown(content, { resolve: this.resolve }).html; }

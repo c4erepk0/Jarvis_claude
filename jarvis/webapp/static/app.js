@@ -1,8 +1,9 @@
 // A.T.O.M. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=18";
-import { Voice } from "./voice.js?v=18";
+import { Reactor } from "./reactor.js?v=19";
+import { Voice } from "./voice.js?v=19";
+import { countTo, stagger } from "./motion.js?v=19";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -59,7 +60,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Atom работает прямо на телефоне
-    SA = await import("./standalone.js?v=18");
+    SA = await import("./standalone.js?v=19");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -97,6 +98,7 @@ $("#login-form").addEventListener("submit", async (e) => {
 
 async function start() {
   await loadState(true);
+  stagger($$(".layout .panel, .layout .reactor-wrap, .layout .command"));   // панели появляются по очереди
   if (local) {
     local.on(handleEvent);
     chip("#chip-sync", "on");
@@ -358,9 +360,9 @@ function renderFinance() {
   const f = S.finance, cur = f.currency;
   const [y, m] = f.month.split("-");
   $("#fin-month").textContent = new Date(+y, +m - 1, 1).toLocaleDateString("ru-RU", { month: "long", year: "numeric" }).toUpperCase();
-  $("#fin-exp").textContent = money(f.expense, cur);
-  $("#fin-inc").textContent = money(f.income, cur);
-  $("#fin-fc").textContent = money(f.forecast, cur);
+  countTo($("#fin-exp"), money(f.expense, cur));
+  countTo($("#fin-inc"), money(f.income, cur));
+  countTo($("#fin-fc"), money(f.forecast, cur));
   const pct = f.budget_percent;
   const g = $("#fin-gauge-val");
   g.style.strokeDasharray = `${Math.min(100, pct || 0) * 3.1416} 400`;
@@ -411,7 +413,7 @@ let fw = null;
 async function openFinance(tab = null) {
   try {
     if (!fw) {
-      const { FinanceWindow } = await import("./finance.js?v=18");
+      const { FinanceWindow } = await import("./finance.js?v=19");
       fw = new FinanceWindow($("#fw"), { api, toast, store, openNote, today: () => S.now.slice(0, 10) });
     }
     await fw.show(tab);
@@ -837,7 +839,7 @@ tick(); setInterval(tick, 1000);
 let fm = null;
 async function fileManager() {
   if (fm) return fm;
-  const { FileManager } = await import("./files.js?v=18");
+  const { FileManager } = await import("./files.js?v=19");
   fm = new FileManager($("#fm"), {
     api, toast, store,
     projects: () => (S ? S.projects : []),
@@ -870,7 +872,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=18");
+    const { Hologram } = await import("./hologram.js?v=19");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -893,7 +895,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=18");
+  const { NotePanel } = await import("./note-panel.js?v=19");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -934,7 +936,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=18");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=19");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -985,7 +987,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=18").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=19").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -1006,7 +1008,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=18");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=19");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1019,7 +1021,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=18");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=19");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),

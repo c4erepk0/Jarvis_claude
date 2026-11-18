@@ -167,6 +167,12 @@ export function analytics(ledger, ref, months = 6) {
     return out;
   };
   const thisCats = cats(byMonth[cur]);
+  // таблица «категория × месяц» для 3D-карты расходов: шесть самых затратных категорий за весь срок
+  const per = Object.fromEntries(span.map((m) => [m, cats(byMonth[m])]));
+  const totals = {};
+  for (const m of span) for (const [c, v] of Object.entries(per[m])) totals[c] = (totals[c] || 0) + v;
+  const topCats = Object.entries(totals).sort((a, b) => cmpTuple([-a[1], a[0]], [-b[1], b[0]])).slice(0, 6).map(([c]) => c);
+  const matrix = { months: span, categories: topCats, values: topCats.map((c) => span.map((m) => per[m][c] || 0)) };
   const prevCats = prev.map((t) => cats(byMonth[t.month]));
   const names = [...new Set([...Object.keys(thisCats), ...prevCats.flatMap((pc) => Object.keys(pc))])]
     .sort((a, b) => cmpTuple([-(thisCats[a] || 0), a], [-(thisCats[b] || 0), b]));
@@ -236,5 +242,5 @@ export function analytics(ledger, ref, months = 6) {
   const top = byMonth[cur].filter((e) => e.amount < 0).sort((a, b) => a.amount - b.amount).slice(0, 5);
   return { month: cur, currency: ledger.currency, trend, average_expense: avgExp, forecast,
     savings_rate: now.income ? pct(now.net, now.income) : null, categories, recurring, recurring_pending: pending,
-    frequent, top, insights: insights.slice(0, 6) };
+    frequent, top, insights: insights.slice(0, 6), matrix };
 }

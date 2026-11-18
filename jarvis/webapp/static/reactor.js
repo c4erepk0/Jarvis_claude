@@ -1,5 +1,6 @@
-// Ядро Atom: живая сфера — дышит в покое, волнуется от голоса (микрофон / речь Atom), «думает» отблеском по краю.
-// Тонкие дуги вокруг — показатели дня: задачи, бюджет, нагрузка сервера. Имя класса прежнее — ради совместимости.
+// Ядро Atom: сфера из частиц (particle-sphere.js, three.js) — дышит в покое, волнуется от голоса (микрофон / речь Atom),
+// закручивается, когда Atom думает. Тонкие дуги вокруг — показатели дня: задачи, бюджет, нагрузка сервера (2D-холст поверх).
+// Нет WebGL или CDN недоступен — сфера рисуется здесь же, на 2D-холсте. Имя класса прежнее — ради совместимости.
 
 const TAU = Math.PI * 2;
 const COLORS = {
@@ -20,9 +21,22 @@ export class Reactor {
     this.color = [...COLORS.idle];
     this.t = 0;
     this.focus = null;       // {until, total}
+    this.gl = null;          // ParticleSphere, когда three.js загрузился
     this.resize();
     window.addEventListener("resize", () => this.resize());
     requestAnimationFrame((ts) => this.frame(ts));
+    this.loadParticles();
+  }
+
+  async loadParticles() {
+    if (typeof WebGLRenderingContext === "undefined" || new URLSearchParams(location.search).has("flat")) return;
+    try {
+      const { ParticleSphere } = await import("./particle-sphere.js?v=19");
+      this.gl = new ParticleSphere(this.c.parentElement);
+      this.c.parentElement.classList.add("particles");
+    } catch (e) {
+      console.info("ядро: сфера из частиц недоступна, рисую плоскую", e);
+    }
   }
 
   resize() {
@@ -32,6 +46,7 @@ export class Reactor {
     this.c.width = this.size * dpr;
     this.c.height = this.size * dpr;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.gl?.resize();
   }
 
   setState(s) { this.state = COLORS[s] ? s : "idle"; }
@@ -48,6 +63,7 @@ export class Reactor {
     const goal = COLORS[this.state];
     for (let i = 0; i < 3; i++) this.color[i] += (goal[i] - this.color[i]) * Math.min(1, dt * 4);
     this.draw();
+    this.gl?.render({ t: this.t, dt, level: this.level, state: this.state, color: this.color });
     requestAnimationFrame((t) => this.frame(t));
   }
 
@@ -96,6 +112,8 @@ export class Reactor {
       ctx.strokeStyle = "rgba(255,179,71,.9)";
       ctx.beginPath(); ctx.arc(0, 0, R * 0.84, -Math.PI / 2, -Math.PI / 2 + TAU * (left / this.focus.total)); ctx.stroke();
     }
+
+    if (this.gl) { ctx.restore(); return; }   // сферу рисуют частицы
 
     // мягкий ореол
     const r0 = R * (0.5 + Math.sin(t * 1.6) * 0.012 + lvl * 0.06);
