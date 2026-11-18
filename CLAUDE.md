@@ -43,12 +43,16 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   поездки, «Рядом» (Overpass), линейка, «поделиться», облёт Нью-Йорка. Без ключей; хосты — `MAP_HOSTS` в CSP `web.py`.
   Логика без DOM — `static/geo.js` (тест — `tests/js/geo.test.mjs`). Места — `jarvis/places.py` (`Jarvis/Places.md`),
   `GET/POST /api/places`, JS — `core/places.js`; голос — интент `map` (`map_intent` / `mapIntent`), тест — `tests/test_places.py`.
-- **Операторы** — `jarvis/operators.py`: владелец (корень) и операторы-люди. Учётки, хэши приглашений и пароль владельца
-  (scrypt) — `data/operators.json` (не в хранилище: оно синхронизируется), переписка — `Jarvis/Chat/<Имя>.md`.
-  Вход (`Auth` в `web.py`): cookie «роль.кто.версия.срок.подпись» (старая «срок.подпись» — владелец); первый запуск
-  (`/api/setup`: владелец с паролем или без) и приглашение по одноразовой ссылке `/?invite=…` (`/api/invite/accept`).
-  Оператору сервер открывает только `/api/op/…` (+ `/api/session`, `/api/logout`, `/ws`), события WebSocket — только
-  его (`ws.atom_filter` в `hub.py`); права — `PERMS`. Без пароля владельца приглашать нельзя. Раздел владельца —
+- **Операторы** — `jarvis/operators.py`: владелец (корень) и операторы-люди. Учётки, хэши паролей и приглашений,
+  сессии — `data/operators.json` (не в хранилище: оно синхронизируется), переписка — `Jarvis/Chat/<Имя>.md`, личная папка
+  оператора — `Команда/<Имя>/` (заметки и `Задачи.md`; личные задачи операторов не попадают в списки владельца —
+  `TaskBook(skip=…"Команда/")`, у оператора — `TaskBook(only=…)`). Вход (`Auth` в `web.py`): cookie
+  «роль.кто.устройство.срок.подпись» — устройство (sid) — запись в `sessions`, её можно завершить (`/api/sessions`,
+  владелец — и чужие: `/api/admin/operators/{id}` `sessions`/`revoke`); старая «срок.подпись» — владелец до «выйти везде».
+  Первый запуск (`/api/setup`), приглашение по одноразовой ссылке `/?invite=…` — оператор задаёт пароль
+  (`/api/invite/accept`), дальше входит по имени и паролю (`/api/op-login`). Оператору сервер открывает только
+  `/api/op/…` (+ `/api/session`, `/api/logout`, `/api/sessions`, `/ws`), события WebSocket — только его
+  (`ws.atom_filter` в `hub.py`); права — `PERMS` (все задачи, все встречи), проекты — только общие (`projects`). Без пароля владельца приглашать нельзя. Раздел владельца —
   `/api/admin/…`, окно «Команда» `static/team-admin.js`; кабинет оператора — `static/operator-app.js`; без DOM —
   `static/team.js`. Только сервер (в JS-ядре для iPhone операторов нет намеренно). Тесты — `tests/test_operators.py`,
   `tests/js/team.test.mjs`.

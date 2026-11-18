@@ -1,8 +1,9 @@
 // Окно «Команда» — раздел владельца (корня): операторы (пригласить по ссылке, права, отключить, удалить),
 // чат с каждым, поручения (задачи и встречи с тегом #оператор/<имя>) и все встречи — отметить «выполнено/состоялась».
 // Данные — /api/admin/…, /api/meetings, /api/tasks (сервер; на iPhone без сервера операторов нет).
-import { esc } from "./markdown.js?v=21";
-import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=21";
+import { esc } from "./markdown.js?v=22";
+import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=22";
+import { devicesList } from "./operator-app.js?v=22";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "без даты");
 
@@ -16,7 +17,7 @@ export class TeamWindow {
     root.innerHTML = `
       <div class="fw-top">
         <div class="fw-title">Команда <span class="muted" data-el="meta"></span></div>
-        <div class="seg fw-tabs tw-tabs"><button data-tab="ops">Операторы</button><button data-tab="meet">Встречи</button></div>
+        <div class="seg fw-tabs tw-tabs"><button data-tab="ops">Операторы</button><button data-tab="meet">Встречи</button><button data-tab="dev">Мои устройства</button></div>
         <button class="btn ghost" data-act="close" title="Закрыть (Esc)" aria-label="Закрыть">✕</button>
       </div>
       <div class="tw-body" data-el="body"></div>`;
@@ -59,7 +60,7 @@ export class TeamWindow {
     const n = this.data.operators.length;
     this.el("meta").textContent = n ? `${n} ${n === 1 ? "оператор" : n < 5 ? "оператора" : "операторов"}` : "";
     const body = this.el("body");
-    body.innerHTML = this.tab === "meet" ? await this.renderMeetings() : await this.renderOps();
+    body.innerHTML = this.tab === "meet" ? await this.renderMeetings() : this.tab === "dev" ? await this.renderDevices() : await this.renderOps();
     body.querySelector(".tw-chat-log")?.scrollTo(0, 1e9);
   }
 
@@ -95,14 +96,23 @@ export class TeamWindow {
     return `<form class="tw-card" data-form="new"><h3>Новый оператор</h3>
       <label>Имя<input name="name" required maxlength="60" placeholder="Анна" autocomplete="off"></label>
       <label>Заметка для себя<input name="note" maxlength="300" placeholder="например: ассистент, бухгалтерия" autocomplete="off"></label>
-      <fieldset class="tw-perms"><legend>Права</legend>${this.permBoxes(["add_tasks"])}</fieldset>
+      <fieldset class="tw-perms"><legend>Права</legend>${this.permBoxes([])}</fieldset>
+      <fieldset class="tw-perms"><legend>Общие проекты</legend>${this.projectBoxes([])}</fieldset>
       <div class="fw-form-acts"><button class="btn primary">Создать и получить ссылку</button>
       <button type="button" class="btn ghost" data-act="cancel-new">Отмена</button></div></form>`;
   }
 
   permBoxes(on) {
     return Object.entries(this.data.perms).map(([k, l]) => `<label class="tw-check"><input type="checkbox" name="perm" value="${k}" ${on.includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")
-      + `<p class="muted small">Всегда доступно: порученные ему задачи и встречи, чат с вами.</p>`;
+      + `<p class="muted small">Всегда доступно: порученные задачи и встречи, свой список задач и заметки (папка в хранилище), чат с вами.</p>`;
+  }
+
+  projectBoxes(on) {
+    const list = this.data.projects || [];
+    if (!list.length) return `<p class="muted small">Проектов пока нет.</p>`;
+    const low = on.map((x) => x.toLowerCase());
+    return list.map((p) => `<label class="tw-check"><input type="checkbox" name="project" value="${esc(p.name)}" ${low.includes(p.name.toLowerCase()) ? "checked" : ""}> ${esc(p.name)}</label>`).join("")
+      + `<p class="muted small">Оператор увидит только отмеченные проекты: описание, прогресс и задачи (их можно отмечать). Остальные — скрыты.</p>`;
   }
 
   linkBox(token) {
@@ -115,7 +125,7 @@ export class TeamWindow {
   }
 
   async opPage(op) {
-    const content = this.sub === "work" ? await this.workTab(op) : this.sub === "access" ? this.accessTab(op) : await this.chatTab(op);
+    const content = this.sub === "work" ? await this.workTab(op) : this.sub === "access" ? await this.accessTab(op) : await this.chatTab(op);
     const head = `<header class="tw-head"><span class="tw-av big">${esc(op.name.slice(0, 1).toUpperCase())}</span>
       <div><h3>${esc(op.name)}</h3><small class="st-${op.status}">${STATUS[op.status]} · ${esc(seen(op.last_seen))}${op.note ? ` · ${esc(op.note)}` : ""}</small></div>
       <div class="seg tw-sub">${[["chat", `Чат${op.unread ? ` · ${op.unread}` : ""}`], ["work", "Поручения"], ["access", "Доступ"]]
@@ -176,20 +186,36 @@ export class TeamWindow {
       <div class="fw-form-acts"><button class="btn primary">Назначить</button></div></form></details>`;
   }
 
-  accessTab(op) {
+  async accessTab(op) {
+    let devices = [];
+    try { devices = (await this.api(`/api/admin/operators/${op.id}`, { method: "POST", body: { action: "sessions" } })).sessions; } catch { /* старый сервер */ }
     return `<form class="tw-card" data-form="edit"><h3>Доступ и данные</h3>
       <label>Имя<input name="name" value="${esc(op.name)}" required maxlength="60"></label>
       <label>Заметка для себя<input name="note" value="${esc(op.note)}" maxlength="300"></label>
       <fieldset class="tw-perms"><legend>Права</legend>${this.permBoxes(op.perms)}</fieldset>
-      <p class="muted small">Тег поручений: <code>#${esc(op.tag)}</code> — им можно отмечать задачи прямо в Obsidian.</p>
+      <fieldset class="tw-perms"><legend>Общие проекты</legend>${this.projectBoxes(op.projects || [])}</fieldset>
+      <p class="muted small">Тег поручений: <code>#${esc(op.tag)}</code> — им можно отмечать задачи прямо в Obsidian. Личная папка: <code>${esc(op.folder || "")}</code>.</p>
       <div class="fw-form-acts"><button class="btn primary">Сохранить</button></div></form>
+      <section class="tw-card"><h3>Устройства · ${devices.length}</h3>
+        ${devicesList(devices)}
+        <p class="muted small">${op.has_password ? "Оператор входит по имени и паролю с любого устройства." : "Пароль ещё не задан — он задаётся при принятии приглашения."}</p></section>
       <section class="tw-card"><h3>Вход</h3>
         <div class="mw-acts">
-          <button class="btn ghost" data-act="invite">↻ Новая ссылка-приглашение</button>
+          <button class="btn ghost" data-act="invite" title="Если оператор забыл пароль или ещё не принял приглашение">↻ Новая ссылка-приглашение</button>
           <button class="btn ghost" data-act="logout">Выйти на всех устройствах</button>
           <button class="btn ${op.active ? "warn" : "ghost"}" data-act="toggle">${op.active ? "Отключить" : "Включить"}</button>
           <button class="btn danger" data-act="delete">Удалить</button></div>
-        <p class="muted small">Отключённый оператор не может войти, его сессии перестают работать сразу. Удаление не трогает переписку и задачи в хранилище.</p></section>`;
+        <p class="muted small">Отключённый оператор не может войти, все его устройства отключаются сразу. Удаление не трогает переписку, задачи и заметки в хранилище.</p></section>`;
+  }
+
+  // ---------- мои устройства (владелец) ----------
+  async renderDevices() {
+    let r;
+    try { r = await this.api("/api/sessions"); } catch (e) { return `<p class="empty">${esc(e.message)}</p>`; }
+    return `<div class="tw-work single"><section class="tw-card"><h3>Мои устройства · ${r.sessions.length}</h3>
+      ${devicesList(r.sessions)}
+      ${r.sessions.length > 1 ? `<div class="mw-acts"><button class="btn ghost" data-act="my-others">Выйти на всех других устройствах</button></div>` : ""}
+      <p class="muted small">${r.auth ? "Где вы вошли как владелец. Завершённое устройство сразу попросит войти заново." : "Atom открыт без пароля — устройства не различаются. Задайте пароль во вкладке «Операторы»."}</p></section></div>`;
   }
 
   // ---------- все встречи ----------
@@ -227,9 +253,24 @@ export class TeamWindow {
       catch (err) { li.classList.toggle("done"); this.toast(err.message, "error"); }
       return;
     }
+    const rev = t.closest("[data-revoke]");
+    if (rev) {
+      try {
+        if (this.tab === "dev") await this.api("/api/sessions", { method: "POST", body: { action: "revoke", sid: rev.dataset.revoke } });
+        else await this.api(`/api/admin/operators/${this.sel}`, { method: "POST", body: { action: "revoke", sid: rev.dataset.revoke } });
+        this.toast("Устройство отключено", "ok");
+        await this.render();
+      } catch (err) { this.toast(err.message, "error"); }
+      return;
+    }
     const b = t.closest("[data-act]");
     if (!b) return;
     const act = b.dataset.act, id = this.sel;
+    if (act === "my-others") {
+      try { await this.api("/api/sessions", { method: "POST", body: { action: "others" } }); this.toast("Вы вышли на всех других устройствах", "ok"); await this.render(); }
+      catch (err) { this.toast(err.message, "error"); }
+      return;
+    }
     if (act === "close") { this.close(); return; }
     if (act === "new") { this.creating = true; this.render(); return; }
     if (act === "cancel-new") { this.creating = false; this.render(); return; }
@@ -261,12 +302,12 @@ export class TeamWindow {
         await this.api("/api/admin/password", { method: "POST", body: { password: v.password } });
         this.toast("Пароль владельца задан — теперь вход только по нему", "ok");
       } else if (f.dataset.form === "new") {
-        const r = await this.api("/api/admin/operators", { method: "POST", body: { name: v.name, note: v.note, perms: fd.getAll("perm") } });
+        const r = await this.api("/api/admin/operators", { method: "POST", body: { name: v.name, note: v.note, perms: fd.getAll("perm"), projects: fd.getAll("project") } });
         this.creating = false; this.sel = r.created.id; this.sub = "access";
         this.token = { op: r.created.id, value: r.token };
         this.toast(`Оператор «${r.created.name}» создан — отправьте ему ссылку`, "ok");
       } else if (f.dataset.form === "edit") {
-        await this.api(`/api/admin/operators/${id}`, { method: "POST", body: { action: "update", name: v.name, note: v.note, perms: fd.getAll("perm") } });
+        await this.api(`/api/admin/operators/${id}`, { method: "POST", body: { action: "update", name: v.name, note: v.note, perms: fd.getAll("perm"), projects: fd.getAll("project") } });
         this.toast("Сохранено", "ok");
       } else if (f.dataset.form === "chat") {
         f.querySelector("button").disabled = true;

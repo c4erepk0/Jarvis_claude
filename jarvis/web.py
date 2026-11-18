@@ -13,7 +13,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from .finance import guess_category
-from .operators import PERMS
+from .operators import OWNER_KEY, PERMS
 from .core import Jarvis
 from .gaze import save_record as save_gaze_record
 from .vault import VaultConflict, VaultError, content_version
@@ -22,9 +22,10 @@ log = logging.getLogger("jarvis.web")
 WEBAPP = Path(__file__).parent / "webapp"
 COOKIE = "jarvis_session"
 SESSION_DAYS = 30
-PUBLIC = {"/api/login", "/api/session", "/healthz", "/api/setup", "/api/invite", "/api/invite/accept"}
-# оператору открыт только его раздел /api/op/… и служебное
-OPERATOR_PATHS = {"/api/session", "/api/logout", "/ws"}
+PUBLIC = {"/api/login", "/api/session", "/healthz", "/api/setup", "/api/invite", "/api/invite/accept",
+          "/api/op-login"}
+# оператору открыт только его раздел /api/op/… и служебное (свои устройства — /api/sessions)
+OPERATOR_PATHS = {"/api/session", "/api/logout", "/ws", "/api/sessions"}
 MAX_IMAGE = 8 * 2**20
 # карта (map.js): подложки OpenFreeMap / CARTO / Esri, поиск Photon и Nominatim, маршруты OSRM, «Рядом» — Overpass
 MAP_HOSTS = ("https://tiles.openfreemap.org https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com "
@@ -67,9 +68,11 @@ class Auth:
     def _sign(self, payload: str) -> str:
         return hmac.new(self.secret, payload.encode(), hashlib.sha256).hexdigest()
 
-    def make(self, role: str = "owner", sub: str = "-", version: int = 0) -> str:
+    def make(self, role: str = "owner", sub: str = "-", sid: str = "-") -> str:
+        """Сессия: «роль.кто.устройство.срок.подпись». Устройство (sid) — запись в data/operators.json:
+        её можно завершить, и cookie на том устройстве перестанет работать."""
         exp = str(int(time.time()) + SESSION_DAYS * 86400)
-        payload = f"{role}.{sub}.{version}.{exp}"
+        payload = f"{role}.{sub}.{sid}.{exp}"
         return f"{payload}.{self._sign(payload)}"
 
     def parse_cookie(self, value: str | None) -> dict | None:
@@ -79,19 +82,24 @@ class Auth:
         if len(parts) == 2:                                   # старый формат: владелец
             exp, sig = parts
             ok = hmac.compare_digest(sig, self._sign(exp)) if exp.isdigit() else False
-            return {"role": "owner"} if ok and int(exp) > time.time() else None
+            if not (ok and int(exp) > time.time()):
+                return None
+            if self.ops and not self.ops.session_valid(OWNER_KEY, "-"):
+                return None
+            return {"role": "owner", "sid": "-"}
         if len(parts) != 5:
             return None
-        role, sub, version, exp, sig = parts
-        if not (exp.isdigit() and version.isdigit()) or int(exp) <= time.time():
+        role, sub, sid, exp, sig = parts
+        if not exp.isdigit() or int(exp) <= time.time():
             return None
         if not hmac.compare_digest(sig, self._sign(".".join(parts[:4]))):
             return None
         if role == "owner":
-            return {"role": "owner"}
-        if role == "op" and self.ops:
-            op = self.ops.session_ok(sub, int(version))
-            return {"role": "operator", "op": op} if op else None
+            if self.ops and not self.ops.session_valid(OWNER_KEY, sid):
+                return None                                    # устройство завершено
+            return {"role": "owner", "sid": sid}
+        if role == "op" and self.ops and self.ops.session_valid(sub, sid):
+            return {"role": "operator", "op": self.ops.get(sub), "sid": sid}
         return None
 
     def valid_cookie(self, value: str | None) -> bool:
@@ -143,7 +151,9 @@ def build_app(jarvis: Jarvis) -> web.Application:
             if who["role"] == "operator":
                 if not (path.startswith("/api/op/") or path in OPERATOR_PATHS):
                     return web.json_response({"error": "у оператора нет доступа к этому разделу"}, status=403)
-                jarvis.operators.touch(who["op"])
+            if who.get("sid") and who["sid"] not in ("-", "0"):
+                holder = OWNER_KEY if who["role"] == "owner" else who["op"]["id"]
+                jarvis.operators.touch_session(holder, who["sid"], client_ip(request))
             request[WHO] = who
         if request.method in ("POST", "PUT", "DELETE") and path.startswith("/api/") and auth.enabled:
             if not same_origin(request):
@@ -152,6 +162,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
             resp = await handler(request)
         except (ValueError, VaultError) as e:
             resp = web.json_response({"error": str(e)}, status=400)
+        except PermissionError as e:
+            resp = web.json_response({"error": str(e)}, status=403)
         except FileNotFoundError as e:
             resp = web.json_response({"error": f"не найдено: {e}"}, status=404)
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -218,7 +230,28 @@ def build_app(jarvis: Jarvis) -> web.Application:
         if auth.enabled and not auth.check_code(str(data.get("code", "")).strip()):
             await asyncio.sleep(0.7)
             return ok({"error": "неверный код"}, 403)
-        return with_cookie(request, ok(), auth.make())
+        return with_cookie(request, ok(), owner_cookie(request))
+
+    def owner_cookie(request) -> str:
+        sid = jarvis.operators.new_session(OWNER_KEY, request.headers.get("User-Agent", ""), client_ip(request))
+        return auth.make("owner", "-", sid)
+
+    def op_cookie(request, op) -> str:
+        sid = jarvis.operators.new_session(op["id"], request.headers.get("User-Agent", ""), client_ip(request))
+        return auth.make("op", op["id"], sid)
+
+    async def op_login(request):
+        """Вход оператора по имени и паролю (пароль он задал, приняв приглашение)."""
+        if not auth.throttle(client_ip(request)):
+            return ok({"error": "слишком много попыток, подождите 5 минут"}, 429)
+        d = await body(request)
+        op = jarvis.operators.login(str(d.get("name") or ""), str(d.get("password") or ""))
+        if not op:
+            await asyncio.sleep(0.7)
+            return ok({"error": "неверное имя или пароль"}, 403)
+        await j.log(f"Оператор {op['name']} вошёл", journal=False)
+        return with_cookie(request, ok({"role": "operator", "operator": jarvis.operators.public(op)}),
+                           op_cookie(request, op))
 
     async def setup(request):
         """Первый запуск: «Я владелец» — с паролем или без (один человек, локально)."""
@@ -232,7 +265,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
         else:
             jarvis.operators.set_open()
         await j.log("Первый запуск: владелец " + ("задал пароль" if data.get("mode") == "password" else "без пароля"))
-        return with_cookie(request, ok({"role": "owner"}), auth.make())
+        return with_cookie(request, ok({"role": "owner"}), owner_cookie(request))
 
     async def invite_info(request):
         if not auth.throttle(client_ip(request)):
@@ -246,16 +279,38 @@ def build_app(jarvis: Jarvis) -> web.Application:
         data = await body(request)
         token = str(data.get("token") or "").strip()
         m = re.search(r"invite=([\w-]+)", token)              # вставили всю ссылку — достанем код
-        op = jarvis.operators.accept(m.group(1) if m else token)
+        op = jarvis.operators.accept(m.group(1) if m else token, str(data.get("password") or ""))
         await j.log(f"Оператор {op['name']} принял приглашение")
         await j.hub.emit("operators", {"id": op["id"]}, log_it=False)
         return with_cookie(request, ok({"role": "operator", "operator": jarvis.operators.public(op)}),
-                           auth.make("op", op["id"], op.get("version", 1)))
+                           op_cookie(request, op))
 
-    async def logout(_):
+    async def logout(request):
+        who = auth.who(request)                               # выйти — значит и завершить сессию этого устройства
+        if who and who.get("sid") and who["sid"] not in ("-", "0"):
+            jarvis.operators.revoke(OWNER_KEY if who["role"] == "owner" else who["op"]["id"], who["sid"])
         resp = ok()
         resp.del_cookie(COOKIE, path="/")
         return resp
+
+    async def sessions(request):
+        """Мои устройства (владелец или оператор): список; завершить одно или все, кроме этого."""
+        who = request[WHO]
+        holder = OWNER_KEY if who["role"] == "owner" else who["op"]["id"]
+        if request.method == "POST":
+            d = await body(request)
+            if d.get("action") == "others":
+                n = jarvis.operators.revoke_others(holder, keep=who.get("sid", ""))
+                await j.log(f"Выход на других устройствах: {n}", journal=False)
+            elif d.get("action") == "revoke":
+                if str(d.get("sid")) == who.get("sid"):
+                    raise ValueError("это устройство — нажмите «Выйти»")
+                if not jarvis.operators.revoke(holder, str(d.get("sid") or "")):
+                    raise ValueError("сессия не найдена — возможно, уже завершена")
+            else:
+                raise ValueError("неизвестное действие")
+        return ok({"sessions": jarvis.operators.sessions(holder, who.get("sid", "")),
+                   "auth": auth.enabled})
 
     # ---------- данные ----------
     async def state(request):
@@ -326,6 +381,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
         for op in ops:
             op["unread"] = jarvis.operators.unread(op["id"], "owner")
         return {"operators": ops, "perms": PERMS, "can_invite": auth.enabled,
+                "projects": [{"name": p.name, "status": p.status} for p in j.projects.list()],
                 "owner_mode": jarvis.operators.owner_mode or ("code" if cfg.access_code else "")}
 
     async def admin_ops(request):
@@ -335,7 +391,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
         d = await body(request)
         if not auth.enabled:
             raise ValueError("сначала задайте пароль владельца — без него оператор мог бы стать владельцем")
-        op, token = jarvis.operators.create(str(d.get("name") or ""), d.get("perms"), str(d.get("note") or ""))
+        op, token = jarvis.operators.create(str(d.get("name") or ""), d.get("perms"), str(d.get("note") or ""),
+                                            d.get("projects"))
         await j.log(f"Приглашён оператор {op['name']}")
         return ok({**ops_overview(), "created": op, "token": token})
 
@@ -352,9 +409,14 @@ def build_app(jarvis: Jarvis) -> web.Application:
                 await j.log(f"Оператор {name} удалён (переписка осталась в хранилище)")
             elif action == "logout":
                 jarvis.operators.logout_all(op_id)
+            elif action == "sessions":
+                return ok({"sessions": jarvis.operators.sessions(op_id)})
+            elif action == "revoke":
+                jarvis.operators.revoke(op_id, str(d.get("sid") or ""))
+                return ok({**ops_overview(), "sessions": jarvis.operators.sessions(op_id)})
             else:
-                jarvis.operators.update(op_id, name=d.get("name"), perms=d.get("perms"),
-                                        active=d.get("active"), note=d.get("note"))
+                jarvis.operators.update(op_id, name=d.get("name"), perms=d.get("perms"), active=d.get("active"),
+                                        note=d.get("note"), projects=d.get("projects"))
         except KeyError as e:
             raise ValueError(str(e).strip("'")) from None
         await j.hub.emit("operators", {"id": op_id}, log_it=False)
@@ -365,7 +427,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
         d = await body(request)
         jarvis.operators.set_owner_password(str(d.get("password") or ""))
         await j.log("Пароль владельца изменён")
-        return with_cookie(request, ok(ops_overview()), auth.make())
+        return with_cookie(request, ok(ops_overview()), owner_cookie(request))
 
     async def admin_chat(request):
         owner_only(request)
@@ -400,21 +462,18 @@ def build_app(jarvis: Jarvis) -> web.Application:
 
     async def op_me(request):
         op = me(request)
+        if request.method == "POST":                              # сменить свой пароль
+            d = await body(request)
+            jarvis.operators.set_password(op["id"], str(d.get("old") or ""), str(d.get("new") or ""))
         return ok({"operator": jarvis.operators.public(op), "perms": PERMS, "title": cfg.user_title,
                    "unread": jarvis.operators.unread(op["id"], "operator"), "today": j.today().isoformat()})
 
     async def op_tasks(request):
         op = me(request)
-        if request.method == "POST":
-            if "add_tasks" not in op.get("perms", []):
-                raise web.HTTPForbidden(text="создавать задачи не разрешено")
+        if request.method == "POST":                              # личная задача — в свой список
             d = await body(request)
-            return ok(await j.act_assign("task", {"text": d.get("text"), "due": d.get("due"), "operator": op["id"]},
-                                         by="operator"))
-        items = j.operator_tasks(op, request.query.get("view", "all"))
-        done = [t.as_dict() for t in j.tasks.done_on(j.today()) if "встреча" not in t.tags
-                and ("tasks_all" in op.get("perms", []) or f"оператор/{op['slug']}" in t.tags)]
-        return ok({"tasks": items, "done_today": done})
+            return ok(await j.op_add_task(op, str(d.get("text") or ""), d.get("due") or None))
+        return ok(j.operator_tasks(op, request.query.get("view", "all")))
 
     async def op_task_status(request):
         op = me(request)
@@ -422,13 +481,12 @@ def build_app(jarvis: Jarvis) -> web.Application:
         status = str(d.get("status") or "done")
         if status not in ("todo", "done", "doing", "cancelled"):
             raise ValueError("неизвестный статус")
-        if not j.operator_can_touch(op, task_id):
-            raise web.HTTPForbidden(text="эта задача поручена не вам")
         try:
-            task = j.tasks.set_status(task_id, status, j.today())
+            task = j.op_set_status(op, task_id, status)
         except KeyError as e:
             raise ValueError(str(e).strip("'")) from None
-        await j.log(f"{op['name']}: {'выполнено' if status == 'done' else status} — {task.text}")
+        if not task.path.startswith(jarvis.operators.folder(op) + "/"):
+            await j.log(f"{op['name']}: {'выполнено' if status == 'done' else status} — {task.text}")
         await j.changed("tasks")
         return ok(task.as_dict())
 
@@ -447,11 +505,43 @@ def build_app(jarvis: Jarvis) -> web.Application:
         return ok({"messages": msgs})
 
     async def op_projects(request):
+        return ok({"projects": j.op_projects(me(request))})       # только общие с оператором
+
+    async def op_notes(request):
         op = me(request)
-        if "projects" not in op.get("perms", []):
-            raise web.HTTPForbidden(text="проекты не разрешены")
-        return ok({"projects": [{"name": p.name, "status": p.status, "description": p.description, "tag": p.tag}
-                                for p in j.projects.list()]})
+        return ok({"notes": j.op_notes(op), "folder": jarvis.operators.folder(op)})
+
+    async def op_note(request):
+        """Личная заметка оператора: GET ?path, PUT {path, content, base} — правка с версией, POST {title} — новая,
+        POST {action: trash, path} — в корзину. Всё — только внутри Команда/<Имя>/."""
+        op = me(request)
+        if request.method == "GET":
+            rel = j.op_path(op, request.query.get("path", ""))
+            text = jarvis.vault.read(rel)
+            return ok({"path": rel, "title": jarvis.vault.title_of(rel), "content": text,
+                       "version": content_version(text)})
+        d = await body(request)
+        if request.method == "PUT":
+            rel = j.op_path(op, str(d.get("path") or ""))
+            current = jarvis.vault.read(rel) if jarvis.vault.exists(rel) else ""
+            if d.get("base") and content_version(current) != d["base"]:
+                return ok({"error": "заметку изменили на другом устройстве — обновите", "content": current,
+                           "version": content_version(current)}, 409)
+            content = str(d.get("content") or "")
+            jarvis.vault.write(rel, content if content.endswith("\n") else content + "\n")
+            return ok({"path": rel, "version": content_version(jarvis.vault.read(rel))})
+        if d.get("action") == "trash":
+            rel = j.op_path(op, str(d.get("path") or ""))
+            jarvis.notes.trash(rel)
+            return ok({"notes": j.op_notes(op)})
+        title = re.sub(r"[\\/|#\[\]:*?\"<>]+", " ", str(d.get("title") or "")).strip()[:80]
+        if not title:
+            raise ValueError("назовите заметку")
+        rel = j.op_path(op, f"{jarvis.operators.folder(op)}/{title}.md")
+        if jarvis.vault.exists(rel):
+            raise ValueError("такая заметка уже есть")
+        jarvis.vault.write(rel, f"# {title}\n\n")
+        return ok({"path": rel, "notes": j.op_notes(op)})
 
     async def places_get(_):
         return ok({"places": j.places.list()})
@@ -689,12 +779,16 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_route("*", "/api/admin/chat/{id}", admin_chat)
     r.add_post("/api/admin/assign", admin_assign)
     r.add_get("/api/meetings", meetings_get)
-    r.add_get("/api/op/me", op_me)
+    r.add_route("*", "/api/op/me", op_me)
     r.add_route("*", "/api/op/tasks", op_tasks)
     r.add_post("/api/op/tasks/{id:.+}/status", op_task_status)
     r.add_get("/api/op/meetings", op_meetings)
     r.add_route("*", "/api/op/chat", op_chat)
     r.add_get("/api/op/projects", op_projects)
+    r.add_get("/api/op/notes", op_notes)
+    r.add_route("*", "/api/op/note", op_note)
+    r.add_post("/api/op-login", op_login)
+    r.add_route("*", "/api/sessions", sessions)
     r.add_get("/api/places", places_get)
     r.add_post("/api/places", places_set)
     r.add_get("/api/apps", apps_get)

@@ -21,7 +21,8 @@ from .briefing import Briefing
 from .config import Config
 from .apps import catalog, set_in_catalog
 from .meetings import OP_TAG, for_operator, meeting_text, meetings
-from .operators import Operators
+from .operators import TEAM_DIR, Operators
+from .tasks import TaskBook as _TaskBook
 from .places import Places
 from .assets import Portfolio, Quotes
 from .finance import Ledger, analytics
@@ -82,7 +83,8 @@ class Jarvis:
         self.cfg = cfg
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self.vault = Vault(cfg.vault_path)
-        self.tasks = TaskBook(self.vault, cfg.tasks_file, skip=(f"{cfg.jarvis_dir}/Conversations/",))
+        # личные задачи операторов (Команда/<Имя>/) — их дело, в списки владельца не попадают
+        self.tasks = TaskBook(self.vault, cfg.tasks_file, skip=(f"{cfg.jarvis_dir}/Conversations/", f"{TEAM_DIR}/"))
         self.ledger = Ledger(self.vault, cfg.finance_dir, cfg.currency)
         self.memory = Memory(self.vault, cfg.jarvis_dir, cfg.journal_dir)
         self.notes = Notes(self.vault)
@@ -370,20 +372,103 @@ class Jarvis:
         await self.changed("tasks")
         return task.as_dict()
 
-    def operator_tasks(self, op: dict, view: str = "all") -> list[dict]:
-        """Задачи, которые видит оператор: порученные ему или все (право tasks_all). Встречи — отдельно."""
-        items = self.tasks.view(self.today(), view if view in ("today", "week", "overdue", "nodate", "all") else "all")
+    # ---------- кабинет оператора ----------
+    def op_book(self, op: dict) -> "_TaskBook":
+        """Личный список задач оператора: Команда/<Имя>/Задачи.md (и задачи в его заметках)."""
+        folder = self.operators.folder(op)
+        return _TaskBook(self.vault, f"{folder}/Задачи.md", only=f"{folder}/")
+
+    def op_shared(self, op: dict) -> list:
+        """Общие с оператором проекты (их выбирает владелец)."""
+        names = {n.lower() for n in op.get("projects", [])}
+        return [p for p in self.projects.list() if p.name.lower() in names]
+
+    def _project_tasks(self, project) -> list:
+        folder = self.projects.folder_of(project)
+        return [t for t in self.tasks.all() if project.tag in t.tags or t.path == project.note
+                or t.path.startswith(folder + "/")]
+
+    def operator_tasks(self, op: dict, view: str = "all") -> dict:
+        """Кабинет: порученное (или все задачи владельца — право tasks_all) и личные задачи. Встречи — отдельно."""
+        view = view if view in ("today", "week", "overdue", "nodate", "all") else "all"
+        ref = self.today()
+        assigned = self.tasks.view(ref, view)
         if "tasks_all" not in op.get("perms", []):
-            items = for_operator(items, op["slug"])
-        return [t.as_dict() for t in items if "встреча" not in t.tags]
+            assigned = for_operator(assigned, op["slug"])
+        assigned = [t.as_dict() for t in assigned if "встреча" not in t.tags]
+        book = self.op_book(op)
+        personal = [t.as_dict() for t in book.view(ref, view)]
+        iso = ref.isoformat()
+        done = [t.as_dict() for t in [*self.tasks.done_on(ref), *book.done_on(ref)]
+                if "встреча" not in t.tags and self.operator_can_touch(op, t.id) and t.done == iso]
+        return {"assigned": assigned, "personal": personal, "done_today": done}
 
     def operator_can_touch(self, op: dict, task_id: str) -> bool:
+        folder = self.operators.folder(op) + "/"
+        if task_id.startswith(folder):
+            return True                                         # личная задача
         task = next((t for t in self.tasks.all() if t.id == task_id), None)
         if not task:
             return False
+        mine = OP_TAG + op["slug"] in task.tags
         if "встреча" in task.tags:
-            return "meetings_all" in op.get("perms", []) or OP_TAG + op["slug"] in task.tags
-        return "tasks_all" in op.get("perms", []) or OP_TAG + op["slug"] in task.tags
+            return mine or "meetings_all" in op.get("perms", [])
+        if mine or "tasks_all" in op.get("perms", []):
+            return True
+        return any(task.id in {t.id for t in self._project_tasks(p)} for p in self.op_shared(op))
+
+    def op_set_status(self, op: dict, task_id: str, status: str):
+        if not self.operator_can_touch(op, task_id):
+            raise PermissionError("эта задача не ваша")
+        folder = self.operators.folder(op) + "/"
+        book = self.op_book(op) if task_id.startswith(folder) else self.tasks
+        return book.set_status(task_id, status, self.today())
+
+    async def op_add_task(self, op: dict, text: str, due: str | None = None) -> dict:
+        d = None
+        if due:
+            try:
+                d = date.fromisoformat(due)
+            except ValueError:
+                raise ValueError("дата — в виде ГГГГ-ММ-ДД") from None
+        book = self.op_book(op)
+        if not self.vault.exists(book.inbox):
+            self.vault.write(book.inbox, f"# Задачи — {op['name']}\n\n"
+                                         "Личный список. Поручения владельца — в кабинете.\n\n")
+        task = book.add(text, self.today(), due=d)
+        await self.changed("tasks")
+        return task.as_dict()
+
+    def op_projects(self, op: dict) -> list[dict]:
+        out = []
+        for p in self.op_shared(op):
+            tasks = self._project_tasks(p)
+            open_ = [t.as_dict() for t in tasks if t.is_open and "встреча" not in t.tags]
+            done = sum(1 for t in tasks if t.status == "done")
+            total = done + len(open_)
+            out.append({"name": p.name, "status": p.status, "description": p.description, "tag": p.tag,
+                        "tasks": open_, "progress": {"done": done, "total": total,
+                                                     "percent": round(done * 100 / total) if total else 0}})
+        return out
+
+    # личные заметки оператора — только внутри его папки
+    def op_path(self, op: dict, path: str) -> str:
+        folder = self.operators.folder(op)
+        rel = self.vault.rel(self.vault.resolve(path if "/" in path else f"{folder}/{path}"))
+        if not rel.startswith(folder + "/") or not rel.endswith(".md"):
+            raise PermissionError("это не ваша заметка")
+        return rel
+
+    def op_notes(self, op: dict) -> list[dict]:
+        folder = self.operators.folder(op)
+        out = []
+        for rel in self.vault.list_files(folder) if self.vault.resolve(folder).is_dir() else []:
+            st = self.vault.resolve(rel).stat()
+            text = self.vault.read(rel)
+            body = next((ln.strip() for ln in text.splitlines() if ln.strip() and not ln.startswith(("#", "---"))), "")
+            out.append({"path": rel, "title": self.vault.title_of(rel), "mtime": int(st.st_mtime), "size": st.st_size,
+                        "snippet": body[:140], "tasks": rel.endswith("/Задачи.md")})
+        return sorted(out, key=lambda n: (not n["tasks"], -n["mtime"]))
 
     async def act_chat(self, op_id: str, sender: str, text: str) -> dict:
         msg = self.operators.post(op_id, sender, text, self.now())

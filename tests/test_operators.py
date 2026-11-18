@@ -7,7 +7,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from jarvis.meetings import as_meeting, meeting_text, meetings
-from jarvis.operators import Operators, slug
+from jarvis.operators import OWNER_KEY, Operators, device_name, slug
 from jarvis.vault import Vault
 from jarvis.web import build_app
 
@@ -16,36 +16,67 @@ from .conftest import make_jarvis
 NOW = datetime(2026, 11, 19, 10, 5)
 
 
-def test_registry_invite_and_perms(tmp_path):
+def test_registry_invite_password_sessions(tmp_path):
     ops = Operators(tmp_path / "data", Vault(tmp_path / "v"))
     assert ops.owner_mode == ""
-    op, token = ops.create("Иван Петров", ["tasks_all", "нет-такого"])
+    op, token = ops.create("Иван Петров", ["tasks_all", "нет-такого"], projects=["Сайт", " Сайт ", "CheckUp"])
     assert op["slug"] == "иван-петров" and op["tag"] == "оператор/иван-петров"
-    assert op["perms"] == ["tasks_all"] and op["status"] == "invited"
+    assert op["perms"] == ["tasks_all"] and op["status"] == "invited" and op["projects"] == ["CheckUp", "Сайт"]
+    assert op["folder"] == "Команда/Иван Петров"
     with pytest.raises(ValueError):
         ops.create("иван петров")                                 # тот же человек дважды
-    assert ops.invite_info(token) == {"name": "Иван Петров"}
+    assert ops.invite_info(token) == {"name": "Иван Петров", "has_password": False}
     assert ops.invite_info("чужой") is None
-    joined = ops.accept(token)
-    assert ops.public(joined)["status"] == "active"
     with pytest.raises(ValueError):
-        ops.accept(token)                                         # ссылка одноразовая
-    # в файле — только хэш приглашения, не сама ссылка
+        ops.accept(token, "123")                                  # пароль слишком короткий
+    joined = ops.accept(token, "пароль-ивана")
+    assert ops.public(joined)["status"] == "active" and ops.public(joined)["has_password"]
+    with pytest.raises(ValueError):
+        ops.accept(token, "пароль-ивана")                         # ссылка одноразовая
     raw = (tmp_path / "data" / "operators.json").read_text()
-    assert token not in raw
-    v = joined["version"]
-    assert ops.session_ok(op["id"], v)
+    assert token not in raw and "пароль-ивана" not in raw        # только хэши
+    # вход по имени и паролю — с любого устройства, у каждого — своя сессия
+    assert ops.login("ИВАН ПЕТРОВ", "пароль-ивана")["id"] == op["id"]
+    assert ops.login("Иван Петров", "не тот") is None
+    phone = ops.new_session(op["id"], "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) Safari/604.1", "10.0.0.2")
+    laptop = ops.new_session(op["id"], "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0 Safari/537.36", "10.0.0.3")
+    devices = ops.sessions(op["id"], current=laptop)
+    assert [d["device"] for d in devices] == ["Chrome · Windows", "Safari · iPhone"] and devices[0]["current"]
+    assert ops.revoke(op["id"], phone) and not ops.session_valid(op["id"], phone)
+    assert ops.session_valid(op["id"], laptop)
+    ops.new_session(op["id"], "", "")
+    assert ops.revoke_others(op["id"], keep=laptop) == 1 and ops.session_valid(op["id"], laptop)
     ops.update(op["id"], active=False)
-    assert ops.session_ok(op["id"], v) is None                    # отключили — сессия больше не работает
+    assert not ops.session_valid(op["id"], laptop)                # отключили — вышел везде
+    assert ops.login("Иван Петров", "пароль-ивана") is None
     assert ops.list()[0]["status"] == "disabled"
-    ops.update(op["id"], active=True, perms=["projects"], name="Иван")
-    assert ops.list()[0]["perms"] == ["projects"] and ops.list()[0]["slug"] == "иван"
-    # перезагрузка из файла
-    again = Operators(tmp_path / "data", Vault(tmp_path / "v"))
+    ops.update(op["id"], active=True, perms=["meetings_all"], name="Иван", projects=[])
+    assert ops.list()[0]["perms"] == ["meetings_all"] and ops.list()[0]["slug"] == "иван"
+    ops.set_password(op["id"], "пароль-ивана", "новый-пароль")
+    with pytest.raises(ValueError):
+        ops.set_password(op["id"], "пароль-ивана", "ещё-один")
+    # новая ссылка — войти, если забыл пароль: пароль можно не менять
+    t2 = ops.reinvite(op["id"])
+    assert ops.invite_info(t2)["has_password"] is True
+    ops.accept(t2)
+    assert ops.login("Иван", "новый-пароль")
+    again = Operators(tmp_path / "data", Vault(tmp_path / "v"))   # перезагрузка из файла
     assert again.list()[0]["name"] == "Иван"
     again.delete(op["id"])
     assert again.list() == []
     assert slug("  Ёлкина Анна ") == "елкина-анна"
+    assert device_name("python-requests/2.31") == "Скрипт · API"
+
+
+def test_owner_sessions(tmp_path):
+    ops = Operators(tmp_path / "d", Vault(tmp_path / "v"))
+    a = ops.new_session(OWNER_KEY, "Mozilla/5.0 (Macintosh; Intel Mac OS X 14) Safari/605", "1.1.1.1")
+    b = ops.new_session(OWNER_KEY, "", "")
+    assert ops.session_valid(OWNER_KEY, "-")                      # вход до учёта устройств — пока работает
+    assert {s["sid"] for s in ops.sessions(OWNER_KEY, current="-")} == {a, b, "-"}
+    ops.revoke_others(OWNER_KEY, keep=a)
+    assert ops.session_valid(OWNER_KEY, a) and not ops.session_valid(OWNER_KEY, b)
+    assert not ops.session_valid(OWNER_KEY, "-")                  # «выйти везде» закрывает и старые входы
 
 
 def test_owner_password(tmp_path):
@@ -106,6 +137,8 @@ def _cookie(resp) -> str:
 def test_full_flow(tmp_path):
     async def run():
         j = make_jarvis(tmp_path)
+        j.projects.create("Сайт студии", NOW, description="Лендинг и запись", tag="сайт")
+        j.projects.create("Секретный", NOW, description="Только владелец", tag="секрет")
         async with TestClient(TestServer(build_app(j))) as c:
             # первый запуск: «Я владелец» с паролем
             s = await (await c.get("/api/session")).json()
@@ -115,70 +148,124 @@ def test_full_flow(tmp_path):
             assert (await c.post("/api/setup", json={"mode": "open"})).status == 409   # второй раз — нельзя
             s = await (await c.get("/api/session")).json()
             assert s["auth"] is True and s["role"] == "owner" and s["setup"] is False
-            # приглашение
-            r = await c.post("/api/admin/operators", json={"name": "Анна", "perms": ["add_tasks"]})
+            # приглашение с общим проектом
+            r = await c.post("/api/admin/operators", json={"name": "Анна", "projects": ["Сайт студии"]})
             data = await r.json()
             token, op_id = data["token"], data["created"]["id"]
-            assert data["operators"][0]["status"] == "invited"
-            # поручения: задача и встреча Анне, задача — не ей
+            assert data["operators"][0]["status"] == "invited" and data["operators"][0]["projects"] == ["Сайт студии"]
+            assert {p["name"] for p in data["projects"]} >= {"Сайт студии", "Секретный"}
+            # поручения: задача и встреча Анне, задача — не ей, задача общего проекта
             body = {"kind": "task", "text": "Позвонить в банк", "operator": op_id, "due": "2026-11-20"}
             t_anna = await (await c.post("/api/admin/assign", json=body)).json()
             assert "#оператор/анна" in j.vault.read("Tasks/Inbox.md")
             await c.post("/api/admin/assign", json={"kind": "meeting", "title": "Встреча с юристом", "time": "15:00",
                                                     "place": "Офис", "due": "2026-11-21", "operator": op_id})
             t_other = await (await c.post("/api/admin/assign", json={"kind": "task", "text": "Личное"})).json()
+            t_site = await (await c.post("/api/tasks", json={"text": "Сверстать форму #сайт"})).json()
             assert (await c.post("/api/admin/chat/" + op_id, json={"text": "Анна, посмотрите задачи"})).status == 200
             mt = await (await c.get("/api/meetings")).json()
             assert mt["upcoming"][0]["title"] == "Встреча с юристом" and mt["upcoming"][0]["place"] == "Офис"
+            # мои устройства владельца: это — текущее
+            dev = await (await c.get("/api/sessions")).json()
+            assert dev["sessions"][0]["current"] is True
 
-        # оператор — с другого устройства (новый клиент без cookie владельца)
+        # оператор — с другого устройства: принимает приглашение и задаёт пароль
         async with TestClient(TestServer(build_app(j))) as op_client:
             assert (await op_client.get("/api/state")).status == 401
             info = await (await op_client.get(f"/api/invite?token={token}")).json()
-            assert info == {"name": "Анна"}
+            assert info == {"name": "Анна", "has_password": False}
             r = await op_client.post("/api/invite/accept", json={"token": f"https://atom.example/?invite={token}"})
+            assert r.status == 400                                     # без пароля нельзя
+            r = await op_client.post("/api/invite/accept", json={"token": f"https://atom.example/?invite={token}",
+                                                                 "password": "анна-пароль"})
             assert r.status == 200
             s = await (await op_client.get("/api/session")).json()
             assert s["role"] == "operator" and s["operator"]["name"] == "Анна" and s["logged_in"] is True
             # закрытые разделы
-            for path in ("/api/state", "/api/finance", "/api/memory", "/api/admin/operators", "/api/files"):
+            for path in ("/api/state", "/api/finance", "/api/memory", "/api/admin/operators", "/api/files",
+                         "/api/projects", "/api/note?path=Tasks/Inbox.md"):
                 assert (await op_client.get(path)).status == 403, path
             assert (await op_client.post("/api/command", json={"text": "сколько я потратил"})).status == 403
-            # видит только порученное
-            tasks = (await (await op_client.get("/api/op/tasks")).json())["tasks"]
-            assert [t["text"] for t in tasks] == ["Позвонить в банк"]
+            # порученное + свой список
+            r = await op_client.post("/api/op/tasks", json={"text": "Купить картридж", "due": "2026-11-22"})
+            mine = await r.json()
+            assert mine["path"] == "Команда/Анна/Задачи.md"
+            tasks = await (await op_client.get("/api/op/tasks")).json()
+            assert [t["text"] for t in tasks["assigned"]] == ["Позвонить в банк"]
+            assert [t["text"] for t in tasks["personal"]] == ["Купить картридж"]
+            # личные задачи оператора не попадают в списки владельца
+            assert "Купить картридж" not in [t.text for t in j.tasks.all()]
             meet = await (await op_client.get("/api/op/meetings")).json()
             assert meet["upcoming"][0]["time"] == "15:00"
-            # отмечает своё, чужое — нельзя
+            # отмечает своё, задачи общего проекта; чужое — нельзя
             r = await op_client.post(f"/api/op/tasks/{t_other['id']}/status", json={"status": "done"})
             assert r.status == 403
-            r = await op_client.post(f"/api/op/tasks/{t_anna['id']}/status", json={"status": "done"})
-            assert (await r.json())["status"] == "done"
-            r = await op_client.post(f"/api/op/tasks/{meet['upcoming'][0]['id']}/status", json={"status": "done"})
-            assert r.status == 200                                     # встреча состоялась
-            # создаёт задачу себе, проекты без права — нельзя
-            r = await op_client.post("/api/op/tasks", json={"text": "Купить картридж"})
-            assert r.status == 200 and "оператор/анна" in (await r.json())["tags"]
-            assert (await op_client.get("/api/op/projects")).status == 403
+            for tid in (t_anna["id"], meet["upcoming"][0]["id"], mine["id"], t_site["id"]):
+                r = await op_client.post(f"/api/op/tasks/{tid}/status", json={"status": "done"})
+                assert r.status == 200, tid
+            # только общие проекты — с их задачами и прогрессом
+            pr = (await (await op_client.get("/api/op/projects")).json())["projects"]
+            assert [p["name"] for p in pr] == ["Сайт студии"] and pr[0]["progress"]["done"] == 1
+            # личные заметки — только в своей папке
+            r = await op_client.post("/api/op/note", json={"title": "Звонки"})
+            note = await r.json()
+            assert note["path"] == "Команда/Анна/Звонки.md"
+            got = await (await op_client.get("/api/op/note?path=" + note["path"])).json()
+            r = await op_client.put("/api/op/note", json={"path": note["path"], "content": "# Звонки\n\nБанк — ок",
+                                                          "base": got["version"]})
+            assert r.status == 200
+            r = await op_client.put("/api/op/note", json={"path": note["path"], "content": "x", "base": got["version"]})
+            assert r.status == 409                                     # правка поверх чужой — конфликт
+            for bad in ("Tasks/Inbox.md", "Команда/Анна/../../Finance/2026-11.md", "Команда/Иван/x.md"):
+                assert (await op_client.get("/api/op/note?path=" + bad)).status in (400, 403), bad
+            notes = (await (await op_client.get("/api/op/notes")).json())["notes"]
+            assert [n["title"] for n in notes] == ["Задачи", "Звонки"]
+            r = await op_client.post("/api/op/note", json={"action": "trash", "path": note["path"]})
+            assert [n["title"] for n in (await r.json())["notes"]] == ["Задачи"]
             # чат
             chat = await (await op_client.get("/api/op/chat")).json()
             assert chat["messages"][0]["text"] == "Анна, посмотрите задачи"
             await op_client.post("/api/op/chat", json={"text": "Готово, банк — сделано"})
             me = await (await op_client.get("/api/op/me")).json()
-            assert me["unread"] == 0 and me["operator"]["perms"] == ["add_tasks"]
+            assert me["unread"] == 0 and me["operator"]["has_password"]
+            # смена своего пароля
+            r = await op_client.post("/api/op/me", json={"old": "анна-пароль", "new": "анна-пароль-2"})
+            assert r.status == 200
         assert j.operators.unread(op_id, "owner") == 1
         assert "**Анна**: Готово, банк — сделано" in j.vault.read("Jarvis/Chat/Анна.md")
 
-        # владелец отключает оператора — его сессия больше не работает
+        # второе устройство оператора: вход по имени и паролю; первое завершаем отсюда
+        async with TestClient(TestServer(build_app(j))) as phone:
+            assert (await phone.post("/api/op-login", json={"name": "анна", "password": "не тот"})).status == 403
+            r = await phone.post("/api/op-login", json={"name": "анна", "password": "анна-пароль-2"},
+                                 headers={"User-Agent": "Mozilla/5.0 (iPhone) Safari/604.1"})
+            assert r.status == 200
+            dev = (await (await phone.get("/api/sessions")).json())["sessions"]
+            assert len(dev) == 2 and dev[0]["current"] and dev[0]["device"] == "Safari · iPhone"
+            other = dev[1]["sid"]
+            assert (await phone.post("/api/sessions", json={"action": "revoke", "sid": dev[0]["sid"]})).status == 400
+            r = await phone.post("/api/sessions", json={"action": "others"})
+            assert len((await r.json())["sessions"]) == 1
+            assert not j.operators.session_valid(op_id, other)
+            assert (await phone.get("/api/op/me")).status == 200
+            await phone.post("/api/logout")
+            assert (await phone.get("/api/op/me")).status == 401        # «Выйти» завершает и сессию на сервере
+
+        # владелец: устройства оператора, отключение
         async with TestClient(TestServer(build_app(j))) as c2:
             assert (await c2.post("/api/login", json={"code": "корень-123"})).status == 200
             ov = await (await c2.get("/api/admin/operators")).json()
             assert ov["operators"][0]["unread"] == 1
+            async with TestClient(TestServer(build_app(j))) as laptop:      # оператор вошёл с ноутбука
+                r = await laptop.post("/api/op-login", json={"name": "анна", "password": "анна-пароль-2"})
+                assert r.status == 200
+            sid_list = (await (await c2.post(f"/api/admin/operators/{op_id}", json={"action": "sessions"})).json())
+            assert len(sid_list["sessions"]) == 1
+            sid = sid_list["sessions"][0]["sid"]
+            await c2.post(f"/api/admin/operators/{op_id}", json={"action": "revoke", "sid": sid})
+            assert j.operators.sessions(op_id) == []
             await c2.post(f"/api/admin/operators/{op_id}", json={"action": "update", "active": False})
-            r = await c2.post(f"/api/admin/operators/{op_id}", json={"action": "invite"})
-            assert (await r.json())["token"]
-        op = j.operators.get(op_id)
-        assert j.operators.session_ok(op_id, op["version"] - 1) is None
+            assert (await c2.post("/api/op-login", json={"name": "анна", "password": "анна-пароль-2"})).status == 403
         await j.close()
     asyncio.run(run())
 
