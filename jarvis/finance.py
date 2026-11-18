@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import calendar
 import re
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date
 
@@ -184,3 +185,121 @@ class Ledger:
         if pct >= 80:
             return f"Бюджет «{category}» израсходован на {pct}%: осталось {ru.money(limit - spent, self.currency)}."
         return None
+
+
+def _shift_month(month: str, n: int) -> str:
+    y, m = map(int, month.split("-"))
+    k = y * 12 + (m - 1) + n
+    return f"{k // 12:04d}-{k % 12 + 1:02d}"
+
+
+def op_key(note: str) -> str:
+    """Ключ для поиска повторяющихся операций: «Spotify 11/2026» и «spotify» — одно и то же."""
+    low = re.sub(r"[\d.,:/#№-]+", " ", note.lower().replace("ё", "е"))
+    return re.sub(r"\s+", " ", low).strip()
+
+
+def pct(part: int, whole: int) -> int:
+    """Процент с округлением половины вверх — одинаково в Python и JS (round() в Python — банковское)."""
+    return (part * 200 + whole) // (2 * whole)
+
+
+def _median(values: list[int]) -> int:
+    v = sorted(values)
+    return v[len(v) // 2] if v else 0
+
+
+def analytics(ledger: "Ledger", ref: date, months: int = 6) -> dict:
+    """Аналитика без модели: динамика по месяцам, категории к среднему, регулярные платежи, частые операции,
+    выводы. Тот же расчёт — `analytics()` в core/finance.js (общий тест — tests/js/fixtures/finance.json)."""
+    cur = ref.strftime("%Y-%m")
+    months = max(2, min(24, months))
+    span = [_shift_month(cur, -i) for i in range(months - 1, -1, -1)]
+    by_month = {m: ledger.entries(m) for m in span}
+    trend = []
+    for m in span:
+        items = by_month[m]
+        inc = sum(e.amount for e in items if e.amount > 0)
+        exp = -sum(e.amount for e in items if e.amount < 0)
+        trend.append({"month": m, "income": inc, "expense": exp, "net": inc - exp, "count": len(items)})
+    now = trend[-1]
+    prev = [t for t in trend[-4:-1] if t["count"]]          # до трёх прошлых месяцев с данными
+    avg_exp = sum(t["expense"] for t in prev) // len(prev) // 100 * 100 if prev else 0   # до рубля
+
+    def cats(items: list[Entry]) -> dict[str, int]:
+        out: dict[str, int] = defaultdict(int)
+        for e in items:
+            if e.amount < 0:
+                out[e.category] -= e.amount
+        return out
+
+    this_cats = cats(by_month[cur])
+    prev_cats = [cats(by_month[t["month"]]) for t in prev]
+    categories = []
+    for c in sorted(set(this_cats) | {k for pc in prev_cats for k in pc}, key=lambda c: (-this_cats.get(c, 0), c)):
+        avg = sum(pc.get(c, 0) for pc in prev_cats) // len(prev_cats) if prev_cats else 0
+        spent = this_cats.get(c, 0)
+        categories.append({"category": c, "spent": spent, "average": avg,
+                           "change": pct(spent - avg, avg) if avg else None,
+                           "share": pct(spent, now["expense"]) if now["expense"] else 0})
+
+    # регулярные: та же операция (описание + категория) в двух и более месяцах из последних четырёх
+    groups: dict[tuple[str, str], list[Entry]] = defaultdict(list)
+    for m in span[-4:]:
+        for e in by_month[m]:
+            if e.amount < 0 and op_key(e.note):
+                groups[(op_key(e.note), e.category)].append(e)
+    recurring = []
+    for (key, cat), items in groups.items():
+        seen = sorted({e.date[:7] for e in items})
+        if len(seen) < 2:
+            continue
+        last = max(items, key=lambda e: e.date)
+        paid = cur in seen
+        recurring.append({"note": last.note, "category": cat, "amount": _median([-e.amount for e in items]),
+                          "months": len(seen), "last": last.date, "day": int(last.date[8:]), "paid": paid})
+    recurring.sort(key=lambda r: (r["paid"], -r["amount"], r["note"]))
+    pending = sum(r["amount"] for r in recurring if not r["paid"])
+
+    # частые операции за последние 3 месяца — кнопки «в одно касание»
+    counter: Counter = Counter()
+    sample: dict[tuple[str, str, bool], list[int]] = defaultdict(list)
+    notes: dict[tuple[str, str, bool], str] = {}
+    for m in span[-3:]:
+        for e in by_month[m]:
+            k = (op_key(e.note) or e.category.lower(), e.category, e.amount > 0)
+            counter[k] += 1
+            sample[k].append(e.amount)
+            notes[k] = e.note or e.category
+    frequent = [{"note": notes[k], "category": k[1], "amount": _median(sample[k]), "count": n}
+                for k, n in sorted(counter.items(), key=lambda kv: (-kv[1], *kv[0]))[:8] if n >= 2]
+
+    days_in = calendar.monthrange(ref.year, ref.month)[1]
+    forecast = (now["expense"] // ref.day) // 100 * 100 * days_in     # как в summary(): шаг — рубль в день
+    insights: list[str] = []
+    money = lambda k: ru.money(k, ledger.currency)  # noqa: E731
+    if now["income"]:
+        rate = pct(now["net"], now["income"])
+        insights.append(f"Сбережения месяца: {rate}% дохода ({money(now['net'])})." if rate >= 0 else
+                        f"Расходы превышают доходы на {money(-now['net'])}.")
+    if avg_exp and forecast > avg_exp * 1.15:
+        insights.append(f"Темп трат выше обычного: к концу месяца выйдет ~{money(forecast)} "
+                        f"при среднем {money(avg_exp)}.")
+    elif avg_exp and forecast < avg_exp * 0.85:
+        insights.append(f"Тратите меньше обычного: прогноз {money(forecast)} при среднем {money(avg_exp)}.")
+    for c in categories:
+        if c["change"] is not None and c["change"] >= 30 and c["spent"] - c["average"] >= 100_000:
+            insights.append(f"«{c['category']}»: {money(c['spent'])} — на {c['change']}% больше среднего.")
+    if pending:
+        n = sum(1 for r in recurring if not r["paid"])
+        word = ru.plural(n, "регулярного платежа", "регулярных платежей", "регулярных платежей")
+        insights.append(f"Ещё не было {n} {word} "
+                        f"на {money(pending)}.")
+    big = sorted((e for e in by_month[cur] if e.amount < 0), key=lambda e: e.amount)[:5]
+    return {
+        "month": cur, "currency": ledger.currency, "trend": trend,
+        "average_expense": avg_exp, "forecast": forecast,
+        "savings_rate": pct(now["net"], now["income"]) if now["income"] else None,
+        "categories": categories, "recurring": recurring, "recurring_pending": pending,
+        "frequent": frequent, "top": [e.as_dict() for e in big], "insights": insights[:6],
+    }

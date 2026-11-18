@@ -1,8 +1,8 @@
 // A.T.O.M. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=17";
-import { Voice } from "./voice.js?v=17";
+import { Reactor } from "./reactor.js?v=18";
+import { Voice } from "./voice.js?v=18";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -59,7 +59,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Atom работает прямо на телефоне
-    SA = await import("./standalone.js?v=17");
+    SA = await import("./standalone.js?v=18");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -107,6 +107,7 @@ async function start() {
     });
   } else connect();
   loadProjects();
+  loadApps();
   setInterval(loadProjects, 120000);
   setInterval(() => loadWeather(), 15 * 60000);
   loadWeather();
@@ -134,7 +135,10 @@ async function loadState(first = false) {
 }
 function refreshSoon(what) {
   clearTimeout(stateTimer);
-  stateTimer = setTimeout(() => { loadState().catch(() => {}); if (what === "projects" || what === "all") loadProjects(); }, 250);
+  stateTimer = setTimeout(() => {
+    loadState().catch(() => {});
+    if (what === "projects" || what === "all") { loadProjects(); loadApps(); }
+  }, 250);
 }
 async function loadProjects() {
   try { projects = await api("/api/projects"); renderProjects(); } catch { /* офлайн */ }
@@ -196,7 +200,8 @@ function handleEvent(e) {
     }
 }
 const TOOL_NAMES = { memory_search: "ищу в памяти", tasks_list: "смотрю задачи", task_add: "записываю задачу",
-  money_add: "записываю операцию", finance_report: "считаю финансы", projects_status: "проверяю проекты",
+  money_add: "записываю операцию", finance_report: "считаю финансы", finance_analytics: "анализирую финансы",
+  assets_report: "оцениваю активы", projects_status: "проверяю проекты",
   memory_remember: "запоминаю", note_read: "читаю заметку", web_search: "ищу в интернете", project_delegate: "готовлю поручение",
   notes_list: "смотрю заметки", note_show: "открываю заметку", note_create: "создаю заметку", note_edit: "правлю заметку",
   note_move: "перекладываю заметку", note_delete: "готовлю удаление", project_create: "создаю проект",
@@ -244,7 +249,7 @@ function typeText(el, text) {
 
 function setMode(m) {
   const labels = { idle: "ОЖИДАНИЕ", listening: voice.wakeMode ? `СЛУШАЮ «${voice.wake.toUpperCase()}»` : "СЛУШАЮ",
-    armed: "ДА, СЭР?", thinking: "АНАЛИЗ", speaking: "ГОВОРЮ", alert: "ВНИМАНИЕ", error: "СБОЙ", denied: "НЕТ ДОСТУПА К МИКРОФОНУ" };
+    armed: "СЛУШАЮ…", thinking: "АНАЛИЗ", speaking: "ГОВОРЮ", alert: "ВНИМАНИЕ", error: "СБОЙ", denied: "НЕТ ДОСТУПА К МИКРОФОНУ" };
   reactor.setState({ armed: "listening", denied: "error" }[m] || m);
   $("#reactor-state").textContent = labels[m] || "";
   $("#btn-mic").classList.toggle("live", m === "listening" || m === "armed");
@@ -299,7 +304,7 @@ function renderTasks() {
       <button class="check" aria-label="Выполнено" ${t.status === "done" ? "disabled" : ""}></button>
       <div class="t-text">${esc(t.text)}${t.tags.map((g) => `<span class="tag">#${esc(g)}</span>`).join("")}</div>
       ${dueLabel(t)}
-    </li>`).join("") : `<li class="empty">${taskView === "today" ? "На сегодня задач нет. Можно выдохнуть, сэр." : "Пусто."}</li>`;
+    </li>`).join("") : `<li class="empty">${taskView === "today" ? "На сегодня задач нет. Можно выдохнуть." : "Пусто."}</li>`;
 }
 $("#tasks-list").addEventListener("click", async (e) => {
   const btn = e.target.closest(".check");
@@ -323,7 +328,7 @@ $("#task-form").addEventListener("submit", (e) => {
 
 function renderProtocols() {
   $("#protocols").innerHTML = S.protocols.map((p) => `
-    <button class="btn ghost proto" data-name="${esc(p.name)}">${esc(p.title.toUpperCase())}<small>${esc(p.description)}</small></button>`).join("");
+    <button class="btn ghost proto" data-name="${esc(p.name)}">${esc(p.title)}<small>${esc(p.description)}</small></button>`).join("");
 }
 $("#protocols").addEventListener("click", (e) => {
   const b = e.target.closest(".proto"); if (b) send(`протокол ${b.dataset.name}`);
@@ -371,7 +376,88 @@ function renderFinance() {
   $("#fin-ops").innerHTML = f.recent.map((o) => `<li><span class="d">${o.date.slice(8)}.${o.date.slice(5, 7)}</span>
     <span>${esc(o.category)}<span class="muted"> · ${esc(o.note)}</span></span><span class="m ${o.amount > 0 ? "in" : ""}">${money(o.amount, cur)}</span></li>`).join("")
     || `<li class="empty">Операций пока нет. Скажите «потратил 450 на кофе».</li>`;
+  loadFinanceExtras();
 }
+// аналитика для панели: частые операции в одно касание и главный вывод месяца (полное — в окне «Финансы»)
+let finExtra = null, finTimer = null;
+function loadFinanceExtras() {
+  clearTimeout(finTimer);
+  finTimer = setTimeout(async () => {
+    try { finExtra = await api("/api/finance/analytics?months=4"); } catch { return; }
+    const cur = finExtra.currency;
+    $("#fin-quick").innerHTML = finExtra.frequent.slice(0, 5).map((f, i) => `<button class="chip-btn ${f.amount > 0 ? "in" : ""}" data-i="${i}"
+      title="${esc(f.category)} · было ${f.count} раз">${esc(f.note)} <b>${money(f.amount, cur)}</b></button>`).join("");
+    const pend = finExtra.recurring.filter((r) => !r.paid);
+    const tip = finExtra.insights.find((t) => !t.startsWith("Сбережения")) || finExtra.insights[0] || "";
+    $("#fin-insight").innerHTML = tip ? `${esc(tip)}${pend.length ? ` <button class="link" data-fin="recurring">регулярные →</button>` : ""}` : "";
+    if (fw?.isOpen) fw.reload({ quotes: false }).catch(() => {});
+  }, 300);
+}
+$("#fin-quick").addEventListener("click", async (e) => {
+  const b = e.target.closest(".chip-btn"); if (!b || !finExtra) return;
+  const f = finExtra.frequent[+b.dataset.i];
+  b.disabled = true;
+  try {
+    await api("/api/finance", { method: "POST", body: { amount: f.amount / 100, note: f.note, category: f.category } });
+    toast(`Записано: ${f.note} ${money(f.amount, finExtra.currency)}`, "ok");
+  } catch (err) { toast(err.message, "error"); } finally { b.disabled = false; }
+});
+$("#p-finance").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-fin]"); if (b) openFinance(b.dataset.fin);
+});
+
+// ---------- окно «Финансы» (finance.js) ----------
+let fw = null;
+async function openFinance(tab = null) {
+  try {
+    if (!fw) {
+      const { FinanceWindow } = await import("./finance.js?v=18");
+      fw = new FinanceWindow($("#fw"), { api, toast, store, openNote, today: () => S.now.slice(0, 10) });
+    }
+    await fw.show(tab);
+  } catch (err) { toast(err.message, "error"); }
+}
+
+// ---------- каталог приложений ----------
+let apps = { apps: [], available: [] };
+async function loadApps() {
+  try { apps = await api("/api/apps"); } catch { return; }
+  renderApps();
+}
+function renderApps() {
+  $("#apps-meta").textContent = apps.apps.length ? String(apps.apps.length) : "";
+  $("#apps").innerHTML = apps.apps.length ? apps.apps.map((a, i) => `
+    <div class="app-card ${a.status}" data-i="${i}">
+      <div class="app-ic" aria-hidden="true">${esc(a.icon || a.name.slice(0, 1).toUpperCase())}</div>
+      <div class="app-main"><b>${esc(a.name)}</b><small>${esc(a.description || "без описания")}</small>
+        <div class="app-meta"><span class="pill ${a.status}">${esc(a.status_label)}</span>${a.repo ? `<span class="muted">${esc(a.repo)}</span>` : ""}</div></div>
+      <div class="app-acts">
+        ${a.url ? `<a class="btn ghost" href="${esc(a.url)}" target="_blank" rel="noopener">Открыть</a>` : ""}
+        <button class="btn ghost" data-app="page">${a.kind === "project" ? "Проект" : "Заметка"}</button>
+        ${a.kind === "project" ? `<button class="h-btn" data-app="remove" title="Убрать из каталога" aria-label="Убрать из каталога">✕</button>` : ""}
+      </div></div>`).join("")
+    : `<p class="empty">Здесь будут ваши программы. Нажмите ＋ и выберите проект — или создайте заметку с <code>type: app</code>.</p>`;
+}
+$("#apps").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-app]"); if (!b) return;
+  const a = apps.apps[+b.closest(".app-card").dataset.i];
+  if (b.dataset.app === "page") { if (a.kind === "project") openFiles({ kind: "project", name: a.name }); else openNote(a.note); }
+  if (b.dataset.app === "remove") {
+    try { apps = await api("/api/apps", { method: "POST", body: { name: a.name, on: false } }); renderApps(); }
+    catch (err) { toast(err.message, "error"); }
+  }
+});
+$("#apps-add").addEventListener("click", () => {
+  if (!apps.available.length) { toast("Все проекты уже в каталоге. Новый — «＋» в разделе «Проекты».", "info"); return; }
+  modal("Добавить в каталог", `<p class="muted">Проект попадёт в каталог: в его заметке появится строка <code>catalog: true</code>.</p>
+    <div class="pick-list">${apps.available.map((n) => `<button class="btn ghost" data-pick="${esc(n)}">${esc(n)}</button>`).join("")}</div>`);
+  $("#modal-body").querySelector(".pick-list").addEventListener("click", async (e) => {
+    const p = e.target.closest("[data-pick]"); if (!p) return;
+    try { apps = await api("/api/apps", { method: "POST", body: { name: p.dataset.pick, on: true } }); renderApps(); closeModal(); }
+    catch (err) { toast(err.message, "error"); }
+  });
+});
+
 $("#fin-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const raw = $("#fin-amount").value.trim().replace("−", "-"), note = $("#fin-note").value.trim();
@@ -405,7 +491,7 @@ function renderProjects() {
     } else if (h && h.latency_ms) kpis.push(["ПИНГ", `${h.latency_ms}мс`]);
     const c = gh.last_commit;
     return `<div class="proj" data-name="${esc(p.name)}">
-      <div class="proj-h"><span class="dot ${dot}"></span><span class="proj-name">${esc(p.name.toUpperCase())}</span>${gh.url || p.repo ? ciBadge(gh.ci) : ""}</div>
+      <div class="proj-h"><span class="dot ${dot}"></span><span class="proj-name">${esc(p.name)}</span>${gh.url || p.repo ? ciBadge(gh.ci) : ""}</div>
       ${p.description ? `<div class="proj-desc">${esc(p.description)}</div>` : ""}
       ${gh.url || st ? `<div class="kpis">${kpis.slice(0, 6).map(([k, v]) => `<div class="kpi"><b>${esc(v)}</b><span>${k}</span></div>`).join("")}</div>` : ""}
       ${c ? `<div class="proj-commit" title="${esc(c.message)}">⎇ ${esc(c.sha)} ${esc(c.message)}</div>` : ""}
@@ -414,10 +500,10 @@ function renderProjects() {
       ${st && (st.open_reports || st.pending_devs || st.pending_apps) ? `<div class="proj-err">⚑ ждут вас: жалобы ${st.open_reports || 0}, заявки ${st.pending_devs || 0}, приложения ${st.pending_apps || 0}</div>` : ""}
       ${h && !h.ok ? `<div class="proj-err">⚠ сервис не отвечает${h.status ? ` (HTTP ${h.status})` : ""}</div>` : ""}
       <div class="proj-actions">
-        <button class="btn" data-act="delegate">◆ ПОРУЧИТЬ CLAUDE</button>
-        ${p.deploy_workflow ? `<button class="btn warn" data-act="deploy">▲ ДЕПЛОЙ</button>` : ""}
-        ${gh.url ? `<a class="btn ghost" href="${esc(gh.url)}" target="_blank" rel="noopener">GITHUB</a>` : ""}
-        <button class="btn ghost" data-act="page">▤ СТРАНИЦА</button>
+        <button class="btn" data-act="delegate">Поручить Claude</button>
+        ${p.deploy_workflow ? `<button class="btn warn" data-act="deploy">Деплой</button>` : ""}
+        ${gh.url ? `<a class="btn ghost" href="${esc(gh.url)}" target="_blank" rel="noopener">GitHub</a>` : ""}
+        <button class="btn ghost" data-act="page">Страница</button>
       </div></div>`;
   }).join("");
 }
@@ -720,6 +806,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     if (!$("#modal").classList.contains("hidden")) closeModal();
+    else if (fw?.isOpen) fw.close();
     else if (!$("#holo").classList.contains("hidden")) { if (notes?.isOpen && notes.mode === "view") notes.close(); }
     else if (fm?.isOpen) fm.escape();
   }
@@ -750,7 +837,7 @@ tick(); setInterval(tick, 1000);
 let fm = null;
 async function fileManager() {
   if (fm) return fm;
-  const { FileManager } = await import("./files.js?v=17");
+  const { FileManager } = await import("./files.js?v=18");
   fm = new FileManager($("#fm"), {
     api, toast, store,
     projects: () => (S ? S.projects : []),
@@ -783,7 +870,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=17");
+    const { Hologram } = await import("./hologram.js?v=18");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -806,7 +893,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=17");
+  const { NotePanel } = await import("./note-panel.js?v=18");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -823,6 +910,7 @@ async function notePanel() {
 $("#btn-holo").addEventListener("click", async () => {
   try { await openHolo(); } catch (err) { $("#holo-stats").textContent = `голограмма недоступна: ${err.message}`; }
 });
+$("#holo-layout").addEventListener("click", () => { holo?.resetLayout(); toast("Раскладка графа сброшена", "ok"); });
 $("#holo-new").addEventListener("click", async () => {
   try { (await notePanel()).startCreate(); } catch (err) { toast(err.message, "error"); }
 });
@@ -846,7 +934,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=17");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=18");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -897,7 +985,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=17").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=18").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -918,7 +1006,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=17");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=18");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -931,7 +1019,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=17");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=18");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),

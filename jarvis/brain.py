@@ -57,6 +57,11 @@ TOOLS: list[dict] = [
                           ["amount_rub", "category", "note"])},
     {"name": "finance_report", "description": "Сводка финансов за месяц: доходы, расходы, категории, бюджет, прогноз.",
      "input_schema": _obj({"month": {**S, "description": "YYYY-MM, по умолчанию текущий"}})},
+    {"name": "finance_analytics", "description": "Аналитика финансов: динамика по месяцам, категории к среднему, "
+     "регулярные платежи (и какие ещё не оплачены), частые операции, выводы.",
+     "input_schema": _obj({"months": {"type": "integer", "description": "сколько месяцев, по умолчанию 6"}})},
+    {"name": "assets_report", "description": "Активы (акции, фонды, облигации, крипта, валюта, имущество) по текущим "
+     "ценам, долги, чистый капитал и его история.", "input_schema": _obj({})},
     {"name": "memory_remember", "description": "Сохранить устойчивый факт о владельце в долговременную память.",
      "input_schema": _obj({"fact": S}, ["fact"])},
     {"name": "memory_search", "description": "Поиск по всем заметкам Obsidian (память, проекты, журнал, разговоры).",
@@ -415,6 +420,10 @@ class Brain:
                                         args.get("date") or None)
             elif name == "finance_report":
                 res = j.act_finance_report(args.get("month") or None)
+            elif name == "finance_analytics":
+                res = j.act_finance_analytics(int(args.get("months") or 6))
+            elif name == "assets_report":
+                res = await j.act_assets()
             elif name == "memory_remember":
                 res = await j.act_remember(str(args["fact"]))
             elif name == "memory_search":

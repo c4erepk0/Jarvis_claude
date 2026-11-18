@@ -3,22 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0d0203">
+<meta name="theme-color" content="#0f0d0e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ATOM">
 <title>A.T.O.M.</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="static/icon.svg?v=17" type="image/svg+xml">
-<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=17">
+<link rel="icon" href="static/icon.svg?v=18" type="image/svg+xml">
+<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=18">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="static/app.css?v=17">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="static/app.css?v=18">
 </head>
 <body>
 <div class="bg-grid" aria-hidden="true"></div>
-<div class="bg-scan" aria-hidden="true"></div>
 
 <!-- загрузка -->
 <div id="boot" class="boot">
@@ -32,8 +31,8 @@
 <!-- вход -->
 <div id="login" class="login hidden">
   <form id="login-form" class="login-box panel">
-    <div class="panel-h"><span class="idx">00</span> ИДЕНТИФИКАЦИЯ</div>
-    <p class="muted">Назовите код доступа, сэр.</p>
+    <div class="panel-h">Вход</div>
+    <p class="muted">Введите код доступа.</p>
     <input id="login-code" type="password" autocomplete="current-password" placeholder="Код доступа" required>
     <button class="btn primary" type="submit">ВОЙТИ</button>
     <p id="login-err" class="err"></p>
@@ -58,7 +57,7 @@
   <!-- левая колонка -->
   <section class="col col-left" data-tab="missions">
     <article class="panel" id="p-tasks">
-      <div class="panel-h"><span class="idx">01</span> МИССИИ <span class="h-meta" id="tasks-meta"></span></div>
+      <div class="panel-h">Задачи <span class="h-meta" id="tasks-meta"></span></div>
       <div class="seg" id="tasks-seg">
         <button data-view="today" class="on">СЕГОДНЯ</button><button data-view="week">НЕДЕЛЯ</button><button data-view="nodate">БЕЗ СРОКА</button>
       </div>
@@ -69,11 +68,11 @@
       </form>
     </article>
     <article class="panel" id="p-protocols">
-      <div class="panel-h"><span class="idx">02</span> ПРОТОКОЛЫ</div>
+      <div class="panel-h">Протоколы</div>
       <div class="protocols" id="protocols"></div>
     </article>
     <article class="panel" id="p-memory">
-      <div class="panel-h"><span class="idx">03</span> ПАМЯТЬ <span class="h-meta" id="memory-meta"></span><button class="h-btn" id="mem-files" title="Хранилище: все заметки">▤</button></div>
+      <div class="panel-h">Память <span class="h-meta" id="memory-meta"></span><button class="h-btn" id="mem-files" title="Хранилище: все заметки">▤</button></div>
       <form class="inline-add" id="mem-form"><input id="mem-q" placeholder="Поиск по Obsidian…" autocomplete="off"><button class="btn" type="submit">⌕</button></form>
       <ul class="facts" id="facts"></ul>
     </article>
@@ -95,7 +94,7 @@
       <button type="button" class="icon-btn" id="btn-mic" title="Говорить (или скажите «Атом»)" aria-label="Микрофон">
         <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-2.07A7 7 0 0 0 19 12h-2Z"/></svg>
       </button>
-      <input id="cmd" placeholder="Команда, сэр…" autocomplete="off" enterkeyhint="send">
+      <input id="cmd" placeholder="Спросите или поручите…" autocomplete="off" enterkeyhint="send">
       <label class="icon-btn" id="btn-scan" title="Сканировать фото (чек, документ)" aria-label="Камера">
         <svg viewBox="0 0 24 24"><path d="M9 3 7.2 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9Zm3 14a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/></svg>
         <input type="file" id="scan-file" accept="image/*" capture="environment" hidden>
@@ -105,13 +104,13 @@
       </button>
     </form>
     <div class="toggles">
-      <label class="tgl"><input type="checkbox" id="opt-wake"><span>«АТОМ» — ПОСТОЯННОЕ ПРОСЛУШИВАНИЕ</span></label>
-      <label class="tgl"><input type="checkbox" id="opt-fx" checked><span>ЭФФЕКТ ГОЛОСА</span></label>
-      <label class="tgl"><input type="checkbox" id="opt-mute"><span>БЕЗ ЗВУКА</span></label>
-      <button class="btn ghost" id="btn-holo">◈ ГОЛОГРАММА</button>
+      <label class="tgl"><input type="checkbox" id="opt-wake"><span>Слушать «Атом»</span></label>
+      <label class="tgl"><input type="checkbox" id="opt-fx" checked><span>Эффект голоса</span></label>
+      <label class="tgl"><input type="checkbox" id="opt-mute"><span>Без звука</span></label>
+      <button class="btn ghost" id="btn-holo">◈ Граф памяти</button>
     </div>
     <article class="panel log-panel">
-      <div class="panel-h"><span class="idx">07</span> ЖУРНАЛ СОБЫТИЙ</div>
+      <div class="panel-h">Журнал</div>
       <ul class="log" id="log"></ul>
     </article>
   </section>
@@ -119,18 +118,22 @@
   <!-- правая колонка -->
   <section class="col col-right" data-tab="projects">
     <article class="panel" id="p-projects">
-      <div class="panel-h"><span class="idx">04</span> ПРОЕКТЫ <button class="h-btn" id="projects-new" title="Новый проект">＋</button><button class="h-btn" id="projects-refresh" title="Обновить">⟳</button></div>
+      <div class="panel-h">Проекты <button class="h-btn" id="projects-new" title="Новый проект">＋</button><button class="h-btn" id="projects-refresh" title="Обновить">⟳</button></div>
       <div id="projects"></div>
     </article>
+    <article class="panel" id="p-apps">
+      <div class="panel-h">Приложения <span class="h-meta" id="apps-meta"></span><button class="h-btn" id="apps-add" title="Добавить проект в каталог" aria-label="Добавить в каталог">＋</button></div>
+      <div class="apps" id="apps"></div>
+    </article>
     <article class="panel hidden" id="p-workshop">
-      <div class="panel-h"><span class="idx">08</span> МАСТЕРСКАЯ · CLAUDE CODE</div>
+      <div class="panel-h">Мастерская · Claude Code</div>
       <pre class="workshop" id="workshop"></pre>
     </article>
   </section>
 
   <section class="col col-right2" data-tab="finance">
     <article class="panel" id="p-finance">
-      <div class="panel-h"><span class="idx">05</span> ФИНАНСЫ <span class="h-meta" id="fin-month"></span></div>
+      <div class="panel-h">Финансы <span class="h-meta" id="fin-month"></span><button class="h-btn" data-fin="overview" title="Аналитика, активы и долги" aria-label="Открыть финансы">⤢</button></div>
       <div class="fin-top">
         <svg class="gauge" viewBox="0 0 120 120" id="fin-gauge">
           <circle cx="60" cy="60" r="50" class="g-bg"/>
@@ -144,27 +147,30 @@
           <div><dt>ПРОГНОЗ</dt><dd id="fin-fc">—</dd></div>
         </dl>
       </div>
+      <p class="fin-insight" id="fin-insight"></p>
       <ul class="cats" id="fin-cats"></ul>
+      <div class="chip-row" id="fin-quick" aria-label="Частые операции"></div>
       <form class="inline-add" id="fin-form">
         <input id="fin-amount" inputmode="decimal" placeholder="−450" autocomplete="off" class="amt">
         <input id="fin-note" placeholder="кофе / зарплата…" autocomplete="off">
         <button class="btn" type="submit">+</button>
       </form>
       <ul class="ops" id="fin-ops"></ul>
+      <div class="fin-links"><button class="btn ghost" data-fin="overview">Аналитика</button><button class="btn ghost" data-fin="assets">Активы</button><button class="btn ghost" data-fin="debts">Долги</button></div>
     </article>
     <article class="panel" id="p-diag" data-tab="systems">
-      <div class="panel-h"><span class="idx">06</span> ДИАГНОСТИКА <span class="h-meta" id="diag-host"></span></div>
+      <div class="panel-h">Система <span class="h-meta" id="diag-host"></span></div>
       <div class="bars" id="diag"></div>
     </article>
   </section>
 </main>
 
 <nav class="tabs" id="tabs">
-  <button data-tab="core" class="on">ЯДРО</button>
-  <button data-tab="missions">МИССИИ</button>
-  <button data-tab="projects">ПРОЕКТЫ</button>
-  <button data-tab="finance">ФИНАНСЫ</button>
-  <button data-tab="files">ФАЙЛЫ</button>
+  <button data-tab="core" class="on">Главная</button>
+  <button data-tab="missions">Задачи</button>
+  <button data-tab="projects">Проекты</button>
+  <button data-tab="finance">Финансы</button>
+  <button data-tab="files">Файлы</button>
 </nav>
 
 <div class="toasts" id="toasts"></div>
@@ -177,27 +183,30 @@
   </div>
 </div>
 
+<div class="fw hidden" id="fw" role="dialog" aria-label="Финансы: аналитика, активы, долги"></div>
+
 <div class="fm hidden" id="fm" role="dialog" aria-label="Хранилище: заметки и проекты"></div>
 
 <div class="holo hidden" id="holo">
   <div class="holo-ui">
-    <div class="holo-title">ГОЛОГРАММА ПАМЯТИ <span class="muted" id="holo-stats"></span></div>
+    <div class="holo-title">Граф памяти <span class="muted" id="holo-stats"></span></div>
     <div class="holo-actions">
       <button class="btn ghost" id="holo-new" title="Новая заметка" aria-label="Новая заметка" data-air>＋</button>
-      <button class="btn ghost" id="holo-gestures" title="Жесты рук" aria-label="Жесты рук">✋<span class="lbl"> ЖЕСТЫ</span></button>
+      <button class="btn ghost" id="holo-layout" title="Сбросить раскладку: перетащенные точки вернутся на свои места" aria-label="Сбросить раскладку" data-air>⟲</button>
+      <button class="btn ghost" id="holo-gestures" title="Жесты рук" aria-label="Жесты рук">✋<span class="lbl"> Жесты</span></button>
       <button class="btn ghost" id="holo-train" title="Обучение жестам" aria-label="Обучение жестам">?</button>
       <button class="btn ghost" id="holo-eyes" title="Управление взглядом: взгляд — курсор, жесты — действия"
-        aria-label="Управление взглядом">👁<span class="lbl"> ВЗГЛЯД</span></button>
+        aria-label="Управление взглядом">👁<span class="lbl"> Взгляд</span></button>
       <button class="btn ghost" id="holo-gaze-cal" title="Калибровка взгляда" aria-label="Калибровка взгляда" data-air>◎</button>
-      <button class="btn ghost" id="holo-close" title="Закрыть голограмму" aria-label="Закрыть голограмму">✕<span class="lbl"> ЗАКРЫТЬ</span></button>
+      <button class="btn ghost" id="holo-close" title="Закрыть голограмму" aria-label="Закрыть голограмму">✕<span class="lbl"> Закрыть</span></button>
     </div>
-    <div class="holo-hint" id="holo-hint">Вращайте мышью или пальцем · колёсико/щипок — масштаб · нажмите на узел — заметка откроется здесь, её можно поправить · ✋ — жесты · 👁 — взгляд вместо курсора</div>
+    <div class="holo-hint" id="holo-hint">Вращайте мышью или пальцем · колёсико/щипок — масштаб · нажмите на точку — заметка откроется здесь · потяните точку — она переедет и запомнит место (⟲ — сброс) · ✋ — жесты · 👁 — взгляд вместо курсора</div>
   </div>
   <div class="holo-label hidden" id="holo-label"></div>
   <video id="holo-video" class="holo-video hidden" playsinline muted></video>
   <canvas id="holo-hands" class="holo-hands hidden"></canvas>
 </div>
 
-<script type="module" src="static/app.js?v=17"></script>
+<script type="module" src="static/app.js?v=18"></script>
 </body>
 </html>

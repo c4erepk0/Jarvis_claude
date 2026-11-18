@@ -4,7 +4,9 @@ import { MONTHS_GEN, WEEKDAYS, greeting, humanDate, isoDay, money, plural, weekd
 import { parse } from "./intents.js";
 import { Vault, VaultError, checkPath, contentVersion } from "./vault.js";
 import { TaskBook } from "./tasks.js";
-import { Ledger } from "./finance.js";
+import { Ledger, analytics, guessCategory } from "./finance.js";
+import { Portfolio, Quotes, assetsPhrase } from "./assets.js";
+import { catalog, setInCatalog } from "./apps.js";
 import { Memory, hhmm } from "./memory.js";
 import { Projects, STATUSES, projectLine } from "./projects.js";
 import { Notes, noteTags } from "./notes.js";
@@ -40,6 +42,8 @@ export class Jarvis {
     this.github = github;
     this.projects = new Projects(this.vault, "Projects", github, { fetchImpl,
       statsToken: (p) => (settings.statsTokens || {})[p.name] || "" });
+    this.portfolio = new Portfolio(this.vault, "Finance", settings.currency || "RUB", this.projects);
+    this.quotes = new Quotes(fetchImpl);
     this.briefing = new Briefing(settings, fetchImpl);
     this.brain = new Brain(this, clientFactory);
     this.protocols = new Protocols(this);
@@ -189,6 +193,36 @@ export class Jarvis {
     return e;
   }
   actFinance(month = null) { return this.ledger.summary(month || this.today().slice(0, 7), this.today()); }
+  actFinanceAnalytics(months = 6) { return analytics(this.ledger, this.today(), months); }
+  /** Активы и долги с котировками; record — строка дня в Finance/Capital.md (динамика капитала). */
+  async actAssets(record = true) {
+    const [assets, debts] = this.portfolio.read();
+    const quotes = await this.quotes.get(assets);
+    const report = this.portfolio.valuate(assets, debts, quotes, this.today());
+    report.history = record ? await this.portfolio.record(this.today(), report) : this.portfolio.history();
+    return report;
+  }
+  async actAssetAdd(action, data) {
+    const kop = (v) => {
+      const n = Number(String(v ?? "0").replace(/\s/g, "").replace(",", ".").replace("−", "-"));
+      if (!Number.isFinite(n)) throw new Error("сумма должна быть числом");
+      return Math.round(n * 100);
+    };
+    let res;
+    if (action === "init") { const path = await this.portfolio.init(); this.changed("finance"); return { path }; }
+    if (action === "debt") {
+      res = await this.portfolio.addDebt(String(data.name || ""), kop(data.amount), String(data.due || ""), String(data.note || ""));
+      await this.log(`Долг записан: ${res.name} — ${money(res.amount, this.ledger.currency)}`);
+    } else {
+      const qty = Number(String(data.qty || "1").replace(",", ".").replace(/\s/g, ""));
+      if (!Number.isFinite(qty)) throw new Error("количество должно быть числом");
+      res = await this.portfolio.addAsset(String(data.name || ""), String(data.kind || ""), qty, kop(data.buy),
+        String(data.ticker || ""), String(data.date || ""), data.price === undefined || data.price === null || data.price === "" ? null : kop(data.price));
+      await this.log(`Актив записан: ${res.name}`);
+    }
+    this.changed("finance");
+    return res;
+  }
   async actRemember(fact) {
     const r = await this.memory.remember(fact, this.today());
     if (!r.duplicate) { await this.log(`Запомнил: ${r.text}`, false); this.changed("memory"); }
@@ -384,6 +418,8 @@ export class Jarvis {
         return { text: s, kind: r.budget_alert ? "warn" : "ok", data: r };
       }
       case "finance_report": return this.financeReply(a.period);
+      case "finance_analytics": return this.analyticsReply();
+      case "assets_report": { const r = await this.actAssets(); return { text: assetsPhrase(r, t, this.ledger.currency), data: r }; }
       case "remember": {
         const r = await this.actRemember(a.fact);
         return r.duplicate ? { text: `Я это уже помню, ${t}.` } : { text: `Запомнил, ${t}.`, kind: "ok", data: r };
@@ -460,6 +496,14 @@ export class Jarvis {
     if (top.length) text += ` Больше всего: ${top.map((c) => `${c.category} — ${money(c.spent, cur)}`).join(", ")}.`;
     if (s.budget_total && s.forecast > s.budget_total) text += ` При таком темпе к концу месяца выйдет ${money(s.forecast, cur)} — выше бюджета.`;
     return { text, data: s };
+  }
+
+  analyticsReply() {
+    const a = this.actFinanceAnalytics();
+    const lines = a.insights.length ? [...a.insights] : ["Данных пока мало: нужно хотя бы несколько операций."];
+    const rec = a.recurring.filter((r) => !r.paid).slice(0, 3);
+    if (rec.length) lines.push(`Ожидаются: ${rec.map((r) => `${r.note} — ${money(r.amount, this.ledger.currency)}`).join(", ")}.`);
+    return { text: lines.join(" "), data: a };
   }
 
   recallReply(query) {
@@ -562,7 +606,20 @@ export class Jarvis {
       return t;
     }
     if (p === "/api/finance" && method === "GET") return this.actFinance(q.month || null);
-    if (p === "/api/finance") return this.actMoney(Math.round(Number(String(body.amount).replace(",", ".")) * 100), body.category || "Прочее", body.note || "", body.date || null);
+    if (p === "/api/apps" && method === "GET") return catalog(this.vault, this.projects);
+    if (p === "/api/apps") {
+      const r = await setInCatalog(this.vault, this.projects, String(body.name || ""), body.on !== false);
+      this.changed("projects");
+      return r;
+    }
+    if (p === "/api/finance/analytics") return this.actFinanceAnalytics(Number(q.months) || 6);
+    if (p === "/api/finance/assets" && method === "GET") return this.actAssets(q.record !== "0");
+    if (p === "/api/finance/assets") return this.actAssetAdd(String(body.action || "asset"), body);
+    if (p === "/api/finance") {
+      const amount = Math.round(Number(String(body.amount).replace(",", ".")) * 100);
+      if (!Number.isFinite(amount)) throw new VaultError("сумма должна быть числом");
+      return this.actMoney(amount, body.category || guessCategory(String(body.note || ""), amount > 0), body.note || "", body.date || null);
+    }
     if (p === "/api/projects" && method === "POST") {
       return this.actProjectCreate(String(body.name || ""), String(body.description || ""), String(body.repo || ""),
         String(body.tag || ""), String(body.status || "active"));

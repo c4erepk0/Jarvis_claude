@@ -24,6 +24,10 @@ export const TOOLS = [
       ["amount_rub", "category", "note"]) },
   { name: "finance_report", description: "Сводка финансов за месяц: доходы, расходы, категории, бюджет, прогноз.",
     input_schema: obj({ month: { ...S, description: "YYYY-MM" } }) },
+  { name: "finance_analytics", description: "Аналитика финансов: динамика по месяцам, категории к среднему, регулярные платежи (и какие ещё не оплачены), частые операции, выводы.",
+    input_schema: obj({ months: { type: "integer", description: "сколько месяцев, по умолчанию 6" } }) },
+  { name: "assets_report", description: "Активы (акции, фонды, облигации, крипта, валюта, имущество) по текущим ценам, долги, чистый капитал и его история.",
+    input_schema: obj({}) },
   { name: "memory_remember", description: "Сохранить устойчивый факт о владельце в долговременную память.",
     input_schema: obj({ fact: S }, ["fact"]) },
   { name: "memory_search", description: "Поиск по всем заметкам Obsidian.", input_schema: obj({ query: S }, ["query"]) },
@@ -229,6 +233,8 @@ export class Brain {
         case "money_add": res = await j.actMoney(Math.round(Number(need("amount_rub")) * 100), String(a.category || "Прочее"),
           String(a.note || ""), a.date || null); break;
         case "finance_report": res = j.actFinance(a.month || null); break;
+        case "finance_analytics": res = j.actFinanceAnalytics(Number(a.months) || 6); break;
+        case "assets_report": res = await j.actAssets(); break;
         case "memory_remember": res = await j.actRemember(String(need("fact"))); break;
         case "memory_search": res = j.vault.search(String(need("query")), 8); break;
         case "note_read": {
