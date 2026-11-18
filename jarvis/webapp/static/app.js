@@ -1,9 +1,9 @@
 // A.T.O.M. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=19";
-import { Voice } from "./voice.js?v=19";
-import { countTo, stagger } from "./motion.js?v=19";
+import { Reactor } from "./reactor.js?v=20";
+import { Voice } from "./voice.js?v=20";
+import { countTo, stagger } from "./motion.js?v=20";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -60,7 +60,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Atom работает прямо на телефоне
-    SA = await import("./standalone.js?v=19");
+    SA = await import("./standalone.js?v=20");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -174,6 +174,7 @@ function handleEvent(e) {
         break;
       case "open_note": openNote(d.path); break;
       case "open_files": openFiles(); break;
+      case "open_map": openMap(d); break;
       case "open_project": openFiles({ kind: "project", name: d.name }); break;
       case "open_synthesis": openFiles({ kind: "synthesis", name: null }); break;
       case "vault":
@@ -202,7 +203,7 @@ function handleEvent(e) {
     }
 }
 const TOOL_NAMES = { memory_search: "ищу в памяти", tasks_list: "смотрю задачи", task_add: "записываю задачу",
-  money_add: "записываю операцию", finance_report: "считаю финансы", finance_analytics: "анализирую финансы",
+  map_open: "открываю карту", money_add: "записываю операцию", finance_report: "считаю финансы", finance_analytics: "анализирую финансы",
   assets_report: "оцениваю активы", projects_status: "проверяю проекты",
   memory_remember: "запоминаю", note_read: "читаю заметку", web_search: "ищу в интернете", project_delegate: "готовлю поручение",
   notes_list: "смотрю заметки", note_show: "открываю заметку", note_create: "создаю заметку", note_edit: "правлю заметку",
@@ -413,12 +414,25 @@ let fw = null;
 async function openFinance(tab = null) {
   try {
     if (!fw) {
-      const { FinanceWindow } = await import("./finance.js?v=19");
+      const { FinanceWindow } = await import("./finance.js?v=20");
       fw = new FinanceWindow($("#fw"), { api, toast, store, openNote, today: () => S.now.slice(0, 10) });
     }
     await fw.show(tab);
   } catch (err) { toast(err.message, "error"); }
 }
+
+// ---------- карта и навигация (map.js) ----------
+let mw = null;
+async function openMap(args = {}) {
+  try {
+    if (!mw) {
+      const { MapWindow } = await import("./map.js?v=20");
+      mw = new MapWindow($("#mw"), { api, toast, store, speak: (t) => { if (!voice.muted) voice.say(t); } });
+    }
+    await mw.show(args || {});
+  } catch (err) { toast(`Карта: ${err.message}`, "error"); }
+}
+$("#btn-map").addEventListener("click", () => openMap());
 
 // ---------- каталог приложений ----------
 let apps = { apps: [], available: [] };
@@ -808,6 +822,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     if (!$("#modal").classList.contains("hidden")) closeModal();
+    else if (mw?.isOpen) mw.escape();
     else if (fw?.isOpen) fw.close();
     else if (!$("#holo").classList.contains("hidden")) { if (notes?.isOpen && notes.mode === "view") notes.close(); }
     else if (fm?.isOpen) fm.escape();
@@ -823,7 +838,7 @@ function setTab(tab) {
 }
 $("#tabs").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
-  if (b.dataset.tab === "files") openFiles(); else setTab(b.dataset.tab);
+  if (b.dataset.tab === "files") openFiles(); else if (b.dataset.tab === "map") openMap(); else setTab(b.dataset.tab);
 });
 setTab("core");
 
@@ -839,7 +854,7 @@ tick(); setInterval(tick, 1000);
 let fm = null;
 async function fileManager() {
   if (fm) return fm;
-  const { FileManager } = await import("./files.js?v=19");
+  const { FileManager } = await import("./files.js?v=20");
   fm = new FileManager($("#fm"), {
     api, toast, store,
     projects: () => (S ? S.projects : []),
@@ -872,7 +887,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=19");
+    const { Hologram } = await import("./hologram.js?v=20");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -895,7 +910,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=19");
+  const { NotePanel } = await import("./note-panel.js?v=20");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -936,7 +951,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=19");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=20");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -987,7 +1002,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=19").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=20").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -1008,7 +1023,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=19");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=20");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1021,7 +1036,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=19");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=20");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),

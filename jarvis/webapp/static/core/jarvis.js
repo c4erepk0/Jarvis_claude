@@ -7,6 +7,7 @@ import { TaskBook } from "./tasks.js";
 import { Ledger, analytics, guessCategory } from "./finance.js";
 import { Portfolio, Quotes, assetsPhrase } from "./assets.js";
 import { catalog, setInCatalog } from "./apps.js";
+import { Places } from "./places.js";
 import { Memory, hhmm } from "./memory.js";
 import { Projects, STATUSES, projectLine } from "./projects.js";
 import { Notes, noteTags } from "./notes.js";
@@ -44,6 +45,7 @@ export class Jarvis {
       statsToken: (p) => (settings.statsTokens || {})[p.name] || "" });
     this.portfolio = new Portfolio(this.vault, "Finance", settings.currency || "RUB", this.projects);
     this.quotes = new Quotes(fetchImpl);
+    this.places = new Places(this.vault);
     this.briefing = new Briefing(settings, fetchImpl);
     this.brain = new Brain(this, clientFactory);
     this.protocols = new Protocols(this);
@@ -432,6 +434,12 @@ export class Jarvis {
         const r = this.actOpenNote(a.query);
         return { text: `Открываю «${r.title}» в голограмме, ${t}.`, kind: "ok", data: { open_note: r.path } };
       }
+      case "map": {
+        this.emit("open_map", a);
+        const text = a.route ? `Строю маршрут до «${a.route}», ${t}.` : a.query ? `Ищу на карте «${a.query}».`
+          : a.nearby ? "Смотрю, что рядом." : a.locate ? "Определяю, где вы." : a.tour ? "Облетаем Нью-Йорк." : `Открываю карту, ${t}.`;
+        return { text, kind: "ok", data: { open_map: a } };
+      }
       case "files": this.emit("open_files", {}); return { text: `Открываю хранилище, ${t}.`, kind: "ok", data: { open_files: true } };
       case "note_delete": {
         const item = this.askTrash(a.query);
@@ -606,6 +614,16 @@ export class Jarvis {
       return t;
     }
     if (p === "/api/finance" && method === "GET") return this.actFinance(q.month || null);
+    if (p === "/api/places" && method === "GET") return { places: this.places.list() };
+    if (p === "/api/places") {
+      if (body.action === "remove") { if (!(await this.places.remove(String(body.name || "")))) throw new VaultError("такого места нет"); }
+      else {
+        const pl = await this.places.add(String(body.name || ""), body.lat, body.lon, body.address || "", body.category || "", body.note || "");
+        await this.log(`Место сохранено: ${pl.name}`, false);
+      }
+      this.changed("places");
+      return { places: this.places.list() };
+    }
     if (p === "/api/apps" && method === "GET") return catalog(this.vault, this.projects);
     if (p === "/api/apps") {
       const r = await setInCatalog(this.vault, this.projects, String(body.name || ""), body.on !== false);
