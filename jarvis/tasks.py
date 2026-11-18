@@ -98,10 +98,11 @@ def format_task(text: str, *, due: date | None = None, priority: str | None = No
 
 
 class TaskBook:
-    def __init__(self, vault: Vault, inbox: str, skip: tuple[str, ...] = ()):
+    def __init__(self, vault: Vault, inbox: str, skip: tuple[str, ...] = (), only: str = ""):
         self.vault = vault
         self.inbox = inbox
         self.skip = SKIP_FOLDERS + tuple(skip)
+        self.only = only            # «Команда/Анна/» — только задачи этой папки (личный список оператора)
         self._cache: tuple[int, list[Task]] | None = None
 
     def all(self) -> list[Task]:
@@ -109,7 +110,7 @@ class TaskBook:
             return self._cache[1]
         out: list[Task] = []
         for rel in self.vault.list_files():
-            if rel.startswith(self.skip):
+            if rel.startswith(self.skip) or (self.only and not rel.startswith(self.only)):
                 continue
             try:
                 lines = self.vault.read(rel).splitlines()

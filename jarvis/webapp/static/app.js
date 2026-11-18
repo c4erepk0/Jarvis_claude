@@ -1,9 +1,9 @@
 // A.T.O.M. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=21";
-import { Voice } from "./voice.js?v=21";
-import { countTo, stagger } from "./motion.js?v=21";
+import { Reactor } from "./reactor.js?v=22";
+import { Voice } from "./voice.js?v=22";
+import { countTo, stagger } from "./motion.js?v=22";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -60,7 +60,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Atom работает прямо на телефоне
-    SA = await import("./standalone.js?v=21");
+    SA = await import("./standalone.js?v=22");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -80,7 +80,14 @@ async function boot() {
   if (invite) { hideBoot(); showGate("invite", invite); return; }
   if (server.role === "operator") { hideBoot(); startOperator(); return; }
   if (server.setup) { hideBoot(); showGate("setup"); return; }
-  if (server.auth && !server.logged_in) { hideBoot(); showLogin(); return; }
+  if (server.auth && !server.logged_in) {
+    hideBoot();
+    let wasOperator = false;
+    try { wasOperator = localStorage.getItem("atom.role") === "operator"; } catch { /* приватный режим */ }
+    if (wasOperator) $("#login-op").click(); else showLogin();   // здесь работал оператор — сразу его вход
+    return;
+  }
+  try { localStorage.setItem("atom.role", "owner"); } catch { /* приватный режим */ }
   await start();
   hideBoot();
 }
@@ -88,35 +95,47 @@ async function boot() {
 // ---------- первый запуск, приглашение, кабинет оператора ----------
 async function startOperator() {
   document.querySelector("header.top")?.classList.add("hidden");
-  const { OperatorApp } = await import("./operator-app.js?v=21");
+  const { OperatorApp } = await import("./operator-app.js?v=22");
   try { await new OperatorApp($("#opapp"), { api, toast }).start(); }
   catch (e) { toast(`Кабинет оператора: ${e.message}`, "error"); }
 }
 
-async function acceptInvite(text) {
-  const { inviteToken } = await import("./team.js?v=21");
+async function acceptInvite(text, password = "", password2 = null) {
+  const { inviteToken } = await import("./team.js?v=22");
   const token = inviteToken(text);
   if (!token) throw new Error("Вставьте ссылку-приглашение целиком или код из неё");
-  await api("/api/invite/accept", { method: "POST", body: { token } });
+  if (password2 !== null && password !== password2) throw new Error("Пароли не совпадают");
+  await api("/api/invite/accept", { method: "POST", body: { token, password } });
   location.replace(location.pathname);              // без ?invite= в адресе — и сразу кабинет оператора
+}
+
+async function operatorLogin(name, password) {
+  await api("/api/op-login", { method: "POST", body: { name, password } });
+  location.replace(location.pathname);
 }
 
 async function showGate(mode, token = "") {
   const g = $("#gate");
   g.classList.remove("hidden");
   if (mode === "invite") {
-    let name = "";
-    try { name = (await api(`/api/invite?token=${encodeURIComponent(token)}`)).name; }
+    let name = "", hasPassword = false;
+    try { ({ name, has_password: hasPassword } = await api(`/api/invite?token=${encodeURIComponent(token)}`)); }
     catch (e) {
       g.innerHTML = `<div class="gate-box panel"><div class="panel-h">Приглашение</div><p>${esc(e.message)}</p>
         <p class="muted">Попросите владельца прислать новую ссылку.</p><a class="btn ghost" href="./">На главную</a></div>`;
       return;
     }
-    g.innerHTML = `<div class="gate-box panel"><div class="panel-h">Приглашение в Atom</div>
+    g.innerHTML = `<form class="gate-box panel" id="gate-accept"><div class="panel-h">Приглашение в Atom</div>
       <p>Вас приглашают как оператора: <b>${esc(name)}</b>.</p>
-      <p class="muted">В кабинете — порученные вам задачи и встречи и чат с владельцем. Остальное в Atom вам не видно.</p>
-      <button class="btn primary" id="gate-accept">Принять приглашение</button><p class="err" id="gate-err"></p></div>`;
-    $("#gate-accept").addEventListener("click", () => acceptInvite(token).catch((e) => { $("#gate-err").textContent = e.message; }));
+      <p class="muted">В кабинете — порученные вам задачи и встречи, свой список задач и заметки, общие проекты и чат с владельцем.</p>
+      <p class="muted small">${hasPassword ? "Пароль у вас уже есть — можно задать новый или оставить поля пустыми." : "Придумайте пароль: с ним вы войдёте с телефона и других устройств (имя — «" + esc(name) + "»)."}</p>
+      <input type="password" name="p1" placeholder="${hasPassword ? "Новый пароль (необязательно)" : "Пароль (от 6 символов)"}" ${hasPassword ? "" : "required minlength=\"6\""} autocomplete="new-password">
+      <input type="password" name="p2" placeholder="Ещё раз" autocomplete="new-password">
+      <button class="btn primary">Принять приглашение</button><p class="err" id="gate-err"></p></form>`;
+    $("#gate-accept").addEventListener("submit", (e) => {
+      e.preventDefault();
+      acceptInvite(token, e.target.p1.value, e.target.p2.value).catch((err) => { $("#gate-err").textContent = err.message; });
+    });
     return;
   }
   g.innerHTML = `<div class="gate-wrap"><div class="gate-logo">A.T.O.M.</div><h2>Кто вы?</h2>
@@ -128,10 +147,15 @@ async function showGate(mode, token = "") {
         <button class="btn primary">Войти как владелец</button>
         <button type="button" class="link" id="gate-open">Без пароля — Atom только у меня на компьютере</button>
         <p class="err" id="gate-owner-err"></p></form>
-      <form class="gate-box panel" id="gate-op"><div class="panel-h">Я оператор</div>
-        <p class="muted">Владелец прислал вам ссылку-приглашение — вставьте её сюда (или просто откройте ссылку).</p>
-        <input name="link" placeholder="https://…/?invite=…" autocomplete="off" required>
-        <button class="btn">Войти как оператор</button><p class="err" id="gate-op-err"></p></form>
+      <div class="gate-box panel" id="gate-op-box"><div class="panel-h">Я оператор</div>
+        <div class="seg" id="gate-op-seg"><button type="button" data-m="login" class="on">Имя и пароль</button><button type="button" data-m="link">Приглашение</button></div>
+        <form id="gate-op-login" class="gate-sub"><input name="name" placeholder="Имя" autocomplete="username" required>
+          <input name="password" type="password" placeholder="Пароль" autocomplete="current-password" required>
+          <button class="btn">Войти как оператор</button></form>
+        <form id="gate-op" class="gate-sub hidden"><p class="muted">Впервые? Вставьте ссылку-приглашение от владельца (или просто откройте её).</p>
+          <input name="link" placeholder="https://…/?invite=…" autocomplete="off" required>
+          <button class="btn">Дальше</button></form>
+        <p class="err" id="gate-op-err"></p></div>
     </div></div>`;
   $("#gate-owner").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -145,9 +169,22 @@ async function showGate(mode, token = "") {
     try { await api("/api/setup", { method: "POST", body: { mode: "open" } }); g.classList.add("hidden"); await start(); }
     catch (err) { $("#gate-owner-err").textContent = err.message; }
   });
-  $("#gate-op").addEventListener("submit", (e) => {
+  $("#gate-op-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-m]"); if (!b) return;
+    $$("#gate-op-seg button").forEach((x) => x.classList.toggle("on", x === b));
+    $("#gate-op-login").classList.toggle("hidden", b.dataset.m !== "login");
+    $("#gate-op").classList.toggle("hidden", b.dataset.m !== "link");
+  });
+  $("#gate-op-login").addEventListener("submit", (e) => {
     e.preventDefault();
-    acceptInvite(e.target.link.value).catch((err) => { $("#gate-op-err").textContent = err.message; });
+    operatorLogin(e.target.name.value, e.target.password.value).catch((err) => { $("#gate-op-err").textContent = err.message; });
+  });
+  $("#gate-op").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const { inviteToken } = await import("./team.js?v=22");
+    const t = inviteToken(e.target.link.value);
+    if (!t) { $("#gate-op-err").textContent = "Вставьте ссылку-приглашение целиком или код из неё"; return; }
+    showGate("invite", t);                         // дальше — задать пароль
   });
 }
 function hideBoot() { $("#boot").classList.add("off"); setTimeout(() => $("#boot").remove(), 700); }
@@ -157,8 +194,9 @@ function showLogin() {
   $("#login-code").focus();
 }
 $("#login-op").addEventListener("click", () => { $("#login").classList.add("hidden"); showGate("setup").then(() => {
-  $("#gate-owner")?.closest(".gate-box")?.remove();
+  $("#gate-owner")?.remove();
   document.querySelector(".gate-wrap h2").textContent = "Вход оператора";
+  document.querySelector(".gate-wrap").insertAdjacentHTML("beforeend", `<p><a class="link" href="./">← Я владелец</a></p>`);
 }); });
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -498,7 +536,7 @@ let fw = null;
 async function openFinance(tab = null) {
   try {
     if (!fw) {
-      const { FinanceWindow } = await import("./finance.js?v=21");
+      const { FinanceWindow } = await import("./finance.js?v=22");
       fw = new FinanceWindow($("#fw"), { api, toast, store, openNote, today: () => S.now.slice(0, 10) });
     }
     await fw.show(tab);
@@ -510,7 +548,7 @@ let mw = null;
 async function openMap(args = {}) {
   try {
     if (!mw) {
-      const { MapWindow } = await import("./map.js?v=21");
+      const { MapWindow } = await import("./map.js?v=22");
       mw = new MapWindow($("#mw"), { api, toast, store, speak: (t) => { if (!voice.muted) voice.say(t); } });
     }
     await mw.show(args || {});
@@ -523,7 +561,7 @@ let tw = null;
 async function openTeam(opts = {}) {
   try {
     if (!tw) {
-      const { TeamWindow } = await import("./team-admin.js?v=21");
+      const { TeamWindow } = await import("./team-admin.js?v=22");
       tw = new TeamWindow($("#ow"), { api, toast, store, today: () => S.now.slice(0, 10), standalone: Boolean(local) });
     }
     await tw.show(opts);
@@ -982,7 +1020,7 @@ tick(); setInterval(tick, 1000);
 let fm = null;
 async function fileManager() {
   if (fm) return fm;
-  const { FileManager } = await import("./files.js?v=21");
+  const { FileManager } = await import("./files.js?v=22");
   fm = new FileManager($("#fm"), {
     api, toast, store,
     projects: () => (S ? S.projects : []),
@@ -1015,7 +1053,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=21");
+    const { Hologram } = await import("./hologram.js?v=22");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -1038,7 +1076,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=21");
+  const { NotePanel } = await import("./note-panel.js?v=22");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -1079,7 +1117,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=21");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=22");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1130,7 +1168,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=21").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=22").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -1151,7 +1189,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=21");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=22");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1164,7 +1202,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=21");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=22");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),

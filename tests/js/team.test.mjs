@@ -55,3 +55,11 @@ test("ядро для iPhone: встреча, отметка, голосом «�
   await j.request("POST", `/api/tasks/${encodeURIComponent(t.id)}/status`, { status: "done" });
   assert.equal((await j.request("GET", "/api/meetings", {})).upcoming.length, 0);
 });
+
+test("личные задачи операторов (Команда/<Имя>/) — не в списках владельца и на iPhone", async () => {
+  const j = await new Jarvis({ title: "сэр" }, { store: new LocalStore("team2", {
+    "Команда/Анна/Задачи.md": "# Задачи — Анна\n\n- [ ] Купить картридж 📅 2026-11-19\n",
+    "Tasks/Inbox.md": "# Входящие задачи\n\n- [ ] Позвонить в банк #оператор/анна 📅 2026-11-19\n",
+  }), clock: () => new Date(2026, 10, 19, 10), fetchImpl: async () => { throw new TypeError("offline"); } }).init();
+  assert.deepEqual(j.tasks.all().map((t) => t.text), ["Позвонить в банк"]);
+});

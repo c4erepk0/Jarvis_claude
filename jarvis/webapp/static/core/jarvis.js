@@ -37,7 +37,7 @@ export class Jarvis {
     this.settings = settings;
     this.clock = clock;
     this.vault = new Vault(store);
-    this.tasks = new TaskBook(this.vault, "Tasks/Inbox.md", ["Jarvis/Conversations/"]);
+    this.tasks = new TaskBook(this.vault, "Tasks/Inbox.md", ["Jarvis/Conversations/", "Команда/"]);   // личные задачи операторов — не в списках владельца
     this.ledger = new Ledger(this.vault, "Finance", settings.currency || "RUB");
     this.memory = new Memory(this.vault);
     this.notes = new Notes(this.vault);
