@@ -66,7 +66,8 @@ def test_no_code_on_localhost_is_open(tmp_path):
         j = make_jarvis(tmp_path)
         async with TestClient(TestServer(build_app(j))) as c:
             s = await (await c.get("/api/session")).json()
-            assert s == {"auth": False, "logged_in": True}
+            assert s["auth"] is False and s["logged_in"] is True and s["role"] == "owner"
+            assert s["setup"] is True                    # первый запуск: дашборд спросит «кто вы»
             assert (await c.get("/api/state")).status == 200
         await j.close()
     asyncio.run(run())

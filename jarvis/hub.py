@@ -24,6 +24,9 @@ class Hub:
         payload = json.dumps(event, ensure_ascii=False, default=str)
         dead = []
         for ws in list(self.clients):
+            allow = getattr(ws, "atom_filter", None)       # у оператора — только его события
+            if allow is not None and not allow(event):
+                continue
             try:
                 await ws.send_str(payload)
             except (ConnectionResetError, RuntimeError):

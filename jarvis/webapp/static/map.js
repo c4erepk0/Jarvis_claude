@@ -7,7 +7,7 @@
 // Логика без DOM — geo.js (тест — tests/js/geo.test.mjs).
 import { NEARBY, NYC, NYC_TOUR, PROFILES, arrival, bearing, coordsText, distance, formatDistance, formatDuration,
   lineLength, localAlias, overpassQuery, parseCoords, parseNominatim, parseOverpass, parsePhoton, parseRoute, progress,
-  routeUrl, shareLink, spoken } from "./geo.js?v=20";
+  routeUrl, shareLink, spoken } from "./geo.js?v=21";
 
 const ML_VER = "4.7.1";
 const ML_JS = `https://cdn.jsdelivr.net/npm/maplibre-gl@${ML_VER}/dist/maplibre-gl.js`;

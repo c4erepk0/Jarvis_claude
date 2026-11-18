@@ -1184,3 +1184,100 @@ body.mw-on { overflow: hidden; }
   .mw-tools { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 40px); }
   .mw-layers button { padding: 6px 7px; font-size: 11px; }
 }
+
+/* ---------- первый запуск и приглашение ---------- */
+.gate { position: fixed; inset: 0; z-index: 85; background: var(--bg); display: grid; place-items: center; padding: 16px; overflow: auto; }
+.gate.hidden { display: none; }
+.gate-wrap { width: min(860px, 100%); text-align: center; animation: rise .5s cubic-bezier(.2, .7, .2, 1); }
+.gate-logo { font: 800 15px var(--font); letter-spacing: .3em; color: var(--muted); }
+.gate-wrap h2 { font: 700 30px var(--font); color: var(--bright); margin: 10px 0 22px; }
+.gate-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; text-align: left; }
+.gate-box { display: grid; gap: 10px; align-content: start; width: min(440px, 100%); margin: 0 auto; }
+.gate-cards .gate-box { width: 100%; }
+.gate-box p { margin: 0; line-height: 1.5; }
+.gate-box .link { justify-self: start; font-size: 13px; }
+
+/* ---------- окно «Команда» ---------- */
+.team-btn { position: relative; }
+.tw-badge { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--holo);
+  color: #fff; font: 700 10.5px/1 var(--font); font-style: normal; }
+.tw-badge.hidden { display: none; }
+.team-btn .tw-badge { position: absolute; top: -4px; right: -6px; }
+.tw-body { flex: 1; min-height: 0; overflow: auto; max-width: 1280px; width: 100%; margin: 0 auto; display: grid; gap: 12px; align-content: start; }
+.tw-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; min-height: 0; }
+.tw-list { display: grid; gap: 6px; align-content: start; }
+.tw-op { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; padding: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); color: var(--text); cursor: pointer; font: inherit; }
+.tw-op:hover { border-color: var(--line-strong); }
+.tw-op.on { border-color: var(--holo-dim); background: var(--active); }
+.tw-op b { display: block; font-weight: 650; color: var(--bright); }
+.tw-op small { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-av { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font: 700 15px var(--font); color: #fff;
+  background: linear-gradient(145deg, #ff6a5f, #b8322a); flex: none; }
+.tw-av.big { width: 48px; height: 48px; font-size: 20px; }
+.st-active { color: var(--green) !important; } .st-invited { color: var(--amber) !important; } .st-disabled, .st-expired { color: var(--red) !important; }
+.tw-main { min-width: 0; display: grid; gap: 12px; align-content: start; }
+.tw-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; }
+.tw-head h3 { margin: 0; font: 700 18px var(--font); color: var(--bright); }
+.tw-head small { font-size: 12.5px; }
+.tw-sub { margin: 0 0 0 auto; }
+.tw-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: grid; gap: 10px; align-content: start; }
+.tw-card h3 { margin: 0; font: 650 15px var(--font); color: var(--bright); }
+.tw-card label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
+.tw-perms { border: 1px solid var(--line-soft); border-radius: var(--r-sm); padding: 10px 12px; display: grid; gap: 8px; margin: 0; }
+.tw-perms legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+.tw-check { display: flex !important; grid-auto-flow: column; align-items: center; gap: 8px !important; color: var(--text) !important; font-size: 13.5px !important; cursor: pointer; }
+.tw-check input { accent-color: var(--holo); width: 16px; height: 16px; }
+.tw-link { background: var(--active); border: 1px solid var(--holo-dim); border-radius: var(--r); padding: 14px; display: grid; gap: 8px; animation: rise .35s ease-out; }
+.tw-link input { font: 12.5px var(--mono); }
+.tw-note { background: var(--amber-faint); border: 1px solid var(--amber-dim); border-radius: var(--r); padding: 14px; display: grid; gap: 8px; }
+.tw-note p { margin: 0; }
+.tw-empty { background: var(--panel); border: 1px dashed var(--line-strong); border-radius: var(--r); padding: 24px; }
+.tw-empty h3 { margin: 0 0 8px; color: var(--bright); }
+.tw-work { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; align-content: start; }
+.tw-work.single { grid-template-columns: minmax(0, 860px); }
+.tw-tasks { max-height: none; }
+.task.meet .t-text b { display: block; font-weight: 600; color: var(--bright); }
+.task.meet .t-text small { display: block; font-size: 12px; margin-top: 2px; }
+.tw-meet-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 10px; }
+.tw-meet-form label { display: grid; gap: 5px; font-size: 12px; color: var(--muted); }
+.over { color: var(--red); }
+/* чат */
+.tw-chat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); display: grid; grid-template-rows: minmax(0, 1fr) auto; height: min(64vh, 640px); }
+.tw-chat-log { overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.tw-day { align-self: center; font-size: 11.5px; color: var(--muted); background: var(--raised); border-radius: 999px; padding: 3px 10px; margin: 8px 0 4px; }
+.tw-msg { max-width: min(76%, 560px); align-self: flex-start; background: var(--raised); border: 1px solid var(--line-soft); border-radius: 14px 14px 14px 4px;
+  padding: 8px 12px 6px; animation: rise .25s ease-out; }
+.tw-msg.mine { align-self: flex-end; background: rgba(255, 69, 58, .16); border-color: var(--holo-dim); border-radius: 14px 14px 4px 14px; }
+.tw-msg p { margin: 0; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
+.tw-msg small { display: block; text-align: right; font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+.tw-send { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line-soft); }
+.tw-send textarea { resize: none; min-height: 42px; max-height: 140px; field-sizing: content; }
+.tw-send .btn { flex: none; width: 46px; }
+
+/* ---------- кабинет оператора ---------- */
+body.operator-mode .layout, body.operator-mode .tabs, body.operator-mode header.top, body.operator-mode .bg-grid { display: none !important; }
+.opapp { min-height: 100vh; padding: max(12px, env(safe-area-inset-top)) 16px 24px; max-width: 1400px; margin: 0 auto; }
+.opapp.hidden { display: none; }
+.op-top { display: flex; align-items: center; gap: 14px; padding-bottom: 14px; }
+.op-who { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.op-who b { display: block; color: var(--bright); } .op-who small { color: var(--muted); font-size: 12px; }
+.op-tabs { display: none; margin-bottom: 12px; }
+.op-tabs .tw-badge { margin-left: 4px; }
+.op-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.op-grid .op-col.hidden { display: none; }
+.op-chat .tw-chat-log { height: min(56vh, 560px); padding: 4px 0 10px; }
+.op-chat .tw-send { padding: 10px 0 0; }
+.op-proj { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.op-proj li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+.op-proj small { grid-column: 1; }
+.op-proj .pill { grid-column: 2; grid-row: 1 / 3; align-self: center; }
+@media (max-width: 900px) {
+  .tw-grid { grid-template-columns: minmax(0, 1fr); }
+  .tw-list { grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); overflow-x: auto; }
+  .tw-sub { margin: 0; width: 100%; }
+  .op-tabs { display: flex; }
+  .op-grid { grid-template-columns: minmax(0, 1fr); }
+  .op-grid .op-col { display: none; }
+  .op-grid .op-col.active:not(.hidden) { display: block; }
+}

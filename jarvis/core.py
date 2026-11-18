@@ -20,6 +20,8 @@ from . import diagnostics, intents, ru
 from .briefing import Briefing
 from .config import Config
 from .apps import catalog, set_in_catalog
+from .meetings import OP_TAG, for_operator, meeting_text, meetings
+from .operators import Operators
 from .places import Places
 from .assets import Portfolio, Quotes
 from .finance import Ledger, analytics
@@ -91,6 +93,7 @@ class Jarvis:
         self.portfolio = Portfolio(self.vault, cfg.finance_dir, cfg.currency, self.projects)
         self.quotes = quotes or Quotes()
         self.places = Places(self.vault, f"{cfg.jarvis_dir}/Places.md")
+        self.operators = Operators(cfg.data_dir, self.vault, f"{cfg.jarvis_dir}/Chat")
         self.voice = Voice(cfg.tts_engine, cfg.tts_voice, cfg.tts_rate, cfg.tts_pitch, cfg.data_dir / "tts",
                            cfg.piper_bin, cfg.piper_model)
         self.reminders = Reminders(self.vault, f"{cfg.jarvis_dir}/Reminders.md", ru.now(cfg.timezone).tzinfo)
@@ -331,6 +334,64 @@ class Jarvis:
             await self.log(f"Актив записан: {res['name']}")
         await self.changed("finance")
         return res
+
+    # ---------- операторы, поручения, встречи ----------
+    def act_meetings(self, op_slug: str | None = None) -> dict:
+        return meetings(self.tasks.all(), self.today().isoformat(), op_slug=op_slug)
+
+    def operator_tag(self, op_id: str | None) -> str | None:
+        if not op_id:
+            return None
+        op = self.operators.get(op_id)
+        if not op:
+            raise ValueError("нет такого оператора")
+        return OP_TAG + op["slug"]
+
+    async def act_assign(self, kind: str, data: dict, by: str = "owner") -> dict:
+        """kind: task — задача (оператору — с тегом #оператор/<имя>), meeting — встреча (#встреча, 🕒 время, 📍 место)."""
+        tag = self.operator_tag(str(data.get("operator") or "") or None)
+        due = None
+        if data.get("due"):
+            try:
+                due = date.fromisoformat(str(data["due"]))
+            except ValueError:
+                raise ValueError("дата — в виде ГГГГ-ММ-ДД") from None
+        tags = [tag] if tag else []
+        if kind == "meeting":
+            text = meeting_text(str(data.get("title") or data.get("text") or ""), str(data.get("time") or ""),
+                                str(data.get("place") or ""))
+            tags = ["встреча", *tags]
+        else:
+            text = str(data.get("text") or "").strip()
+        task = self.tasks.add(text, self.today(), due=due, priority=data.get("priority") or None, tags=tags)
+        who = "Оператор" if by != "owner" else "Владелец"
+        await self.log(f"{who}: {'встреча' if kind == 'meeting' else 'задача'} «{task.text}»"
+                       f"{' → ' + tag.split('/', 1)[1] if tag else ''}")
+        await self.changed("tasks")
+        return task.as_dict()
+
+    def operator_tasks(self, op: dict, view: str = "all") -> list[dict]:
+        """Задачи, которые видит оператор: порученные ему или все (право tasks_all). Встречи — отдельно."""
+        items = self.tasks.view(self.today(), view if view in ("today", "week", "overdue", "nodate", "all") else "all")
+        if "tasks_all" not in op.get("perms", []):
+            items = for_operator(items, op["slug"])
+        return [t.as_dict() for t in items if "встреча" not in t.tags]
+
+    def operator_can_touch(self, op: dict, task_id: str) -> bool:
+        task = next((t for t in self.tasks.all() if t.id == task_id), None)
+        if not task:
+            return False
+        if "встреча" in task.tags:
+            return "meetings_all" in op.get("perms", []) or OP_TAG + op["slug"] in task.tags
+        return "tasks_all" in op.get("perms", []) or OP_TAG + op["slug"] in task.tags
+
+    async def act_chat(self, op_id: str, sender: str, text: str) -> dict:
+        msg = self.operators.post(op_id, sender, text, self.now())
+        op = self.operators.get(op_id)
+        await self.hub.emit("chat", {"op": op_id, "name": op["name"], "message": msg}, log_it=False)
+        if sender != "owner":
+            await self.log(f"Чат · {op['name']}: {msg['text'][:120]}", journal=False)
+        return msg
 
     async def act_place(self, action: str, data: dict) -> dict:
         """action: add — сохранить место (то же название — обновить), remove — убрать."""
@@ -622,6 +683,8 @@ class Jarvis:
         if it.name == "note_open":
             res = await self.act_open_note(a["query"])
             return Reply(f"Открываю «{res['title']}» в голограмме, {t}.", kind="ok", data={"open_note": res["path"]})
+        if it.name == "meetings":
+            return self._meetings_reply(a.get("period", "all"))
         if it.name == "map":
             await self.hub.emit("open_map", a, log_it=False)
             if a.get("route"):
@@ -710,6 +773,25 @@ class Jarvis:
         if s["forecast"] and s["budget_total"] and s["forecast"] > s["budget_total"]:
             text += f" При таком темпе к концу месяца выйдет {ru.money(s['forecast'], cur)} — выше бюджета."
         return Reply(text, data=s)
+
+    def _meetings_reply(self, period: str) -> Reply:
+        ref = self.today()
+        day = {"сегодня": ref.isoformat(), "завтра": (ref + timedelta(days=1)).isoformat()}.get(period)
+        week = (ref + timedelta(days=7)).isoformat()
+        up = self.act_meetings()["upcoming"]
+        if day:
+            up = [m for m in up if m["due"] == day]
+        elif period == "неделю":
+            up = [m for m in up if m["due"] and m["due"] <= week]
+        label = {"сегодня": "на сегодня", "завтра": "на завтра", "неделю": "на неделю"}.get(period, "")
+        if not up:
+            return Reply(f"Встреч {label or 'впереди'} нет, {self.title}.", data=up)
+        parts = [f"{m['title']}{' в ' + m['time'] if m['time'] else ''}"
+                 f"{'' if day or not m['due'] else ', ' + ru.human_date(date.fromisoformat(m['due']), ref)}"
+                 for m in up[:6]]
+        n = len(up)
+        word = ru.plural(n, "встреча", "встречи", "встреч")
+        return Reply(f"{n} {word}{' ' + label if label else ''}: " + "; ".join(parts) + ".", data=up)
 
     def _analytics_reply(self) -> Reply:
         a = self.act_finance_analytics()
