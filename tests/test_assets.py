@@ -117,6 +117,8 @@ def test_analytics(tmp_path):
     assert any(f["note"] == "Метро" and f["amount"] == -4200 for f in a["frequent"])
     assert any("Кафе" in s for s in a["insights"]) and any("регулярн" in s for s in a["insights"])
     assert a["savings_rate"] == 63
+    m = a["matrix"]                                   # 3D-карта: категория × месяц
+    assert m["categories"][0] == "Еда" and len(m["values"][0]) == 6 and m["values"][0][-1] == 1_400_000
 
 
 def test_op_key():

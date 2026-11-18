@@ -1,7 +1,8 @@
 // Окно «Финансы»: обзор месяца и динамика, категории к среднему, регулярные платежи, активы с котировками, долги.
 // Данные — /api/finance, /api/finance/analytics, /api/finance/assets (на iPhone без сервера отвечает core/*.js).
 // Операции в одно касание: частые траты и неоплаченные регулярные платежи вносятся кнопкой.
-import { donut, esc, money, sparkline, trendBars } from "./fin-charts.js?v=18";
+import { donut, esc, money, sparkline, trendBars } from "./fin-charts.js?v=19";
+import { countTo } from "./motion.js?v=19";
 
 const TABS = [["overview", "Обзор"], ["categories", "Категории"], ["recurring", "Регулярные"], ["assets", "Активы"], ["debts", "Долги"]];
 const KIND_OPTIONS = [["акция", "Акции (Мосбиржа)"], ["фонд", "Фонд / БПИФ"], ["облигация", "Облигация"], ["крипто", "Крипта"],
@@ -43,6 +44,7 @@ export class FinanceWindow {
   }
 
   close() {
+    this.f3d?.destroy(); this.f3d = null; this.shownTab = null;
     this.root.classList.add("hidden");
     document.body.classList.remove("fw-on");
   }
@@ -67,7 +69,21 @@ export class FinanceWindow {
     }
     const body = this.el("body");
     if (!a) { body.innerHTML = `<p class="empty">Финансы недоступны.</p>`; return; }
+    // числа KPI докручиваются от прежних значений (на той же вкладке)
+    const prev = new Map([...body.querySelectorAll(".fw-kpi")].map((k) => [k.querySelector("span")?.textContent, k.querySelector("b")?.textContent]));
+    const sameTab = this.shownTab === this.tab;
+    this.shownTab = this.tab;
+    this.f3d?.destroy(); this.f3d = null;
     body.innerHTML = this[`render_${this.tab}`]();
+    body.classList.remove("swap"); void body.offsetWidth; if (!sameTab) body.classList.add("swap");
+    body.querySelectorAll(".fw-kpi").forEach((k) => {
+      const b = k.querySelector("b"), was = prev.get(k.querySelector("span")?.textContent);
+      if (!b) return;
+      const text = b.textContent;
+      b.textContent = sameTab && was ? was : text.replace(/\d/g, "0");
+      countTo(b, text);
+    });
+    if (this.tab === "categories") this.mount3D();
     body.querySelectorAll("form.fw-add-asset").forEach((f) => this.toggleTicker(f));
   }
 
@@ -119,12 +135,27 @@ export class FinanceWindow {
     const rows = a.categories.filter((x) => x.spent || x.average);
     if (!rows.length) return `<p class="empty">Расходов пока нет.</p>`;
     const max = Math.max(1, ...rows.map((x) => Math.max(x.spent, x.average)));
-    return `<section class="fw-card"><h3>Категории месяца <small class="muted">· к среднему за 3 месяца</small></h3>
+    const map = a.matrix && a.matrix.categories.length ? `<section class="fw-card"><h3>3D-карта расходов <small class="muted">· категории × 6 месяцев — вращайте, наведите на столбик</small></h3>
+      <div class="f3d" data-f3d></div></section>` : "";
+    return `${map}<section class="fw-card"><h3>Категории месяца <small class="muted">· к среднему за 3 месяца</small></h3>
       <ul class="fw-cats">${rows.map((x) => `<li>
         <div class="row"><span>${esc(x.category)}</span><b>${money(x.spent, c)}</b>
           <span class="chg ${x.change === null ? "" : x.change > 15 ? "down" : x.change < -15 ? "up" : ""}">${x.change === null ? "новая" : pctTxt(x.change)}</span></div>
         <div class="bar2"><i style="width:${(x.spent / max) * 100}%"></i>${x.average ? `<s style="left:${(x.average / max) * 100}%" title="среднее ${money(x.average, c)}"></s>` : ""}</div>
         <small class="muted">${x.share}% расходов${x.average ? ` · обычно ${money(x.average, c)}` : ""}</small></li>`).join("")}</ul></section>`;
+  }
+
+  async mount3D() {
+    const host = this.el("body").querySelector("[data-f3d]");
+    const m = this.data.analytics?.matrix;
+    if (!host || !m || !m.categories.length) return;
+    try {
+      const { Finance3D } = await import("./fin3d.js?v=19");
+      if (!host.isConnected) return;
+      this.f3d = new Finance3D(host, m, { currency: this.cur() });
+    } catch {
+      host.innerHTML = `<p class="muted small">3D недоступно: нет WebGL или нет связи с CDN three.js.</p>`;
+    }
   }
 
   // ---------- регулярные ----------

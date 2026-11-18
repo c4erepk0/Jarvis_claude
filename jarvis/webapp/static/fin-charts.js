@@ -62,3 +62,19 @@ export function donut(parts, { size = 132, stroke = 16 } = {}) {
   return `<svg class="fc donut" viewBox="0 0 ${size} ${size}" role="img" aria-label="Структура активов">`
     + `<g transform="rotate(-90 ${size / 2} ${size / 2})">${segs.join("")}</g></svg>`;
 }
+
+/**
+ * Столбики 3D-карты расходов (категория × месяц) из analytics.matrix: позиции на сетке, высота 0..1,
+ * подпись. Пустые клетки — тоже столбики нулевой высоты (сетка видна целиком).
+ */
+export function barGrid(matrix, { gap = 1.4 } = {}) {
+  const cats = matrix?.categories || [], months = matrix?.months || [];
+  const max = Math.max(1, ...((matrix?.values || []).flat()));
+  const bars = [];
+  cats.forEach((c, ci) => months.forEach((m, mi) => {
+    const v = matrix.values[ci]?.[mi] || 0;
+    bars.push({ category: c, month: m, value: v, h: v / max, ci, mi,
+      x: (mi - (months.length - 1) / 2) * gap, z: (ci - (cats.length - 1) / 2) * gap });
+  }));
+  return { bars, max, width: months.length * gap, depth: cats.length * gap };
+}

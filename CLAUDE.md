@@ -50,11 +50,18 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   в заметке и папке `Projects/<Проект>/`, прогресс, заметки, журнал). Заметки в папке проекта — не проекты.
 - `jarvis/web.py` — REST + WebSocket + вход; `jarvis/hub.py` — шина событий; `jarvis/watchers.py` — фоновые датчики.
 - `jarvis/voice.py` (TTS), `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
-- `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`. `reactor.js` — живая
-  сфера ядра (класс `Reactor` — имя прежнее). Граф памяти: размер точки по связям, перетаскивание точек с запоминанием
-  (`static/graph-pins.js`, localStorage `jarvis.holo_pins`, тест — `tests/js/graph-pins.test.mjs`).
-- `static/files.js` — окно «Хранилище» (менеджер заметок и проектов): дерево, теги, недавние, поиск, страница проекта,
-  перетаскивание; заметку показывает та же `NotePanel` (`extraActions`/`onAction`/`onTag`/`templates`). Логика без DOM —
+- `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`. Ядро — сфера из частиц
+  (`static/particle-sphere.js`, three.js с CDN; точки и «настроения» — `static/sphere-points.js`, тест —
+  `tests/js/sphere-points.test.mjs`); `reactor.js` (класс `Reactor` — имя прежнее) рисует дуги показателей и, если WebGL
+  или CDN недоступны, плоскую сферу. Граф памяти: размер точки по связям, перетаскивание точек с запоминанием
+  (`static/graph-pins.js`, localStorage `jarvis.holo_pins`, тест — `tests/js/graph-pins.test.mjs`), раскрытие из центра,
+  огоньки по нитям выбранной заметки. Движение — `static/motion.js` (докручивание чисел `countTo`, появление `stagger`;
+  тест — `tests/js/motion.test.mjs`), CSS-анимации в конце `app.css`; всё выключается при «уменьшить движение».
+  3D-карта расходов — `static/fin3d.js` (вкладка «Категории», данные — `analytics.matrix`, раскладка — `barGrid`).
+- `static/files.js` — окно «Хранилище» (менеджер заметок и проектов): обзор (статистика, недавние, хабы, заметки без
+  связей, несозданные заметки из [[ссылок]] — `vaultStats`), дерево, избранное (`fm.fav`), теги, недавние, поиск,
+  сортировка (`sortFiles`), список/карточки, выбор нескольких (переместить, в корзину, в избранное), заметка дня,
+  страница проекта, перетаскивание; заметку показывает та же `NotePanel` (`extraActions`/`onAction`/`onTag`/`templates`). Логика без DOM —
   `static/file-tree.js` (тест — `tests/js/files.test.mjs`). Диалоги — свои, не `prompt()`/`confirm()`.
 - `static/note-panel.js` — заметка в голограмме: просмотр, правка, новая, [[ссылки]], галочки задач; рендер —
   `static/markdown.js` (сначала экранирование, тест — `tests/js/markdown.test.mjs`). Сохранение — с версией

@@ -12,9 +12,9 @@
 // Управление взглядом (MediaPipe Face Landmarker, gaze.js): взгляд — курсор, примагниченный к ближайшей кнопке
 //   или узлу; короткий щипок — нажать то, на что смотрите; щипок и движение — вращать граф или листать заметку.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=18";
-import { degrees, follow, labelled, loadPins, nodeSize, pin, prune, savePins } from "./graph-pins.js?v=18";
-import { DEFAULT_MAGNET, GazeSync, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=18";
+import { BONES, DRAG, GESTURE_ICON, GestureTracker, KIND_LABEL, classify } from "./gestures.js?v=19";
+import { degrees, follow, labelled, loadPins, nodeSize, pin, prune, savePins } from "./graph-pins.js?v=19";
+import { DEFAULT_MAGNET, GazeSync, OneEuro2D, gazeFeatures, headPose, packFrame, pickTarget, snapRadius } from "./gaze.js?v=19";
 
 const VISION_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
@@ -23,7 +23,8 @@ const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmar
 const CANDIDATE = 0xffd23b;   // заметки «похоже на проект» из синтеза проектов
 // спокойная палитра групп (папок): различима, но без кислотного неона
 const PALETTE = [0xff6a5f, 0x5fd99a, 0xffb85c, 0x8fa8ff, 0xd58cff, 0x5fd3e6, 0xe6d36b, 0xff9e8f];
-const DIM = 0.14;             // насколько гаснет всё, что не связано с выбранным узлом
+const DIM = 0.14;
+const REDUCED = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;             // насколько гаснет всё, что не связано с выбранным узлом
 
 // Точки — свой шейдер: размер из атрибута (в PointsMaterial он один на всех), мягкий диск с ободком.
 const POINT_VS = `attribute float size; attribute vec3 color; varying vec3 vColor; uniform float scale;
@@ -128,6 +129,11 @@ export class Hologram {
       opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending }));
     this.marker.visible = false;
     this.world.add(this.marker);
+    // огоньки, бегущие по нитям выбранной заметки к её соседям
+    this.pulses = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ map: glowSprite(), size: 1.6,
+      color: 0xffe2dc, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+    this.pulses.visible = false;
+    this.world.add(this.pulses);
     this.ray = new THREE.Raycaster();
     this.ray.params.Points.threshold = 2.2;
     this.mouse = new THREE.Vector2(-9, -9);
@@ -159,7 +165,9 @@ export class Hologram {
     this.pins = prune(loadPins(), nodes.map((n) => n.id));
     for (const [id, p] of Object.entries(this.pins)) if (!prev.has(id)) prev.set(id, new THREE.Vector3(...p));
     this.nodes = nodes;
+    const first = !this.nodes || !this.nodes.length;
     const { pos, edges, groups } = layout(nodes, links, prev, new Set(Object.keys(this.pins)));
+    if (first && !REDUCED()) this.introAt = performance.now();   // граф раскрывается из центра
     this.byId = new Map(nodes.map((n, i) => [n.id, i]));
     this.neighbors = new Map(nodes.map((n) => [n.id, new Set()]));
     this.adj = nodes.map(() => []);
@@ -251,7 +259,29 @@ export class Hologram {
       el.classList.toggle("dim", Boolean(near) && i !== i0 && !near.has(this.nodes[i].id));
     });
     this.marker.visible = i0 >= 0;
+    this.setPulses(i0);
     if (i0 >= 0) this.marker.position.copy(this.positions[i0]);
+  }
+
+  /** Огоньки по нитям узла i0: по три на нить, с разной фазой. -1 — убрать. */
+  setPulses(i0) {
+    const nb = i0 >= 0 && !REDUCED() ? this.adj[i0].slice(0, 40) : [];
+    this.pulseFrom = i0;
+    this.pulseTo = nb.flatMap((j) => [j, j, j]);
+    this.pulses.geometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(this.pulseTo.length * 3), 3));
+    this.pulses.visible = this.pulseTo.length > 0;
+  }
+
+  tickPulses(ts) {
+    if (!this.pulses.visible) return;
+    const a = this.positions[this.pulseFrom], attr = this.pulses.geometry.attributes.position;
+    if (!a) return;
+    this.pulseTo.forEach((j, k) => {
+      const b = this.positions[j];
+      const t = ((ts / 1400) + (k % 3) / 3 + j * 0.137) % 1;
+      attr.setXYZ(k, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
+    });
+    attr.needsUpdate = true;
   }
 
   /** Раскрасить: i0 и его соседи near — ярко, остальное гаснет; near = null — всё в своих цветах. */
@@ -411,7 +441,13 @@ export class Hologram {
     this.camera.position.z += (this.target.z - this.camera.position.z) * 0.08;
     this.camera.lookAt(0, 0, 0);
     this.rings.forEach((r, i) => { r.rotation.z = ts * 0.0001 * (i % 2 ? -1 : 1); });
-    if (this.marker.visible) this.marker.scale.setScalar(7 + Math.sin(ts / 260) * 1.2);
+    if (this.marker.visible) this.marker.scale.setScalar(4.5 + Math.sin(ts / 260) * 0.8);
+    if (this.introAt) {
+      const k = Math.min(1, (performance.now() - this.introAt) / 1300);
+      this.world.scale.setScalar(0.15 + 0.85 * (1 - (1 - k) ** 3));
+      if (k >= 1) { this.introAt = 0; this.world.scale.setScalar(1); }
+    }
+    this.tickPulses(ts);
     const n = this.hovered();
     if (!this.selected && this.points) {          // наведение: соседи узла ярче, пока ничего не выбрано
       const hi = n ? this.byId.get(n.id) : -1;
