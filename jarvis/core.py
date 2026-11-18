@@ -20,6 +20,7 @@ from . import diagnostics, intents, ru
 from .briefing import Briefing
 from .config import Config
 from .apps import catalog, set_in_catalog
+from .places import Places
 from .assets import Portfolio, Quotes
 from .finance import Ledger, analytics
 from .github import GitHub, GitHubError
@@ -89,6 +90,7 @@ class Jarvis:
                                  allowed_tools=cfg.claude_code_allowed_tools)
         self.portfolio = Portfolio(self.vault, cfg.finance_dir, cfg.currency, self.projects)
         self.quotes = quotes or Quotes()
+        self.places = Places(self.vault, f"{cfg.jarvis_dir}/Places.md")
         self.voice = Voice(cfg.tts_engine, cfg.tts_voice, cfg.tts_rate, cfg.tts_pitch, cfg.data_dir / "tts",
                            cfg.piper_bin, cfg.piper_model)
         self.reminders = Reminders(self.vault, f"{cfg.jarvis_dir}/Reminders.md", ru.now(cfg.timezone).tzinfo)
@@ -329,6 +331,20 @@ class Jarvis:
             await self.log(f"Актив записан: {res['name']}")
         await self.changed("finance")
         return res
+
+    async def act_place(self, action: str, data: dict) -> dict:
+        """action: add — сохранить место (то же название — обновить), remove — убрать."""
+        if action == "remove":
+            ok = self.places.remove(str(data.get("name") or ""))
+            if not ok:
+                raise ValueError("такого места нет")
+        else:
+            p = self.places.add(str(data.get("name") or ""), data.get("lat"), data.get("lon"),
+                                str(data.get("address") or ""), str(data.get("category") or ""),
+                                str(data.get("note") or ""))
+            await self.log(f"Место сохранено: {p['name']}", journal=False)
+        await self.changed("places")
+        return {"places": self.places.list()}
 
     def act_apps(self) -> dict:
         return catalog(self.vault, self.projects)
@@ -606,6 +622,21 @@ class Jarvis:
         if it.name == "note_open":
             res = await self.act_open_note(a["query"])
             return Reply(f"Открываю «{res['title']}» в голограмме, {t}.", kind="ok", data={"open_note": res["path"]})
+        if it.name == "map":
+            await self.hub.emit("open_map", a, log_it=False)
+            if a.get("route"):
+                text = f"Строю маршрут до «{a['route']}», {t}."
+            elif a.get("query"):
+                text = f"Ищу на карте «{a['query']}»."
+            elif a.get("nearby"):
+                text = "Смотрю, что рядом."
+            elif a.get("locate"):
+                text = "Определяю, где вы."
+            elif a.get("tour"):
+                text = "Облетаем Нью-Йорк."
+            else:
+                text = f"Открываю карту, {t}."
+            return Reply(text, kind="ok", data={"open_map": a})
         if it.name == "files":
             await self.hub.emit("open_files", {}, log_it=False)
             return Reply(f"Открываю хранилище, {t}.", kind="ok", data={"open_files": True})

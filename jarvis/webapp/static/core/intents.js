@@ -58,6 +58,33 @@ const nominative = (w) => (w.slice(0, -2) + (w.toLowerCase().endsWith("юю") ? 
 
 const stripLead = (s) => s.replace(rx("^(?:о том,? что|что|про|о|об)\\s+"), "");
 
+const NEARBY_WORDS = { "кафе": "cafe", "ресторан": "cafe", "поесть": "cafe", "аптек": "pharmacy", "банкомат": "atm",
+  "банк": "atm", "метро": "metro", "станци": "metro", "заправк": "fuel", "азс": "fuel", "отел": "hotel",
+  "гостиниц": "hotel", "магазин": "shop", "продукт": "shop", "парковк": "parking" };
+
+/** Карта — как map_intent() в jarvis/intents.py. */
+export function mapIntent(low) {
+  const R = (s) => new RegExp(s, "iu");
+  if (R("^(?:открой|покажи|открыть)\\s+(?:карту|карты|навигатор|навигацию)$").test(low)) return { name: "map", args: {} };
+  if (R("^(?:покажи|облети|открой)\\s+(?:мне\\s+)?нью[- ]?йорк$").test(low)) return { name: "map", args: { tour: true } };
+  if (R("^(?:где я|где я нахожусь|мо[её] местоположение|покажи где я)$").test(low)) return { name: "map", args: { locate: true } };
+  let m = R("^(?:построй |проложи |покажи )?маршрут\\s+(?:пешком\\s+|на машине\\s+|на велосипеде\\s+)?(?:до|в|к|на)\\s+(.+)$").exec(low)
+    || R("^как\\s+(?:добраться|доехать|дойти|проехать|пройти)\\s+(?:до|в|к|на)\\s+(.+)$").exec(low)
+    || R("^(?:веди|отвези|навигация)\\s+(?:меня\\s+)?(?:до|в|к|на)\\s+(.+)$").exec(low);
+  if (m) {
+    const mode = /пешком|дойти|пройти/u.test(low) ? "foot" : low.includes("велосипед") ? "bike" : "car";
+    return { name: "map", args: { route: m[1].replace(/^[\s.?!]+|[\s.?!]+$/g, ""), mode } };
+  }
+  m = R("^(?:покажи|найди|где)\\s+(?:мне\\s+)?(?:на\\s+карте\\s+)(.+)$").exec(low) || R("^где\\s+находится\\s+(.+)$").exec(low);
+  if (m) return { name: "map", args: { query: m[1].replace(/^[\s.?!]+|[\s.?!]+$/g, "") } };
+  m = R("^(?:найди |покажи |где )?(?:ближайш[а-яё]+\\s+)?([а-яё\\w]+)\\s+(?:рядом|поблизости|неподалёку|неподалеку)$").exec(low);
+  if (m) {
+    const kind = Object.entries(NEARBY_WORDS).find(([k]) => m[1].startsWith(k));
+    if (kind) return { name: "map", args: { nearby: kind[1] } };
+  }
+  return null;
+}
+
 export function parse(text, ref, projects = [], wake = "атом") {
   const t = normalize(text, wake);
   const low = t.toLowerCase();
@@ -66,6 +93,9 @@ export function parse(text, ref, projects = [], wake = "атом") {
   if (rx("^(да,? )?(подтверждаю|подтвердить|подтверди|выполняй|выполнить|делай|давай|да|так точно|запускай|поехали)$").test(low)) return { name: "confirm", args: {} };
   if (rx("^(нет|отмена|отменить|отмени|не надо|стоп|стой|отбой)$").test(low)) return { name: "cancel", args: {} };
   if (SYNTHESIS.test(low)) return { name: "synthesis", args: {} };
+
+  const nav = mapIntent(low);
+  if (nav) return nav;
 
   let m = rx("^(?:запусти |активируй |включи )?протокол[а-яё]*\\s+[«\"']?(.+?)[»\"']?$").exec(low);
   if (m) return { name: "protocol", args: { name: m[1].trim() } };

@@ -22,10 +22,15 @@ COOKIE = "jarvis_session"
 SESSION_DAYS = 30
 PUBLIC = {"/api/login", "/api/session", "/healthz"}
 MAX_IMAGE = 8 * 2**20
+# карта (map.js): подложки OpenFreeMap / CARTO / Esri, поиск Photon и Nominatim, маршруты OSRM, «Рядом» — Overpass
+MAP_HOSTS = ("https://tiles.openfreemap.org https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com "
+             "https://server.arcgisonline.com https://photon.komoot.io https://nominatim.openstreetmap.org "
+             "https://routing.openstreetmap.de https://overpass-api.de")
 CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; "
-       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
-       "img-src 'self' data: blob:; media-src 'self' blob: data:; "
-       "connect-src 'self' ws: wss: https://cdn.jsdelivr.net https://storage.googleapis.com; "
+       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+       "font-src 'self' https://fonts.gstatic.com; "
+       f"img-src 'self' data: blob: {MAP_HOSTS}; media-src 'self' blob: data:; "
+       f"connect-src 'self' ws: wss: https://cdn.jsdelivr.net https://storage.googleapis.com {MAP_HOSTS}; "
        "worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 
 JARVIS_KEY = web.AppKey("jarvis", Jarvis)
@@ -212,6 +217,16 @@ def build_app(jarvis: Jarvis) -> web.Application:
     async def assets_add(request):
         d = await body(request)
         return ok(await j.act_asset_add(str(d.get("action") or "asset"), d))
+
+    async def places_get(_):
+        return ok({"places": j.places.list()})
+
+    async def places_set(request):
+        d = await body(request)
+        try:
+            return ok(await j.act_place(str(d.get("action") or "add"), d))
+        except (TypeError, KeyError):
+            raise ValueError("нужны name, lat и lon") from None
 
     async def apps_get(_):
         return ok(j.act_apps())
@@ -418,6 +433,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/finance/analytics", finance_analytics)
     r.add_get("/api/finance/assets", assets_get)
     r.add_post("/api/finance/assets", assets_add)
+    r.add_get("/api/places", places_get)
+    r.add_post("/api/places", places_set)
     r.add_get("/api/apps", apps_get)
     r.add_post("/api/apps", apps_set)
     r.add_get("/api/projects", projects_get)

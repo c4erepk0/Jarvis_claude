@@ -13,7 +13,7 @@
 ## Стек
 Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-tts · psutil.
 Без ORM и баз: **всё состояние — файлы в хранилище Obsidian** (+ `data/` для служебного).
-Фронтенд — ES-модули без сборки (`jarvis/webapp/`), Three.js/MediaPipe — с CDN, только для голограммы.
+Фронтенд — ES-модули без сборки (`jarvis/webapp/`); с CDN — Three.js (голограмма, ядро, 3D-графики), MediaPipe (жесты, взгляд), MapLibre GL (карта).
 
 ## Структура
 - `jarvis/__main__.py` — запуск, засев пустого хранилища из `vault-template/`.
@@ -36,6 +36,13 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   (`REGEN_FIXTURES=1 python -m pytest tests/test_assets.py`). Окно — `static/finance.js`, графики — `static/fin-charts.js`.
 - `jarvis/apps.py` — каталог приложений: проекты с `catalog: true` и заметки `type: app`; `GET/POST /api/apps`,
   JS — `core/apps.js`, панель «Приложения» в `app.js`.
+- **Карта и навигация** — `static/map.js` (окно `#mw`, кнопка 🗺, вкладка «Карта», событие `open_map`): MapLibre GL 4.7.1
+  с CDN (UMD + CSS), подложки OpenFreeMap / CARTO dark / Esri, 3D-здания (свой слой `atom-3d`, если в стиле нет
+  `building-3d`), поиск Photon (+ `localAlias` — русские названия мест Нью-Йорка), «Что здесь?» Nominatim, маршруты OSRM
+  (routing.openstreetmap.de: авто/пешком/велосипед, альтернативы, шаги), навигация с голосом и перестроением, симуляция
+  поездки, «Рядом» (Overpass), линейка, «поделиться», облёт Нью-Йорка. Без ключей; хосты — `MAP_HOSTS` в CSP `web.py`.
+  Логика без DOM — `static/geo.js` (тест — `tests/js/geo.test.mjs`). Места — `jarvis/places.py` (`Jarvis/Places.md`),
+  `GET/POST /api/places`, JS — `core/places.js`; голос — интент `map` (`map_intent` / `mapIntent`), тест — `tests/test_places.py`.
 - `jarvis/notes.py` — менеджер заметок: индекс хранилища (`/api/files`), теги, обратные ссылки, шаблоны
   (`Templates/`), перенос/переименование с правкой `[[ссылок]]`, корзина `.trash/` (как в Obsidian); то же —
   `core/notes.js`. Тест — `tests/test_files.py` и `tests/js/files.test.mjs`.

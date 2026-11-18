@@ -74,6 +74,39 @@ def _priority(text: str) -> tuple[str | None, str]:
     return None, text
 
 
+NEARBY_WORDS = {"кафе": "cafe", "ресторан": "cafe", "поесть": "cafe", "аптек": "pharmacy", "банкомат": "atm",
+                "банк": "atm", "метро": "metro", "станци": "metro", "заправк": "fuel", "азс": "fuel", "отел": "hotel",
+                "гостиниц": "hotel", "магазин": "shop", "продукт": "shop", "парковк": "parking"}
+
+
+def map_intent(low: str) -> Intent | None:
+    """Карта: «открой карту», «маршрут до Таймс-сквер», «как дойти до парка», «покажи на карте Бруклин»,
+    «где я», «аптеки рядом», «покажи Нью-Йорк». То же — mapIntent() в core/intents.js."""
+    if re.fullmatch(r"(?:открой|покажи|открыть)\s+(?:карту|карты|навигатор|навигацию)", low):
+        return Intent("map", {})
+    if re.fullmatch(r"(?:покажи|облети|открой)\s+(?:мне\s+)?нью[- ]?йорк", low):
+        return Intent("map", {"tour": True})
+    if re.fullmatch(r"(?:где я|где я нахожусь|мо[её] местоположение|покажи где я)", low):
+        return Intent("map", {"locate": True})
+    m = re.match(r"^(?:построй |проложи |покажи )?маршрут\s+(?:пешком\s+|на машине\s+|на велосипеде\s+)?"
+                 r"(?:до|в|к|на)\s+(.+)$", low) or \
+        re.match(r"^как\s+(?:добраться|доехать|дойти|проехать|пройти)\s+(?:до|в|к|на)\s+(.+)$", low) or \
+        re.match(r"^(?:веди|отвези|навигация)\s+(?:меня\s+)?(?:до|в|к|на)\s+(.+)$", low)
+    if m:
+        mode = "foot" if re.search(r"пешком|дойти|пройти", low) else "bike" if "велосипед" in low else "car"
+        return Intent("map", {"route": m.group(1).strip(" .?!"), "mode": mode})
+    m = re.match(r"^(?:покажи|найди|где)\s+(?:мне\s+)?(?:на\s+карте\s+)(.+)$", low) or \
+        re.match(r"^где\s+находится\s+(.+)$", low)
+    if m:
+        return Intent("map", {"query": m.group(1).strip(" .?!")})
+    m = re.match(r"^(?:найди |покажи |где )?(?:ближайш\w+\s+)?(\w+)\s+(?:рядом|поблизости|неподалёку|неподалеку)$", low)
+    if m:
+        kind = next((v for k, v in NEARBY_WORDS.items() if m.group(1).startswith(k)), None)
+        if kind:
+            return Intent("map", {"nearby": kind})
+    return None
+
+
 def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: str = "атом") -> Intent | None:
     projects = projects or []
     t = normalize(text, wake_word)
@@ -89,6 +122,11 @@ def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: st
         return Intent("cancel")
     if SYNTHESIS.search(low):
         return Intent("synthesis", {})
+
+    # --- карта и навигация ---
+    nav = map_intent(low)
+    if nav:
+        return nav
 
     # --- протоколы ---
     m = re.match(r"^(?:запусти |активируй |включи )?протокол[а-я]*\s+[«\"']?(.+?)[»\"']?$", low)
