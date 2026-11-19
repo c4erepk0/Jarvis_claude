@@ -246,6 +246,13 @@ def parse(text: str, ref: date, projects: list[str] | None = None, wake_word: st
         return Intent("note_open", {"query": m.group(1).strip()})
     if re.fullmatch(r"(?:открой|покажи|открыть)\s+(?:хранилище|файлы|все заметки|менеджер заметок|проводник)", low):
         return Intent("files")
+    # приложение «Глобус»: новости на глобусе и тактика по рынкам
+    if re.fullmatch(r"(?:открой|покажи|открыть)\s+(?:глобус|карту новостей|новости на глобусе|анализатор новостей)",
+                    low):
+        return Intent("news", {"open": True})
+    if re.fullmatch(r"(?:что (?:нового |происходит )?в мире|главные новости|сводка новостей|новости(?: рынков)?|"
+                    r"что с рынками|что на рынках|тактика(?: по рынкам)?|какие сигналы(?: по рынкам)?)\??", low):
+        return Intent("news", {"open": False})
     m = re.match(r"^(?:удали|удалить|выбрось|выкинь)\s+(?:заметку|файл|папку)\s+(.+)$", t, re.I)
     if m:
         return Intent("note_delete", {"query": m.group(1).strip().strip("«»\"")})

@@ -20,7 +20,7 @@ export const MARKET = ["stock", "fund", "bond", "crypto", "fx"];
 export const PROPERTY = { realty: [5, 100], car: [-12, 25], tech: [-25, 10], other: [-10, 20] };
 export const CRYPTO_IDS = { BTC: "bitcoin", ETH: "ethereum", USDT: "tether", USDC: "usd-coin", TON: "the-open-network",
   SOL: "solana", BNB: "binancecoin", XRP: "ripple", DOGE: "dogecoin", TRX: "tron", ADA: "cardano", LTC: "litecoin",
-  DOT: "polkadot", NOT: "notcoin", AVAX: "avalanche-2" };
+  DOT: "polkadot", NOT: "notcoin", AVAX: "avalanche-2", PAXG: "pax-gold", XAUT: "tether-gold" };
 const ASSET_COLS = { name: ["актив", "название", "имущество"], kind: ["вид", "тип"], qty: ["количество", "кол-во", "штук"],
   buy: ["цена покупки", "куплено", "цена", "стоимость покупки"], ticker: ["тикер", "код"], date: ["дата"],
   price: ["оценка", "цена сейчас"] };

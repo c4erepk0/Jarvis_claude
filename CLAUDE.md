@@ -47,6 +47,18 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   обновление — через `ask_confirm("update")`, авто — `Jarvis.auto_update_loop`), перезапуск — `request_restart()` →
   `os.execv` в `__main__`. API — `/api/system`, `/api/system/{settings,ssh,update,restart}` (только владелец).
   Окно — `static/system.js` (#sysw, ⚙). Тест — `tests/test_system.py`.
+- **Глобус** — анализатор новостей и тактический инвестор (приложение каталога, `server: true`): `jarvis/news.py` —
+  ленты RSS/Atom без ключей (`DEFAULT_FEEDS`: BBC, Al Jazeera, РИА, ТАСС, Интерфакс; свои — `NEWS_FEEDS`) и сейсмика
+  USGS; разбор без модели — место (`PLACES_RAW`: основы слов ru+en, «=слово» — точное, фраза важнее слова), вид
+  (`CATEGORY_WORDS`), влияние на рынки (`MARKET_RULES`: группы основ + исключения), явный прогноз (`FORECAST`);
+  экономический маркер = прогноз + рынок, такие сигналы пишутся в `Jarvis/News/Сигналы.md`. `pressure`/`tactics` —
+  давление на рынки (`MARKETS`, затухание 12 ч, окно 48 ч) и позиции владельца (`exposure` по Finance/Assets.md);
+  «не инвестиционная рекомендация». `NewsDesk` — кэш `data/news.json`; опрос — `Watchers.news_tick` (`NEWS_INTERVAL`),
+  новые маркеры — событие WS `news`, сильный прогноз по вашим активам — `alert` (`NEWS_ALERTS`). API — `GET /api/news`,
+  `POST /api/news/{refresh,brief}` (разбор — через `brain.ask`), интент `news` («что на рынках», «открой глобус»).
+  Окно — `static/globe.js` (#gw, Canvas 2D: земля из частиц, шипы-маркеры, дуги к биржам, лента/тактика/рынки),
+  геометрия без DOM — `static/globe-geo.js` (контуры суши `LAND`/`HOLES`, `spherePoints`, `project`, `arc`, `pick`).
+  Тесты — `tests/test_news.py`, `tests/js/globe.test.mjs`. В JS-ядро для iPhone не перенесено намеренно (CORS лент).
 - **Карта и навигация** — `static/map.js` (окно `#mw`, приложение «Карта» в каталоге, событие `open_map`): MapLibre GL
   4.7.1 с CDN (UMD + CSS), открывается на текущем месте (геолокация; без неё — последний вид или `WORLD`), без привязки
   к городу; подложки OpenFreeMap / CARTO dark / Esri, 3D-здания (свой слой `atom-3d`, если в стиле нет `building-3d`),

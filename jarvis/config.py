@@ -103,6 +103,11 @@ class Config:
     telegram_token: str = ""
     telegram_owner_id: int = 0
     telegram_voice_reply: bool = False
+    # --- новости: приложение «Глобус» (jarvis/news.py) ---
+    news_enabled: bool = True       # опрашивать ленты новостей и сейсмику USGS
+    news_interval: int = 10         # раз в сколько минут
+    news_feeds: str = ""            # свои RSS/Atom через запятую; пусто — встроенные (BBC, Al Jazeera, РИА, ТАСС…)
+    news_alerts: bool = True        # сильный прогноз по рынку ваших активов — оповещение (и в Telegram)
     # --- диагностика ---
     cpu_alert: int = 90
     ram_alert: int = 90
@@ -212,6 +217,10 @@ def load_config() -> Config:
         telegram_token=_str("TELEGRAM_BOT_TOKEN"),
         telegram_owner_id=_int("TELEGRAM_OWNER_ID", 0),
         telegram_voice_reply=_bool("TELEGRAM_VOICE_REPLY", False),
+        news_enabled=_bool("NEWS_ENABLED", True),
+        news_interval=max(2, _int("NEWS_INTERVAL", 10)),
+        news_feeds=_str("NEWS_FEEDS"),
+        news_alerts=_bool("NEWS_ALERTS", True),
         cpu_alert=_int("DIAG_CPU_ALERT", 90),
         ram_alert=_int("DIAG_RAM_ALERT", 90),
         disk_alert=_int("DIAG_DISK_ALERT", 90),

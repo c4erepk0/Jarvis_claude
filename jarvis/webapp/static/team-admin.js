@@ -1,9 +1,9 @@
 // Окно «Команда» — раздел владельца (корня): операторы (пригласить по ссылке, права, отключить, удалить),
 // чат с каждым, поручения (задачи и встречи с тегом #оператор/<имя>) и все встречи — отметить «выполнено/состоялась».
 // Данные — /api/admin/…, /api/meetings, /api/tasks (сервер; на iPhone без сервера операторов нет).
-import { esc } from "./markdown.js?v=23";
-import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=23";
-import { devicesList } from "./operator-app.js?v=23";
+import { esc } from "./markdown.js?v=24";
+import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=24";
+import { devicesList } from "./operator-app.js?v=24";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "без даты");
 

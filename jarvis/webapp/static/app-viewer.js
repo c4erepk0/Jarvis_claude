@@ -1,8 +1,8 @@
 // Приложение из каталога внутри Atom: окно со встроенной страницей (iframe) — «Ценники» и другие свои программы
 // открываются, не уходя с дашборда. Если сайт запрещает встраивание или нужен весь экран — «↗» открывает его
 // в новой вкладке. Работает и у владельца, и в кабинете оператора.
-import { esc } from "./markdown.js?v=23";
-import { appIcon, embeddable } from "./apps-catalog.js?v=23";
+import { esc } from "./markdown.js?v=24";
+import { appIcon, embeddable } from "./apps-catalog.js?v=24";
 
 export class AppViewer {
   constructor(root) {
