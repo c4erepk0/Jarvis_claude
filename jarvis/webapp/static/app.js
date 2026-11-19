@@ -1,19 +1,14 @@
 // A.T.O.M. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=22";
-import { Voice } from "./voice.js?v=22";
-import { countTo, stagger } from "./motion.js?v=22";
+import { Reactor } from "./reactor.js?v=23";
+import { Voice } from "./voice.js?v=23";
+import { stagger } from "./motion.js?v=23";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const CLIENT = Math.random().toString(36).slice(2, 10);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const money = (k, cur = "RUB") => {
-  const sym = { RUB: "₽", USD: "$", EUR: "€" }[cur] || cur;
-  const v = Math.abs(k) / 100;
-  return `${k < 0 ? "−" : ""}${v.toLocaleString("ru-RU", { maximumFractionDigits: v % 1 ? 2 : 0 })} ${sym}`;
-};
 const store = {
   get(k, d) { try { const v = localStorage.getItem(`jarvis.${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(`jarvis.${k}`, JSON.stringify(v)); } catch { /* приватный режим */ } },
@@ -60,7 +55,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Atom работает прямо на телефоне
-    SA = await import("./standalone.js?v=22");
+    SA = await import("./standalone.js?v=23");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -95,13 +90,13 @@ async function boot() {
 // ---------- первый запуск, приглашение, кабинет оператора ----------
 async function startOperator() {
   document.querySelector("header.top")?.classList.add("hidden");
-  const { OperatorApp } = await import("./operator-app.js?v=22");
+  const { OperatorApp } = await import("./operator-app.js?v=23");
   try { await new OperatorApp($("#opapp"), { api, toast }).start(); }
   catch (e) { toast(`Кабинет оператора: ${e.message}`, "error"); }
 }
 
 async function acceptInvite(text, password = "", password2 = null) {
-  const { inviteToken } = await import("./team.js?v=22");
+  const { inviteToken } = await import("./team.js?v=23");
   const token = inviteToken(text);
   if (!token) throw new Error("Вставьте ссылку-приглашение целиком или код из неё");
   if (password2 !== null && password !== password2) throw new Error("Пароли не совпадают");
@@ -181,7 +176,7 @@ async function showGate(mode, token = "") {
   });
   $("#gate-op").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const { inviteToken } = await import("./team.js?v=22");
+    const { inviteToken } = await import("./team.js?v=23");
     const t = inviteToken(e.target.link.value);
     if (!t) { $("#gate-op-err").textContent = "Вставьте ссылку-приглашение целиком или код из неё"; return; }
     showGate("invite", t);                         // дальше — задать пароль
@@ -479,64 +474,20 @@ $("#mem-form").addEventListener("submit", async (e) => {
 });
 $("#facts").addEventListener("click", (e) => { const li = e.target.closest(".hit"); if (li) openNote(li.dataset.path); });
 
+// финансы — приложение из каталога (окно finance.js): при новых операциях открытое окно обновляется
+let finTimer = null;
 function renderFinance() {
-  const f = S.finance, cur = f.currency;
-  const [y, m] = f.month.split("-");
-  $("#fin-month").textContent = new Date(+y, +m - 1, 1).toLocaleDateString("ru-RU", { month: "long", year: "numeric" }).toUpperCase();
-  countTo($("#fin-exp"), money(f.expense, cur));
-  countTo($("#fin-inc"), money(f.income, cur));
-  countTo($("#fin-fc"), money(f.forecast, cur));
-  const pct = f.budget_percent;
-  const g = $("#fin-gauge-val");
-  g.style.strokeDasharray = `${Math.min(100, pct || 0) * 3.1416} 400`;
-  g.classList.toggle("warn", pct >= 80 && pct < 100);
-  g.classList.toggle("bad", pct >= 100);
-  $("#fin-gauge-num").textContent = pct === null ? "—" : `${pct}%`;
-  $("#fin-cats").innerHTML = f.categories.filter((c) => c.spent || c.limit).slice(0, 7).map((c) => {
-    const p = c.limit ? Math.min(100, c.percent) : 0;
-    const cls = c.percent >= 100 ? "bad" : c.percent >= 80 ? "warn" : "";
-    return `<li><div class="cat-row"><span>${esc(c.category)}</span><span>${money(c.spent, cur)}${c.limit ? ` / ${money(c.limit, cur)}` : ""}</span></div>
-      <div class="bar"><i class="${cls}" style="width:${c.limit ? p : 100}%;${c.limit ? "" : "opacity:.25"}"></i></div></li>`;
-  }).join("");
-  $("#fin-ops").innerHTML = f.recent.map((o) => `<li><span class="d">${o.date.slice(8)}.${o.date.slice(5, 7)}</span>
-    <span>${esc(o.category)}<span class="muted"> · ${esc(o.note)}</span></span><span class="m ${o.amount > 0 ? "in" : ""}">${money(o.amount, cur)}</span></li>`).join("")
-    || `<li class="empty">Операций пока нет. Скажите «потратил 450 на кофе».</li>`;
-  loadFinanceExtras();
-}
-// аналитика для панели: частые операции в одно касание и главный вывод месяца (полное — в окне «Финансы»)
-let finExtra = null, finTimer = null;
-function loadFinanceExtras() {
+  if (!fw?.isOpen) return;
   clearTimeout(finTimer);
-  finTimer = setTimeout(async () => {
-    try { finExtra = await api("/api/finance/analytics?months=4"); } catch { return; }
-    const cur = finExtra.currency;
-    $("#fin-quick").innerHTML = finExtra.frequent.slice(0, 5).map((f, i) => `<button class="chip-btn ${f.amount > 0 ? "in" : ""}" data-i="${i}"
-      title="${esc(f.category)} · было ${f.count} раз">${esc(f.note)} <b>${money(f.amount, cur)}</b></button>`).join("");
-    const pend = finExtra.recurring.filter((r) => !r.paid);
-    const tip = finExtra.insights.find((t) => !t.startsWith("Сбережения")) || finExtra.insights[0] || "";
-    $("#fin-insight").innerHTML = tip ? `${esc(tip)}${pend.length ? ` <button class="link" data-fin="recurring">регулярные →</button>` : ""}` : "";
-    if (fw?.isOpen) fw.reload({ quotes: false }).catch(() => {});
-  }, 300);
+  finTimer = setTimeout(() => fw.reload({ quotes: false }).catch(() => {}), 300);
 }
-$("#fin-quick").addEventListener("click", async (e) => {
-  const b = e.target.closest(".chip-btn"); if (!b || !finExtra) return;
-  const f = finExtra.frequent[+b.dataset.i];
-  b.disabled = true;
-  try {
-    await api("/api/finance", { method: "POST", body: { amount: f.amount / 100, note: f.note, category: f.category } });
-    toast(`Записано: ${f.note} ${money(f.amount, finExtra.currency)}`, "ok");
-  } catch (err) { toast(err.message, "error"); } finally { b.disabled = false; }
-});
-$("#p-finance").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-fin]"); if (b) openFinance(b.dataset.fin);
-});
 
 // ---------- окно «Финансы» (finance.js) ----------
 let fw = null;
 async function openFinance(tab = null) {
   try {
     if (!fw) {
-      const { FinanceWindow } = await import("./finance.js?v=22");
+      const { FinanceWindow } = await import("./finance.js?v=23");
       fw = new FinanceWindow($("#fw"), { api, toast, store, openNote, today: () => S.now.slice(0, 10) });
     }
     await fw.show(tab);
@@ -548,20 +499,19 @@ let mw = null;
 async function openMap(args = {}) {
   try {
     if (!mw) {
-      const { MapWindow } = await import("./map.js?v=22");
+      const { MapWindow } = await import("./map.js?v=23");
       mw = new MapWindow($("#mw"), { api, toast, store, speak: (t) => { if (!voice.muted) voice.say(t); } });
     }
     await mw.show(args || {});
   } catch (err) { toast(`Карта: ${err.message}`, "error"); }
 }
-$("#btn-map").addEventListener("click", () => openMap());
 
 // ---------- команда: операторы, чат, встречи (team-admin.js) ----------
 let tw = null;
 async function openTeam(opts = {}) {
   try {
     if (!tw) {
-      const { TeamWindow } = await import("./team-admin.js?v=22");
+      const { TeamWindow } = await import("./team-admin.js?v=23");
       tw = new TeamWindow($("#ow"), { api, toast, store, today: () => S.now.slice(0, 10), standalone: Boolean(local) });
     }
     await tw.show(opts);
@@ -599,56 +549,45 @@ $("#meet-list").addEventListener("click", async (e) => {
   catch (err) { li.classList.remove("done"); toast(err.message, "error"); }
 });
 
-// ---------- каталог приложений ----------
-let apps = { apps: [], available: [] };
-async function loadApps() {
-  try { apps = await api("/api/apps"); } catch { return; }
-  renderApps();
+// ---------- каталог приложений (apps-window.js): встроенные приложения и свои программы ----------
+let aw = null, av = null;
+async function openApps() {
+  try {
+    if (!aw) {
+      const { AppsWindow } = await import("./apps-window.js?v=23");
+      aw = new AppsWindow($("#aw"), { api, toast, standalone: Boolean(local), launch: launchApp, openApp: openAppView,
+        openPage: (a) => (a.kind === "project" ? openFiles({ kind: "project", name: a.name }) : openNote(a.note)) });
+      new MutationObserver(() => markTab()).observe($("#aw"), { attributes: true, attributeFilter: ["class"] });
+    }
+    await aw.show();
+  } catch (err) { toast(err.message, "error"); }
 }
-function renderApps() {
-  $("#apps-meta").textContent = apps.apps.length ? String(apps.apps.length) : "";
-  $("#apps").innerHTML = apps.apps.length ? apps.apps.map((a, i) => `
-    <div class="app-card ${a.status}" data-i="${i}">
-      <div class="app-ic" aria-hidden="true">${esc(a.icon || a.name.slice(0, 1).toUpperCase())}</div>
-      <div class="app-main"><b>${esc(a.name)}</b><small>${esc(a.description || "без описания")}</small>
-        <div class="app-meta"><span class="pill ${a.status}">${esc(a.status_label)}</span>${a.repo ? `<span class="muted">${esc(a.repo)}</span>` : ""}</div></div>
-      <div class="app-acts">
-        ${a.url ? `<a class="btn ghost" href="${esc(a.url)}" target="_blank" rel="noopener">Открыть</a>` : ""}
-        <button class="btn ghost" data-app="page">${a.kind === "project" ? "Проект" : "Заметка"}</button>
-        ${a.kind === "project" ? `<button class="h-btn" data-app="remove" title="Убрать из каталога" aria-label="Убрать из каталога">✕</button>` : ""}
-      </div></div>`).join("")
-    : `<p class="empty">Здесь будут ваши программы. Нажмите ＋ и выберите проект — или создайте заметку с <code>type: app</code>.</p>`;
+function loadApps() { if (aw?.isOpen) aw.reload(); }
+async function openAppView(app) {
+  try {
+    if (!av) { const { AppViewer } = await import("./app-viewer.js?v=23"); av = new AppViewer($("#av")); }
+    av.open(app);
+  } catch (err) { toast(err.message, "error"); }
 }
-$("#apps").addEventListener("click", async (e) => {
-  const b = e.target.closest("[data-app]"); if (!b) return;
-  const a = apps.apps[+b.closest(".app-card").dataset.i];
-  if (b.dataset.app === "page") { if (a.kind === "project") openFiles({ kind: "project", name: a.name }); else openNote(a.note); }
-  if (b.dataset.app === "remove") {
-    try { apps = await api("/api/apps", { method: "POST", body: { name: a.name, on: false } }); renderApps(); }
-    catch (err) { toast(err.message, "error"); }
-  }
-});
-$("#apps-add").addEventListener("click", () => {
-  if (!apps.available.length) { toast("Все проекты уже в каталоге. Новый — «＋» в разделе «Проекты».", "info"); return; }
-  modal("Добавить в каталог", `<p class="muted">Проект попадёт в каталог: в его заметке появится строка <code>catalog: true</code>.</p>
-    <div class="pick-list">${apps.available.map((n) => `<button class="btn ghost" data-pick="${esc(n)}">${esc(n)}</button>`).join("")}</div>`);
-  $("#modal-body").querySelector(".pick-list").addEventListener("click", async (e) => {
-    const p = e.target.closest("[data-pick]"); if (!p) return;
-    try { apps = await api("/api/apps", { method: "POST", body: { name: p.dataset.pick, on: true } }); renderApps(); closeModal(); }
-    catch (err) { toast(err.message, "error"); }
-  });
-});
+/** Встроенное приложение из каталога. */
+function launchApp(id) {
+  ({ map: () => openMap(), finance: () => openFinance(), files: () => openFiles(), graph: () => openHolo(),
+    team: () => openTeam(), system: () => openSystem() })[id]?.();
+}
+$("#btn-apps").addEventListener("click", () => openApps());
 
-$("#fin-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const raw = $("#fin-amount").value.trim().replace("−", "-"), note = $("#fin-note").value.trim();
-  if (!raw) return;
-  const n = parseFloat(raw.replace(",", "."));
-  if (Number.isNaN(n)) { toast("Сумма должна быть числом", "warn"); return; }
-  const income = raw.startsWith("+") || (n > 0 && /зарплат|доход|получил|выплат|продаж/i.test(note));
-  send(income ? `получил ${Math.abs(n)} ${note || "доход"}` : `потратил ${Math.abs(n)} ${note || "прочее"}`);
-  $("#fin-amount").value = ""; $("#fin-note").value = "";
-});
+// ---------- приложение «Настройки и диагностика» (system.js) ----------
+let sysw = null;
+async function openSystem(tab = null) {
+  try {
+    if (!sysw) {
+      const { SystemWindow } = await import("./system.js?v=23");
+      sysw = new SystemWindow($("#sysw"), { api, toast, store, standalone: Boolean(local),
+        device: () => api("/api/diagnostics"), settings: () => openSettings(false) });
+    }
+    await sysw.show(tab);
+  } catch (err) { toast(err.message, "error"); }
+}
 
 function ciBadge(ci) {
   if (!ci) return `<span class="badge">CI —</span>`;
@@ -700,7 +639,6 @@ $("#projects").addEventListener("click", async (e) => {
 });
 $("#projects-new").addEventListener("click", async () => { (await fileManager()).newProject(); });
 $("#mem-files").addEventListener("click", () => openFiles());
-$("#btn-files").addEventListener("click", () => openFiles());
 $("#projects-refresh").addEventListener("click", () => { $("#projects").style.opacity = ".5"; loadProjects().finally(() => { $("#projects").style.opacity = ""; }); });
 
 function delegateForm(name) {
@@ -739,40 +677,10 @@ $("#confirms").addEventListener("click", async (e) => {
   showReply(r);
 });
 
+// показатели сервера — в приложении «Настройки и диагностика»; здесь — только нагрузка для дуги ядра
 function renderDiag(d) {
-  if (d && d.mode === "device") return renderDeviceDiag(d);
-  if (!d || !d.ram) return;
-  diag = d;
-  $("#diag-host").textContent = (d.host || "").toUpperCase().slice(0, 18);
-  const meter = (label, pct, value) => {
-    const cls = pct >= 90 ? "bad" : pct >= 75 ? "warn" : "";
-    return `<div><div class="meter-h">${label}<b>${value}</b></div><div class="meter"><i class="${cls}" style="width:${Math.min(100, pct)}%"></i></div></div>`;
-  };
-  $("#diag").innerHTML = [
-    meter("ПРОЦЕССОР", d.cpu, `${d.cpu}% · ${d.cores} ядер`),
-    meter("ПАМЯТЬ", d.ram.percent, `${d.ram.used_gb} / ${d.ram.total_gb} ГБ`),
-    d.disk ? meter("ДИСК", d.disk.percent, `свободно ${d.disk.free_gb} ГБ`) : "",
-    meter("СЕТЬ", Math.min(100, (d.net.rx_kbs + d.net.tx_kbs) / 50), `↓${d.net.rx_kbs} ↑${d.net.tx_kbs} КБ/с`),
-    `<div class="diag-foot"><span>АПТАЙМ ${d.uptime_h} Ч</span>${d.temp ? `<span>T ${d.temp}°</span>` : ""}${d.battery ? `<span>БАТ ${d.battery.percent}%${d.battery.plugged ? "⚡" : ""}</span>` : ""}<span>ATOM ${d.jarvis.rss_mb} МБ</span></div>`,
-  ].join("");
-  updateMetrics();
-}
-
-// Диагностика в режиме «только iPhone»: связь, синхронизация с GitHub, память, хранилище браузера.
-function renderDeviceDiag(d) {
-  diag = { cpu: Math.round((d.load || 0) * 100) };
-  $("#diag-host").textContent = "IPHONE";
-  const meter = (label, pct, value) => {
-    const cls = pct >= 90 ? "bad" : pct >= 75 ? "warn" : "";
-    return `<div><div class="meter-h">${label}<b>${value}</b></div><div class="meter"><i class="${cls}" style="width:${Math.min(100, pct)}%"></i></div></div>`;
-  };
-  const r = d.github_rate;
-  $("#diag").innerHTML = [
-    meter("СВЯЗЬ", d.online === false ? 100 : 8, d.online === false ? "нет сети" : "в сети"),
-    r ? meter("ЛИМИТ GITHUB", 100 * (1 - r.remaining / r.limit), `${r.remaining} / ${r.limit}`) : "",
-    d.storage_quota_mb ? meter("ХРАНИЛИЩЕ", 100 * d.storage_mb / d.storage_quota_mb, `${d.storage_mb} / ${d.storage_quota_mb} МБ`) : "",
-    `<div class="diag-foot"><span>ЗАМЕТОК ${d.notes}</span><span>ПАМЯТЬ: ${d.store === "github" ? "GITHUB" : "ДЕМО"}</span>${d.last_sync !== null ? `<span>СИНХР ${d.last_sync} С НАЗАД</span>` : ""}</div>`,
-  ].join("");
+  if (!d) return;
+  diag = { cpu: d.mode === "device" ? Math.round((d.load || 0) * 100) : d.cpu || 0 };
   updateMetrics();
 }
 
@@ -987,24 +895,36 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     if (!$("#modal").classList.contains("hidden")) closeModal();
+    else if (av?.isOpen) av.close();
     else if (mw?.isOpen) mw.escape();
+    else if (sysw?.isOpen) sysw.close();
     else if (tw?.isOpen) tw.close();
     else if (fw?.isOpen) fw.close();
     else if (!$("#holo").classList.contains("hidden")) { if (notes?.isOpen && notes.mode === "view") notes.close(); }
     else if (fm?.isOpen) fm.escape();
+    else if (aw?.isOpen) aw.close();
   }
 });
 
-// вкладки на телефоне
+// вкладки на телефоне: главная, задачи, проекты и приложения (карта, финансы, файлы — в каталоге приложений)
+let curTab = "core";
+function markTab() {
+  const on = aw?.isOpen ? "apps" : curTab;
+  $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === on));
+}
 function setTab(tab) {
-  const map = { core: ".col-center", missions: ".col-left", projects: ".col-right", finance: ".col-right2" };
+  const map = { core: ".col-center", missions: ".col-left", projects: ".col-right" };
+  curTab = map[tab] ? tab : "core";
   $$(".col").forEach((c) => c.classList.remove("active"));
-  $(map[tab]).classList.add("active");
-  $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  $(map[curTab]).classList.add("active");
+  markTab();
 }
 $("#tabs").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
-  if (b.dataset.tab === "files") openFiles(); else if (b.dataset.tab === "map") openMap(); else setTab(b.dataset.tab);
+  if (b.dataset.tab === "apps") { openApps(); return; }
+  if (aw?.isOpen) aw.close();
+  setTab(b.dataset.tab);
+  scrollTo({ top: 0, behavior: "smooth" });
 });
 setTab("core");
 
@@ -1020,7 +940,7 @@ tick(); setInterval(tick, 1000);
 let fm = null;
 async function fileManager() {
   if (fm) return fm;
-  const { FileManager } = await import("./files.js?v=22");
+  const { FileManager } = await import("./files.js?v=23");
   fm = new FileManager($("#fm"), {
     api, toast, store,
     projects: () => (S ? S.projects : []),
@@ -1053,7 +973,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=22");
+    const { Hologram } = await import("./hologram.js?v=23");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -1076,7 +996,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=22");
+  const { NotePanel } = await import("./note-panel.js?v=23");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -1117,7 +1037,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=22");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=23");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1168,7 +1088,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=22").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=23").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -1189,7 +1109,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=22");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=23");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1202,7 +1122,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=22");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=23");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),
@@ -1226,7 +1146,7 @@ addEventListener("orientationchange", () => {
   if (holo?.gaze?.model) toast("Экран повернули — откалибруйте взгляд заново: кнопка ◎.", "warn");   // привязки тут мало
 });
 
-$("#btn-settings").addEventListener("click", () => { if (SA) openSettings(false); });
+$("#btn-settings").addEventListener("click", () => openSystem());
 
 // PWA
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

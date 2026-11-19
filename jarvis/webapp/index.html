@@ -9,21 +9,19 @@
 <meta name="apple-mobile-web-app-title" content="ATOM">
 <title>A.T.O.M.</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="static/icon.svg?v=22" type="image/svg+xml">
-<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=22">
+<link rel="icon" href="static/icon.svg?v=23" type="image/svg+xml">
+<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=23">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="static/app.css?v=22">
+<link rel="stylesheet" href="static/app.css?v=23">
 </head>
 <body>
-<div class="bg-grid" aria-hidden="true"></div>
-
 <!-- загрузка -->
 <div id="boot" class="boot">
   <div class="boot-inner">
     <div class="boot-logo">A.T.O.M.</div>
-    <div class="boot-sub">AUTONOMOUS TACTICAL OPERATIONS MANAGER</div>
+    <div class="boot-sub">MK·II</div>
     <pre id="boot-log" class="boot-log"></pre>
   </div>
 </div>
@@ -46,7 +44,7 @@
 <div id="opapp" class="opapp hidden"></div>
 
 <header class="top">
-  <div class="brand"><span class="brand-mark">A.T.O.M.</span><span class="brand-ver">MK·I</span></div>
+  <div class="brand"><span class="brand-mark">A.T.O.M.</span><span class="brand-ver">MK·II</span></div>
   <div class="chips">
     <span class="chip" id="chip-brain" title="Мозг Claude">BRAIN</span>
     <span class="chip" id="chip-sync" title="Связь с сервером и Obsidian">SYNC</span>
@@ -55,10 +53,14 @@
   </div>
   <div class="clock"><div id="clock-time">--:--</div><div id="clock-date" class="muted">—</div></div>
   <div class="weather" id="weather"><span class="muted">—</span></div>
-  <button class="h-btn files-btn team-btn" id="btn-team" title="Команда: операторы, чат, встречи" aria-label="Команда">👥<em class="tw-badge hidden" id="team-badge"></em></button>
-  <button class="h-btn files-btn" id="btn-map" title="Карта и навигация" aria-label="Карта">🗺</button>
-  <button class="h-btn files-btn" id="btn-files" title="Хранилище: заметки и проекты" aria-label="Хранилище">▤</button>
-  <button class="h-btn settings-btn" id="btn-settings" title="Настройки" aria-label="Настройки">⚙</button>
+  <div class="top-acts">
+    <button class="top-btn team-btn" id="btn-team" title="Команда: операторы, права, чат, встречи" aria-label="Команда">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 20c0-3.3 3.1-6 7-6s7 2.7 7 6v1H2v-1Zm16 1v-1c0-1.9-.7-3.6-1.9-4.9 3 .3 5.9 2.3 5.9 4.9v1h-4Z"/></svg><em class="tw-badge hidden" id="team-badge"></em></button>
+    <button class="top-btn" id="btn-apps" title="Приложения: карта, финансы, хранилище и ваши программы" aria-label="Приложения">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/></svg></button>
+    <button class="top-btn" id="btn-settings" title="Настройки и диагностика" aria-label="Настройки и диагностика">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.3 2.5h4l.4-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4-2.1-1.6ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z" transform="translate(-1 0)"/></svg></button>
+  </div>
 </header>
 
 <main class="layout">
@@ -133,57 +135,19 @@
       <div class="panel-h">Проекты <button class="h-btn" id="projects-new" title="Новый проект">＋</button><button class="h-btn" id="projects-refresh" title="Обновить">⟳</button></div>
       <div id="projects"></div>
     </article>
-    <article class="panel" id="p-apps">
-      <div class="panel-h">Приложения <span class="h-meta" id="apps-meta"></span><button class="h-btn" id="apps-add" title="Добавить проект в каталог" aria-label="Добавить в каталог">＋</button></div>
-      <div class="apps" id="apps"></div>
-    </article>
     <article class="panel hidden" id="p-workshop">
       <div class="panel-h">Мастерская · Claude Code</div>
       <pre class="workshop" id="workshop"></pre>
     </article>
   </section>
 
-  <section class="col col-right2" data-tab="finance">
-    <article class="panel" id="p-finance">
-      <div class="panel-h">Финансы <span class="h-meta" id="fin-month"></span><button class="h-btn" data-fin="overview" title="Аналитика, активы и долги" aria-label="Открыть финансы">⤢</button></div>
-      <div class="fin-top">
-        <svg class="gauge" viewBox="0 0 120 120" id="fin-gauge">
-          <circle cx="60" cy="60" r="50" class="g-bg"/>
-          <circle cx="60" cy="60" r="50" class="g-val" id="fin-gauge-val"/>
-          <text x="60" y="58" class="g-num" id="fin-gauge-num">—</text>
-          <text x="60" y="76" class="g-lbl">БЮДЖЕТ</text>
-        </svg>
-        <dl class="fin-nums">
-          <div><dt>РАСХОД</dt><dd id="fin-exp">—</dd></div>
-          <div><dt>ДОХОД</dt><dd id="fin-inc">—</dd></div>
-          <div><dt>ПРОГНОЗ</dt><dd id="fin-fc">—</dd></div>
-        </dl>
-      </div>
-      <p class="fin-insight" id="fin-insight"></p>
-      <ul class="cats" id="fin-cats"></ul>
-      <div class="chip-row" id="fin-quick" aria-label="Частые операции"></div>
-      <form class="inline-add" id="fin-form">
-        <input id="fin-amount" inputmode="decimal" placeholder="−450" autocomplete="off" class="amt">
-        <input id="fin-note" placeholder="кофе / зарплата…" autocomplete="off">
-        <button class="btn" type="submit">+</button>
-      </form>
-      <ul class="ops" id="fin-ops"></ul>
-      <div class="fin-links"><button class="btn ghost" data-fin="overview">Аналитика</button><button class="btn ghost" data-fin="assets">Активы</button><button class="btn ghost" data-fin="debts">Долги</button></div>
-    </article>
-    <article class="panel" id="p-diag" data-tab="systems">
-      <div class="panel-h">Система <span class="h-meta" id="diag-host"></span></div>
-      <div class="bars" id="diag"></div>
-    </article>
-  </section>
 </main>
 
-<nav class="tabs" id="tabs">
-  <button data-tab="core" class="on">Главная</button>
-  <button data-tab="missions">Задачи</button>
-  <button data-tab="projects">Проекты</button>
-  <button data-tab="finance">Финансы</button>
-  <button data-tab="map">Карта</button>
-  <button data-tab="files">Файлы</button>
+<nav class="tabs" id="tabs" aria-label="Разделы">
+  <button data-tab="core" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 10.2V21h6.5v-6h5v6H21V10.2L12 3Z"/></svg><span>Главная</span></button>
+  <button data-tab="missions"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm5.5 13.4 7-7-1.4-1.4-5.6 5.6-2.6-2.6L6.5 12.4l4 4Z"/></svg><span>Задачи</span></button>
+  <button data-tab="projects"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6a2 2 0 0 1 2-2h4.6l2 2H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z"/></svg><span>Проекты</span></button>
+  <button data-tab="apps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/></svg><span>Приложения</span></button>
 </nav>
 
 <div class="toasts" id="toasts"></div>
@@ -195,6 +159,12 @@
     <div id="modal-body"></div>
   </div>
 </div>
+
+<div class="fw aw hidden" id="aw" role="dialog" aria-label="Приложения"></div>
+
+<div class="fw sysw hidden" id="sysw" role="dialog" aria-label="Настройки и диагностика"></div>
+
+<div class="av hidden" id="av" role="dialog" aria-label="Приложение"></div>
 
 <div class="fw tw hidden" id="ow" role="dialog" aria-label="Команда: операторы, чат, встречи"></div>
 
@@ -224,6 +194,6 @@
   <canvas id="holo-hands" class="holo-hands hidden"></canvas>
 </div>
 
-<script type="module" src="static/app.js?v=22"></script>
+<script type="module" src="static/app.js?v=23"></script>
 </body>
 </html>

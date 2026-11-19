@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import time
@@ -21,7 +22,7 @@ from .briefing import Briefing
 from .config import Config
 from .apps import catalog, set_in_catalog
 from .meetings import OP_TAG, for_operator, meeting_text, meetings
-from .operators import TEAM_DIR, Operators
+from .operators import BUILTIN_APPS, TEAM_DIR, Operators
 from .tasks import TaskBook as _TaskBook
 from .places import Places
 from .assets import Portfolio, Quotes
@@ -32,6 +33,8 @@ from .memory import Memory
 from .notes import Notes, note_tags
 from .projects import STATUSES, Projects
 from .reminders import Reminders
+from .settings import Settings
+from .updater import Updater, UpdateError
 from .synthesis import description as synthesis_description, synthesize
 from .tasks import TaskBook
 from .vault import Vault, VaultError, content_version
@@ -105,6 +108,11 @@ class Jarvis:
         self.notifiers: list[Notifier] = []
         self.focus_until: float | None = None
         self.git = None                 # GitSync, если хранилище живёт в GitHub-репозитории
+        self.settings = Settings(cfg.data_dir)
+        self.updater = Updater(token=cfg.github_token, branch=self.settings.data["update"].get("branch", ""))
+        self.restart_hook: Callable[[], None] | None = None   # ставит __main__: остановиться и запуститься заново
+        self.restart_requested = False
+        self.started = time.time()
         from .brain import Brain
         from .protocols import Protocols
         self.brain = Brain(self, client=llm)
@@ -177,7 +185,7 @@ class Jarvis:
         await self.hub.emit("pending", {"id": pid, "state": "confirmed"}, log_it=False)
         try:
             reply = await self._execute(item)
-        except (GitHubError, ValueError, OSError) as e:
+        except (GitHubError, UpdateError, ValueError, OSError) as e:
             await self.log(f"Не удалось выполнить «{item.title}»: {e}")
             self.brain.note(f"Действие «{item.title}» подтверждено, но не выполнено: {e}.")
             return Reply(f"Не получилось, {self.title}: {e}", kind="error")
@@ -220,11 +228,46 @@ class Jarvis:
             res = await self.act_trash_note(p["path"])
             name = self.vault.title_of(p["path"])
             return Reply(f"Заметка «{name}» — в корзине Obsidian ({res['trash']}).", kind="ok")
+        if item.kind == "update":
+            res = await self.updater.apply()
+            if not res["updated"]:
+                return Reply(f"Обновлять нечего, {self.title}: {res['reason']}.", kind="info")
+            await self.log(f"Atom обновлён: {res['from']} → {res['to']}{' (с зависимостями)' if res['deps'] else ''}")
+            self.request_restart(delay=1.5)
+            return Reply(f"Обновлено до {res['to']}. Перезапускаюсь — через несколько секунд страница переподключится.",
+                         kind="ok", data=res)
         if item.kind == "forget":
             n = self.memory.forget(p["query"])
             await self.changed("memory")
             return Reply(f"Забыл: удалено фактов — {n}." if n else "Таких фактов в памяти нет.", kind="ok")
         return Reply("Неизвестное действие.", kind="error")
+
+    # ---------- перезапуск и автообновление ----------
+    def request_restart(self, delay: float = 1.0) -> bool:
+        """Перезапустить Atom (новые настройки, обновление). Без __main__ (тесты) — только флаг."""
+        self.restart_requested = True
+        if not self.restart_hook:
+            return False
+        asyncio.get_running_loop().call_later(delay, self.restart_hook)
+        return True
+
+    async def auto_update_loop(self) -> None:
+        """Автообновление (включает владелец): раз в N часов — проверить ветку и обновиться, если есть новое."""
+        await asyncio.sleep(120)                                 # дать спокойно запуститься
+        while True:
+            u = self.settings.data["update"]
+            if u.get("auto") and self.updater.available:
+                try:
+                    res = await self.updater.apply()
+                    if res["updated"]:
+                        await self.alert(f"Atom обновился сам: {res['from']} → {res['to']}. Перезапускаюсь.", "info",
+                                         speak=False)
+                        self.request_restart(delay=2)
+                        return
+                except UpdateError as e:
+                    log.warning("автообновление: %s", e)
+                    await self.log(f"Автообновление не удалось: {e}", journal=False)
+            await asyncio.sleep(max(1, int(u.get("hours") or 6)) * 3600)
 
     def _project(self, name: str):
         project = self.projects.get(name)
@@ -379,9 +422,71 @@ class Jarvis:
         return _TaskBook(self.vault, f"{folder}/Задачи.md", only=f"{folder}/")
 
     def op_shared(self, op: dict) -> list:
-        """Общие с оператором проекты (их выбирает владелец)."""
+        """Общие с оператором проекты (их выбирает владелец) и проекты приложений, которыми он управляет."""
         names = {n.lower() for n in op.get("projects", [])}
-        return [p for p in self.projects.list() if p.name.lower() in names]
+        managed = {a["id"] for a in op.get("apps", []) if a.get("level") == "manage"}
+        return [p for p in self.projects.list() if p.name.lower() in names or p.note in managed]
+
+    # ---------- приложения и доверенные заметки оператора ----------
+    def op_apps(self, op: dict) -> list[dict]:
+        """Приложения, к которым владелец дал доступ: из каталога и встроенные (карта)."""
+        levels = {a["id"]: a["level"] for a in op.get("apps", [])}
+        if not levels:
+            return []
+        out = [{"id": k, "name": BUILTIN_APPS[k], "kind": "builtin", "level": levels[k], "icon": "🗺",
+                "description": "Поиск мест, маршруты и навигация", "url": "", "repo": "", "note": ""}
+               for k in BUILTIN_APPS if k in levels]
+        for a in catalog(self.vault, self.projects)["apps"]:
+            if a["note"] in levels:
+                out.append({"id": a["note"], "name": a["name"], "kind": a["kind"], "level": levels[a["note"]],
+                            "icon": a["icon"], "description": a["description"], "url": a["url"], "repo": a["repo"],
+                            "note": a["note"], "status_label": a["status_label"]})
+        return out
+
+    def op_trusted(self, op: dict, rel: str) -> bool | None:
+        """Доверенная заметка? None — нет доступа, False — только чтение, True — можно править."""
+        best = None
+        for n in op.get("notes", []):
+            p = n["path"]
+            if rel == p or rel.startswith(p + "/"):
+                best = bool(best) or n["edit"]
+        if any(a["level"] == "manage" and a["id"] == rel for a in op.get("apps", [])):
+            best = True                                       # управляет приложением — правит его заметку
+        return best
+
+    def op_access(self, op: dict, path: str, write: bool = False) -> str:
+        """Путь заметки, если оператору можно её читать (write — и править): своя папка или доверенная."""
+        folder = self.operators.folder(op)
+        bare = "/" not in path and not self.vault.exists(path)          # «Звонки.md» — из своей папки
+        rel = self.vault.rel(self.vault.resolve(f"{folder}/{path}" if bare else path))
+        if not rel.endswith(".md"):
+            raise PermissionError("открыть можно только заметку .md")
+        if rel.startswith(folder + "/"):
+            return rel
+        access = self.op_trusted(op, rel)
+        if access is None:
+            raise PermissionError("эта заметка вам не открыта")
+        if write and not access:
+            raise PermissionError("эту заметку можно только читать")
+        return rel
+
+    def op_shared_notes(self, op: dict) -> list[dict]:
+        """Доверенные заметки по одной (папка раскрывается в заметки внутри)."""
+        out: dict[str, dict] = {}
+        for n in op.get("notes", []):
+            try:
+                target = self.vault.resolve(n["path"])
+            except VaultError:
+                continue
+            files = self.vault.list_files(n["path"]) if target.is_dir() else [n["path"]] if target.is_file() else []
+            for rel in files:
+                if not rel.endswith(".md"):
+                    continue
+                edit = bool(self.op_trusted(op, rel))
+                st = self.vault.resolve(rel).stat()
+                out[rel] = {"path": rel, "title": self.vault.title_of(rel), "edit": edit, "mtime": int(st.st_mtime),
+                            "folder": rel.rsplit("/", 1)[0] if "/" in rel else "", "from": n["path"]}
+        return sorted(out.values(), key=lambda x: (x["folder"], x["title"].lower()))
 
     def _project_tasks(self, project) -> list:
         folder = self.projects.folder_of(project)
@@ -424,13 +529,23 @@ class Jarvis:
         book = self.op_book(op) if task_id.startswith(folder) else self.tasks
         return book.set_status(task_id, status, self.today())
 
-    async def op_add_task(self, op: dict, text: str, due: str | None = None) -> dict:
+    async def op_add_task(self, op: dict, text: str, due: str | None = None, project: str | None = None) -> dict:
         d = None
         if due:
             try:
                 d = date.fromisoformat(due)
             except ValueError:
                 raise ValueError("дата — в виде ГГГГ-ММ-ДД") from None
+        if project:                                       # задача в общий проект — с правом tasks_assign
+            if "tasks_assign" not in op.get("perms", []):
+                raise PermissionError("ставить задачи в проекты вам не разрешено")
+            proj = next((p for p in self.op_shared(op) if p.name.lower() == project.strip().lower()), None)
+            if not proj:
+                raise PermissionError("этот проект вам не открыт")
+            task = self.tasks.add(text, self.today(), due=d, tags=[proj.tag])
+            await self.log(f"{op['name']}: задача в проект {proj.name} — {task.text}")
+            await self.changed("tasks")
+            return task.as_dict()
         book = self.op_book(op)
         if not self.vault.exists(book.inbox):
             self.vault.write(book.inbox, f"# Задачи — {op['name']}\n\n"
@@ -780,8 +895,6 @@ class Jarvis:
                 text = "Смотрю, что рядом."
             elif a.get("locate"):
                 text = "Определяю, где вы."
-            elif a.get("tour"):
-                text = "Облетаем Нью-Йорк."
             else:
                 text = f"Открываю карту, {t}."
             return Reply(text, kind="ok", data={"open_map": a})
@@ -964,6 +1077,45 @@ class Jarvis:
 
     def diagnostics(self) -> dict:
         return diagnostics.snapshot(str(self.vault.root))
+
+    async def act_system(self) -> dict:
+        """Приложение «Настройки и диагностика»: показатели сервера, состояние служб, версия, настройки."""
+        try:
+            version = await self.updater.status()
+        except UpdateError as e:
+            version = {"git": False, "reason": str(e)}
+        services = [
+            {"id": "brain", "label": "Мозг", "ok": self.brain.available,
+             "text": f"{self.brain.title or 'Claude'} · {self.brain.model}" if self.brain.available
+             else "не подключён — работают только команды"},
+            {"id": "voice", "label": "Голос", "ok": True, "text": f"{self.cfg.tts_engine} · {self.cfg.tts_voice}"},
+            {"id": "telegram", "label": "Telegram", "ok": self.cfg.telegram_enabled,
+             "text": "бот на связи" if self.cfg.telegram_enabled else "не настроен — токен бота и ваш ID"},
+            {"id": "sync", "label": "Хранилище", "ok": not (self.git and self.git.last_error),
+             "text": (f"GitHub · {self.git.remote.split('github.com/')[-1].removesuffix('.git')}"
+                      + (f" · ошибка: {self.git.last_error}" if self.git.last_error else "")) if self.git
+             else f"папка {self.vault.root}"},
+            {"id": "github", "label": "GitHub", "ok": bool(self.cfg.github_token),
+             "text": "токен задан" if self.cfg.github_token else "нет токена — проекты без статуса GitHub"},
+        ]
+        return {"diag": self.diagnostics(), "services": services, "version": version,
+                "settings": self.settings.public(), "atom_uptime_min": round((time.time() - self.started) / 60),
+                "can_restart": self.restart_hook is not None}
+
+    async def act_ssh_check(self, sid: str) -> dict:
+        """Проверить, отвечает ли SSH-сервер (без входа: соединение и приветствие сервера)."""
+        s = self.settings.ssh_get(sid)
+        t0 = time.monotonic()
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection(s["host"], int(s["port"])), 6)
+            try:
+                banner = (await asyncio.wait_for(reader.readline(), 4)).decode("latin-1", "replace").strip()
+            finally:
+                writer.close()
+        except (OSError, asyncio.TimeoutError) as e:
+            return {"ok": False, "error": str(e) or "нет ответа", "id": sid}
+        return {"ok": banner.startswith("SSH-"), "banner": banner[:120], "ms": round((time.monotonic() - t0) * 1000),
+                "id": sid, **({} if banner.startswith("SSH-") else {"error": "порт открыт, но это не SSH"})}
 
 
 CI_WORDS = {"success": "сборка зелёная", "failure": "сборка упала", "cancelled": "сборка отменена",

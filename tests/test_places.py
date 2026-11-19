@@ -46,7 +46,6 @@ def test_places_table(tmp_path):
     ("где я", {"locate": True}),
     ("аптеки рядом", {"nearby": "pharmacy"}),
     ("ближайшее метро рядом", {"nearby": "metro"}),
-    ("покажи нью-йорк", {"tour": True}),
 ])
 def test_map_intents(text, args):
     it = parse(text, date(2026, 11, 18))

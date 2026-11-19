@@ -1,12 +1,14 @@
 // Кабинет оператора: поручения владельца и свой список задач, встречи, общие проекты (только те, что владелец
-// открыл), личные заметки (папка Команда/<Имя>/), чат с владельцем, свои устройства (выйти на любом) и пароль.
+// открыл), приложения из каталога (к которым дан доступ), личные заметки (папка Команда/<Имя>/) и доверенные
+// заметки владельца (читать или править), чат с владельцем, свои устройства (выйти на любом) и пароль.
 // Сервер пускает оператора только в /api/op/… и /api/sessions (web.py), события WebSocket приходят только его.
-import { esc, renderMarkdown } from "./markdown.js?v=22";
-import { chatDays, seen } from "./team.js?v=22";
+import { esc, renderMarkdown } from "./markdown.js?v=23";
+import { chatDays, seen } from "./team.js?v=23";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "");
 const STATUS = { idea: "идея", active: "в работе", paused: "на паузе", done: "завершён" };
-const TABS = [["tasks", "Задачи"], ["meet", "Встречи"], ["proj", "Проекты"], ["notes", "Заметки"], ["chat", "Чат"], ["me", "Устройства"]];
+const TABS = [["tasks", "Задачи"], ["meet", "Встречи"], ["proj", "Проекты"], ["apps", "Приложения"], ["notes", "Заметки"], ["chat", "Чат"], ["me", "Устройства"]];
+const LEVEL = { use: "открывать", manage: "управлять" };
 
 export class OperatorApp {
   constructor(root, { api, toast }) {
@@ -92,7 +94,44 @@ export class OperatorApp {
     return `<div class="op-grid2">${r.projects.map((p) => `<section class="panel"><div class="panel-h">${esc(p.name)} <span class="pill ${esc(p.status)}">${esc(STATUS[p.status] || p.status)}</span></div>
       ${p.description ? `<p class="muted">${esc(p.description)}</p>` : ""}
       <div class="fm-progress"><i style="width:${p.progress.percent}%"></i><span>${p.progress.percent}% · выполнено ${p.progress.done} из ${p.progress.total}</span></div>
-      <ul class="tasks">${p.tasks.map((t) => this.task(t)).join("") || `<li class="empty">Открытых задач нет.</li>`}</ul></section>`).join("")}</div>`;
+      <ul class="tasks">${p.tasks.map((t) => this.task(t)).join("") || `<li class="empty">Открытых задач нет.</li>`}</ul>
+      ${r.can_add ? `<form class="inline-add" data-form="task" data-project="${esc(p.name)}"><input name="text" required placeholder="Задача в проект…" autocomplete="off">
+        <input name="due" type="date" aria-label="Срок"><button class="btn" aria-label="Добавить">＋</button></form>` : ""}</section>`).join("")}</div>`;
+  }
+
+  // ---------- приложения, к которым владелец дал доступ ----------
+  async tab_apps() {
+    const r = await this.api("/api/op/apps");
+    this.apps = r.apps;
+    if (!r.apps.length) return `<section class="panel op-narrow"><p class="empty">Приложений пока нет — владелец откроет их вам в «Команде → Доступ».</p></section>`;
+    return `<div class="op-apps">${r.apps.map((a, i) => `<article class="app-tile" data-app-i="${i}">
+      <div class="app-ic big" aria-hidden="true">${esc(a.icon || a.name.slice(0, 1).toUpperCase())}</div>
+      <b>${esc(a.name)}</b><small>${esc(a.description || "")}</small>
+      <div class="app-meta"><span class="pill">${esc(LEVEL[a.level] || a.level)}</span></div>
+      <div class="app-acts">
+        ${a.kind === "builtin" || a.url ? `<button class="btn primary" data-app-open="${i}">Открыть</button>` : ""}
+        ${a.url ? `<a class="btn ghost" href="${esc(a.url)}" target="_blank" rel="noopener" title="В новой вкладке">↗</a>` : ""}
+        ${a.note && a.level === "manage" ? `<button class="btn ghost" data-app-note="${esc(a.note)}">✎ Заметка</button>` : ""}
+      </div></article>`).join("")}</div>`;
+  }
+
+  async openApp(a) {
+    if (a.kind === "builtin" && a.id === "builtin:map") {
+      if (!this.map) {
+        const { MapWindow } = await import("./map.js?v=23");
+        const store = { get: (k, d) => { try { const v = localStorage.getItem(`atom.op.${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
+          set: (k, v) => { try { localStorage.setItem(`atom.op.${k}`, JSON.stringify(v)); } catch { /* приватный режим */ } } };
+        this.map = new MapWindow(document.getElementById("mw"), { api: this.api, toast: this.toast, store, places: false,
+          speak: (t) => { try { speechSynthesis.speak(Object.assign(new SpeechSynthesisUtterance(t), { lang: "ru-RU" })); } catch { /* нет голоса */ } } });
+      }
+      await this.map.show({});
+      return;
+    }
+    if (!this.viewer) {
+      const { AppViewer } = await import("./app-viewer.js?v=23");
+      this.viewer = new AppViewer(document.getElementById("av"));
+    }
+    this.viewer.open(a);
   }
 
   // ---------- личные заметки ----------
@@ -101,7 +140,10 @@ export class OperatorApp {
     const list = `<aside class="op-notes-list">
       <form class="inline-add" data-form="note-new"><input name="title" required placeholder="Новая заметка…" autocomplete="off" maxlength="80"><button class="btn" aria-label="Создать">＋</button></form>
       <ul>${r.notes.map((n) => `<li class="${this.note?.path === n.path ? "on" : ""}" data-note="${esc(n.path)}"><b>${n.tasks ? "☑ " : ""}${esc(n.title)}</b>
-        <small>${esc(n.snippet || "пусто")}</small></li>`).join("") || `<li class="empty">Заметок пока нет. Они видны только вам и владельцу (папка <code>${esc(r.folder)}</code>).</li>`}</ul></aside>`;
+        <small>${esc(n.snippet || "пусто")}</small></li>`).join("") || `<li class="empty">Заметок пока нет. Они видны только вам и владельцу (папка <code>${esc(r.folder)}</code>).</li>`}</ul>
+      ${(r.shared || []).length ? `<div class="fm-group">Доверенные владельцем</div>
+      <ul>${r.shared.map((n) => `<li class="${this.note?.path === n.path ? "on" : ""}" data-note="${esc(n.path)}"><b>${n.edit ? "✎ " : "👁 "}${esc(n.title)}</b>
+        <small>${esc(n.folder || "корень хранилища")} · ${n.edit ? "можно править" : "только чтение"}</small></li>`).join("")}</ul>` : ""}</aside>`;
     let view = `<div class="op-note-empty muted">Выберите заметку слева или создайте новую.</div>`;
     if (this.note) {
       const n = this.note;
@@ -109,8 +151,9 @@ export class OperatorApp {
         ? `<form class="op-note" data-form="note-save"><div class="op-note-h"><b>${esc(n.title)}</b>
             <button type="button" class="btn ghost" data-act="note-cancel">Отмена</button><button class="btn primary">Сохранить</button></div>
             <textarea name="content" class="np-editor">${esc(n.content)}</textarea></form>`
-        : `<div class="op-note"><div class="op-note-h"><b>${esc(n.title)}</b>
-            <button class="btn ghost" data-act="note-edit">✎ Править</button><button class="btn ghost danger" data-act="note-trash" title="В корзину">🗑</button></div>
+        : `<div class="op-note"><div class="op-note-h"><b>${esc(n.title)}</b>${n.own === false ? ` <small class="muted">${esc(n.path)}</small>` : ""}
+            ${n.editable !== false ? `<button class="btn ghost" data-act="note-edit">✎ Править</button>` : `<span class="pill">только чтение</span>`}
+            ${n.own !== false ? `<button class="btn ghost danger" data-act="note-trash" title="В корзину">🗑</button>` : ""}</div>
             <div class="md op-note-body">${renderMarkdown(n.content).html}</div></div>`;
     }
     return `<div class="op-notes">${list}<section class="panel">${view}</section></div>`;
@@ -176,6 +219,10 @@ export class OperatorApp {
     }
     const note = t.closest("[data-note]");
     if (note) { this.openNote(note.dataset.note).catch((err) => this.toast(err.message, "error")); return; }
+    const appOpen = t.closest("[data-app-open]");
+    if (appOpen) { this.openApp(this.apps[+appOpen.dataset.appOpen]).catch((err) => this.toast(err.message, "error")); return; }
+    const appNote = t.closest("[data-app-note]");
+    if (appNote) { this.tab = "notes"; this.openNote(appNote.dataset.appNote, true).catch((err) => this.toast(err.message, "error")); return; }
     const rev = t.closest("[data-revoke]");
     if (rev) { await this.call(() => this.api("/api/sessions", { method: "POST", body: { action: "revoke", sid: rev.dataset.revoke } }), "Устройство отключено"); return; }
     const b = t.closest("[data-act]");
@@ -203,7 +250,7 @@ export class OperatorApp {
     const v = Object.fromEntries(new FormData(f));
     try {
       if (f.dataset.form === "chat") await this.api("/api/op/chat", { method: "POST", body: { text: v.text } });
-      else if (f.dataset.form === "task") await this.api("/api/op/tasks", { method: "POST", body: { text: v.text, due: v.due || null } });
+      else if (f.dataset.form === "task") await this.api("/api/op/tasks", { method: "POST", body: { text: v.text, due: v.due || null, project: f.dataset.project || null } });
       else if (f.dataset.form === "note-new") {
         const r = await this.api("/api/op/note", { method: "POST", body: { title: v.title } });
         await this.openNote(r.path, true);

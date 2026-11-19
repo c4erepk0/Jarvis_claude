@@ -1,13 +1,14 @@
 // Карта и навигация Atom (MapLibre GL с CDN, без ключей). Возможности как у привычных карт:
-//  поиск мест с подсказками (Photon; русские названия мест Нью-Йорка — localAlias), «Что здесь?» (Nominatim),
+//  открывается там, где вы (геолокация; без неё — где закрыли карту в прошлый раз, или весь мир),
+//  поиск мест с подсказками рядом с вами (Photon), «Что здесь?» (Nominatim),
 //  маршруты на машине, пешком и на велосипеде с альтернативами и списком манёвров (OSRM, routing.openstreetmap.de),
-//  пошаговая навигация с голосом, ведением камеры и перестроением при сходе с маршрута (и «симуляция» — проехать
-//  маршрут без GPS), «Рядом» — кафе, аптеки, метро… (Overpass), сохранённые места (Jarvis/Places.md через /api/places),
-//  слои «Карта / Тёмная / Спутник», 3D-здания и наклон, линейка, «поделиться», облёт Нью-Йорка.
+//  пошаговая навигация по GPS с голосом, ведением камеры и перестроением при сходе с маршрута,
+//  «Рядом» — кафе, аптеки, метро… (Overpass), сохранённые места (Jarvis/Places.md через /api/places),
+//  слои «Карта / Тёмная / Спутник», 3D-здания и наклон, линейка, «поделиться».
 // Логика без DOM — geo.js (тест — tests/js/geo.test.mjs).
-import { NEARBY, NYC, NYC_TOUR, PROFILES, arrival, bearing, coordsText, distance, formatDistance, formatDuration,
-  lineLength, localAlias, overpassQuery, parseCoords, parseNominatim, parseOverpass, parsePhoton, parseRoute, progress,
-  routeUrl, shareLink, spoken } from "./geo.js?v=22";
+import { HERE_VIEW, NEARBY, PROFILES, WORLD, arrival, bearing, coordsText, distance, formatDistance, formatDuration,
+  lineLength, overpassQuery, parseCoords, parseNominatim, parseOverpass, parsePhoton, parseRoute, progress,
+  routeUrl, shareLink, spoken } from "./geo.js?v=23";
 
 const ML_VER = "4.7.1";
 const ML_JS = `https://cdn.jsdelivr.net/npm/maplibre-gl@${ML_VER}/dist/maplibre-gl.js`;
@@ -48,9 +49,10 @@ function loadMapLibre() {
 }
 
 export class MapWindow {
-  /** root — пустой #mw; api, toast, store — как в app.js; speak(text) — голос Atom (подсказки навигации). */
-  constructor(root, { api, toast, store, speak, fetchImpl = (...a) => fetch(...a) }) {
-    Object.assign(this, { root, api, toast, store, speak, fetch: fetchImpl });
+  /** root — пустой #mw; api, toast, store — как в app.js; speak(text) — голос Atom (подсказки навигации);
+   *  places: false — без сохранённых мест (кабинет оператора: места владельца ему не видны). */
+  constructor(root, { api, toast, store, speak, places = true, fetchImpl = (...a) => fetch(...a) }) {
+    Object.assign(this, { root, api, toast, store, speak, fetch: fetchImpl, withPlaces: places });
     this.styleKey = store.get("map.style", "map");
     this.is3d = store.get("map.3d", true);
     this.profile = store.get("map.profile", "car");
@@ -64,7 +66,7 @@ export class MapWindow {
       <div class="mw-top">
         <form class="mw-search" data-el="search-form" autocomplete="off">
           <span class="mw-ic">⌕</span>
-          <input data-el="q" type="search" placeholder="Поиск мест и адресов · «кафе», «Таймс-сквер», «40.75, -73.98»" enterkeyhint="search" aria-label="Поиск на карте">
+          <input data-el="q" type="search" placeholder="Поиск мест и адресов · «кафе», «Тверская 7», «55.75, 37.62»" enterkeyhint="search" aria-label="Поиск на карте">
           <button type="button" class="mw-x hidden" data-act="clear" aria-label="Очистить">✕</button>
           <ul class="mw-suggest hidden" data-el="suggest" role="listbox"></ul>
         </form>
@@ -78,8 +80,7 @@ export class MapWindow {
         <button class="mw-tool" data-act="compass" title="На север" aria-label="Компас"><span data-el="needle">➤</span></button>
         <button class="mw-tool" data-act="locate" title="Где я" aria-label="Моё местоположение">◎</button>
         <button class="mw-tool" data-act="measure" title="Линейка: нажимайте на карту — посчитаю расстояние" aria-label="Линейка">📏</button>
-        <button class="mw-tool" data-act="saved" title="Сохранённые места" aria-label="Сохранённые места">★</button>
-        <button class="mw-tool" data-act="tour" title="Облёт Нью-Йорка" aria-label="Нью-Йорк">🗽</button>
+        ${places ? `<button class="mw-tool" data-act="saved" title="Сохранённые места" aria-label="Сохранённые места">★</button>` : ""}
       </div>
       <div class="mw-nav hidden" data-el="nav"></div>
       <div class="mw-ctx hidden" data-el="ctx"></div>
@@ -101,11 +102,13 @@ export class MapWindow {
   async show(args = {}) {
     this.root.classList.remove("hidden");
     document.body.classList.add("mw-on");
-    if (!this.map) await this.init();
+    const first = !this.map;
+    if (first) await this.init();
     else this.map.resize();
     this.loadPlaces();
-    if (args.tour) this.tour();
+    const busy = args.locate || args.nearby || args.query || args.route;
     if (args.locate) this.locate();
+    else if (first) this.locate({ quiet: true, fly: false, jump: !busy, ...HERE_VIEW });   // открылась — сразу «где я»
     if (args.nearby) this.nearby(args.nearby);
     if (args.query) { this.el("q").value = args.query; this.search(args.query, true); }
     if (args.route) {
@@ -136,10 +139,10 @@ export class MapWindow {
       throw e;
     }
     this.ml = ml;
-    const view = this.store.get("map.view", null) || NYC;
+    const view = this.store.get("map.view", null) || WORLD;
     this.map = new ml.Map({
       container: this.el("map"), style: this.styleOf(this.styleKey), center: view.center, zoom: view.zoom,
-      pitch: this.is3d ? view.pitch ?? NYC.pitch : 0, bearing: view.bearing ?? 0, maxPitch: 75, attributionControl: { compact: true },
+      pitch: this.is3d ? view.pitch ?? 0 : 0, bearing: view.bearing ?? 0, maxPitch: 75, attributionControl: { compact: true },
       cooperativeGestures: false, hash: false,
     });
     this.map.addControl(new ml.ScaleControl({ unit: "metric" }), "bottom-left");
@@ -244,7 +247,7 @@ export class MapWindow {
   async geocode(q, limit = 7) {
     const c = this.map.getCenter();
     const u = new URL(PHOTON);
-    u.searchParams.set("q", localAlias(q));
+    u.searchParams.set("q", String(q || "").trim());
     u.searchParams.set("limit", String(limit));
     u.searchParams.set("lat", c.lat.toFixed(4)); u.searchParams.set("lon", c.lng.toFixed(4));
     const r = await this.fetch(u.toString());
@@ -304,7 +307,7 @@ export class MapWindow {
       ${meta ? `<p class="mw-meta">${meta}</p>` : ""}
       <div class="mw-acts">
         <button class="btn primary" data-act="route-to">↱ Маршрут</button>
-        <button class="btn ghost ${saved ? "on" : ""}" data-act="save">${saved ? "★ Сохранено" : "☆ Сохранить"}</button>
+        ${this.withPlaces ? `<button class="btn ghost ${saved ? "on" : ""}" data-act="save">${saved ? "★ Сохранено" : "☆ Сохранить"}</button>` : ""}
         <button class="btn ghost" data-act="share">⤴ Поделиться</button>
         <button class="btn ghost" data-act="near-here">Рядом</button>
       </div>
@@ -381,7 +384,6 @@ export class MapWindow {
       <ul class="mw-alts">${list.map((x, i) => `<li class="${i === active ? "on" : ""}" data-alt="${i}"><b>${formatDuration(x.duration)}</b>
         <span>${formatDistance(x.distance)} · прибытие ${arrival(x.duration)}</span>${i === 0 ? "<em>быстрее</em>" : ""}</li>`).join("")}</ul>
       <div class="mw-acts"><button class="btn primary" data-act="nav-start">▶ Поехали</button>
-        <button class="btn ghost" data-act="nav-sim" title="Проехать маршрут без GPS — посмотреть подсказки">Симуляция</button>
         <button class="btn ghost" data-act="route-clear">Сбросить</button></div>
       <ol class="mw-steps">${r.steps.map((s, i) => `<li data-step="${i}"><span class="mw-man">${s.icon}</span><span>${esc(s.text)}</span><em>${s.distance ? formatDistance(s.distance) : ""}</em></li>`).join("")}</ol>
     </div>`);
@@ -395,44 +397,19 @@ export class MapWindow {
   }
 
   // ---------- навигация ----------
-  startNav(simulate = false) {
+  startNav() {
     const r = this.route.list[this.route.active];
     if (!r) return;
+    if (!navigator.geolocation) { this.toast("Навигации нужна геолокация — разрешите её в настройках браузера", "warn"); return; }
     this.route.list = [r]; this.route.active = 0; this.drawRoutes();
-    this.nav = { route: r, follow: true, spoken: new Set(), off: 0, simulate, started: Date.now() };
+    this.nav = { route: r, follow: true, spoken: new Set(), off: 0, started: Date.now() };
     this.closePanel();
     this.root.classList.add("navigating");
     this.el("nav").classList.remove("hidden");
     this.say(`${r.steps[0]?.text || "Поехали"}. Ехать ${formatDuration(r.duration)}.`);
-    if (simulate) this.simulate();
-    else if (navigator.geolocation) {
-      this.nav.watch = navigator.geolocation.watchPosition((p) => this.onFix([p.coords.longitude, p.coords.latitude], p.coords.heading),
-        (e) => { this.toast(`GPS: ${e.message}`, "warn"); }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 });
-    } else { this.toast("Нет геолокации — запускаю симуляцию", "warn"); this.nav.simulate = true; this.simulate(); }
+    this.nav.watch = navigator.geolocation.watchPosition((p) => this.onFix([p.coords.longitude, p.coords.latitude], p.coords.heading),
+      (e) => { this.toast(`GPS: ${e.message}`, "warn"); }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 });
     this.renderNav(progress(r, r.coords[0]));
-  }
-
-  simulate() {
-    const r = this.nav.route, speed = { car: 14, bike: 5, foot: 1.6 }[this.profile] || 10;   // м/с
-    const total = lineLength(r.coords), t0 = performance.now(), mult = 6;                   // ускорено в 6 раз
-    const step = (now) => {
-      if (!this.nav?.simulate) return;
-      const along = Math.min(total, ((now - t0) / 1000) * speed * mult);
-      let walked = 0, pos = r.coords[r.coords.length - 1], head = 0;
-      for (let i = 0; i < r.coords.length - 1; i++) {
-        const seg = distance(r.coords[i], r.coords[i + 1]);
-        if (walked + seg >= along) {
-          const k = seg ? (along - walked) / seg : 0;
-          pos = [r.coords[i][0] + (r.coords[i + 1][0] - r.coords[i][0]) * k, r.coords[i][1] + (r.coords[i + 1][1] - r.coords[i][1]) * k];
-          head = bearing(r.coords[i], r.coords[i + 1]);
-          break;
-        }
-        walked += seg;
-      }
-      this.onFix(pos, head);
-      if (this.nav && along < total) this.nav.raf = requestAnimationFrame(step);
-    };
-    this.nav.raf = requestAnimationFrame(step);
   }
 
   async onFix(pos, heading) {
@@ -441,7 +418,7 @@ export class MapWindow {
     this.showMe(pos);
     const n = this.nav, p = progress(n.route, pos);
     if (p.arrived) { this.say("Вы прибыли."); this.toast("Вы на месте ⚑", "ok"); this.stopNav(); return; }
-    if (p.offRoute && !n.simulate) {
+    if (p.offRoute) {
       if (++n.off >= 2 && !n.rerouting) {               // два замера подряд вне маршрута — перестроить
         n.rerouting = true;
         this.say("Перестраиваю маршрут");
@@ -463,7 +440,7 @@ export class MapWindow {
     if (n.follow) {
       const head = Number.isFinite(heading) && heading !== null ? heading
         : bearing(pos, n.route.coords[Math.min(n.route.coords.length - 1, (progressIndex(n.route, p.along)) + 1)]);
-      this.map.easeTo({ center: pos, bearing: head, pitch: 60, zoom: this.profile === "foot" ? 18 : 17, duration: n.simulate ? 120 : 800,
+      this.map.easeTo({ center: pos, bearing: head, pitch: 60, zoom: this.profile === "foot" ? 18 : 17, duration: 800,
         padding: { top: Math.round(innerHeight * 0.38), bottom: 0, left: 0, right: 0 } });      // «я» — ниже центра, дорога впереди видна
     }
     this.renderNav(p);
@@ -483,7 +460,6 @@ export class MapWindow {
   stopNav() {
     if (!this.nav) return;
     if (this.nav.watch !== undefined) navigator.geolocation.clearWatch(this.nav.watch);
-    cancelAnimationFrame(this.nav.raf);
     this.nav = null;
     this.root.classList.remove("navigating");
     this.el("nav").classList.add("hidden");
@@ -494,14 +470,17 @@ export class MapWindow {
   say(text) { if (!this.store.get("map.mute", false)) this.speak?.(text); }
 
   // ---------- где я ----------
-  locate({ fly = true, quiet = false } = {}) {
+  /** fly — плавно перелететь, jump — сразу (при открытии карты), zoom/pitch — каким показать место. */
+  locate({ fly = true, quiet = false, jump = false, zoom = 16.5, pitch = null } = {}) {
     return new Promise((resolve) => {
       if (!navigator.geolocation) { if (!quiet) this.toast("Геолокация недоступна", "warn"); resolve(null); return; }
       navigator.geolocation.getCurrentPosition((p) => {
         const pos = [p.coords.longitude, p.coords.latitude];
         this.here = pos;
         this.showMe(pos, p.coords.accuracy);
-        if (fly) this.map.flyTo({ center: pos, zoom: 16.5, speed: 1.6 });
+        const view = { center: pos, zoom, ...(pitch !== null && this.is3d ? { pitch } : {}) };
+        if (jump) this.map.jumpTo(view);
+        else if (fly) this.map.flyTo({ ...view, speed: 1.6 });
         resolve(pos);
       }, (e) => { if (!quiet) this.toast(`Не удалось определить место: ${e.message}`, "warn"); resolve(null); },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
@@ -548,6 +527,7 @@ export class MapWindow {
 
   // ---------- сохранённые места ----------
   async loadPlaces() {
+    if (!this.withPlaces) { this.places = []; return; }
     try { this.places = (await this.api("/api/places")).places || []; } catch { this.places = []; }
     if (!this.map) return;
     this.markers.places.forEach((m) => m.remove());
@@ -602,25 +582,6 @@ export class MapWindow {
       ...pts.map((c) => ({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: c } })),
     ] });
     if (this.measure && pts.length > 1) this.status(`Линейка: ${formatDistance(lineLength(pts))} · точек ${pts.length}. Esc — закончить.`);
-  }
-
-  // ---------- облёт Нью-Йорка ----------
-  async tour() {
-    if (this.touring) { this.touring = false; return; }
-    this.touring = true;
-    if (!this.is3d) this.toggle3d();
-    this.status("Облёт Нью-Йорка · нажмите 🗽 ещё раз, чтобы остановить");
-    for (const stop of NYC_TOUR) {
-      if (!this.touring || !this.isOpen) break;
-      this.status(`🗽 ${stop.name}`);
-      this.map.flyTo({ ...stop, duration: 5200, curve: 1.6, essential: true });
-      await new Promise((r) => setTimeout(r, 6400));
-      if (!this.touring) break;
-      this.map.easeTo({ bearing: stop.bearing + 50, duration: 3500, easing: (t) => t });
-      await new Promise((r) => setTimeout(r, 3600));
-    }
-    this.touring = false;
-    this.status("");
   }
 
   // ---------- контекстное меню (правая кнопка, долгое нажатие) ----------
@@ -705,7 +666,6 @@ export class MapWindow {
     else if (act === "locate") this.locate();
     else if (act === "measure") { if (this.measure) this.stopMeasure(); else this.startMeasure(); }
     else if (act === "saved") { await this.loadPlaces(); this.renderPlaces(); }
-    else if (act === "tour") this.tour();
     else if (act === "route-to") this.directions(this.current);
     else if (act === "save") this.savePlace(this.current);
     else if (act === "share") this.share(this.current);
@@ -714,8 +674,7 @@ export class MapWindow {
     else if (act === "swap") { [this.route.from, this.route.to] = [this.route.to, this.route.from]; this.buildRoute(); }
     else if (act === "route-clear") this.clearRoute();
     else if (act === "close-panel") this.closePanel();
-    else if (act === "nav-start") this.startNav(false);
-    else if (act === "nav-sim") this.startNav(true);
+    else if (act === "nav-start") this.startNav();
     else if (act === "nav-stop") this.stopNav();
     else if (act === "nav-follow" && this.nav) { this.nav.follow = true; }
     else if (act === "nav-mute") { this.store.set("map.mute", !this.store.get("map.mute", false)); b.textContent = this.store.get("map.mute", false) ? "🔇" : "🔊"; }

@@ -1,9 +1,9 @@
 // Окно «Команда» — раздел владельца (корня): операторы (пригласить по ссылке, права, отключить, удалить),
 // чат с каждым, поручения (задачи и встречи с тегом #оператор/<имя>) и все встречи — отметить «выполнено/состоялась».
 // Данные — /api/admin/…, /api/meetings, /api/tasks (сервер; на iPhone без сервера операторов нет).
-import { esc } from "./markdown.js?v=22";
-import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=22";
-import { devicesList } from "./operator-app.js?v=22";
+import { esc } from "./markdown.js?v=23";
+import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=23";
+import { devicesList } from "./operator-app.js?v=23";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "без даты");
 
@@ -26,6 +26,7 @@ export class TeamWindow {
     root.addEventListener("submit", (e) => this.onSubmit(e));
     root.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.target.matches("textarea")) { e.preventDefault(); e.target.form.requestSubmit(); }
+      if (e.key === "Enter" && e.target.matches('[data-el="note-add"]')) { e.preventDefault(); root.querySelector('[data-act="note-add"]')?.click(); }
     });
   }
 
@@ -87,7 +88,8 @@ export class TeamWindow {
     </aside>`;
     if (main === null) main = `<div class="tw-empty"><h3>Операторы — люди, которые помогают вести дела</h3>
       <p class="muted">Пригласите человека по ссылке: он войдёт в свой кабинет, увидит порученные задачи и встречи, отметит
-      выполненное и сможет написать вам. Финансы, память и остальное ему не видны.</p>
+      выполненное и сможет написать вам. Финансы, память и остальное ему не видны — откройте только нужное: общие проекты,
+      приложения из каталога и доверенные заметки.</p>
       ${this.data.can_invite ? `<button class="btn primary" data-act="new">＋ Пригласить первого</button>` : ""}</div>`;
     return `${lock}<div class="tw-grid">${list}<section class="tw-main">${main}</section></div>`;
   }
@@ -98,6 +100,7 @@ export class TeamWindow {
       <label>Заметка для себя<input name="note" maxlength="300" placeholder="например: ассистент, бухгалтерия" autocomplete="off"></label>
       <fieldset class="tw-perms"><legend>Права</legend>${this.permBoxes([])}</fieldset>
       <fieldset class="tw-perms"><legend>Общие проекты</legend>${this.projectBoxes([])}</fieldset>
+      <fieldset class="tw-perms"><legend>Приложения</legend>${this.appRows([])}</fieldset>
       <div class="fw-form-acts"><button class="btn primary">Создать и получить ссылку</button>
       <button type="button" class="btn ghost" data-act="cancel-new">Отмена</button></div></form>`;
   }
@@ -113,6 +116,47 @@ export class TeamWindow {
     const low = on.map((x) => x.toLowerCase());
     return list.map((p) => `<label class="tw-check"><input type="checkbox" name="project" value="${esc(p.name)}" ${low.includes(p.name.toLowerCase()) ? "checked" : ""}> ${esc(p.name)}</label>`).join("")
       + `<p class="muted small">Оператор увидит только отмеченные проекты: описание, прогресс и задачи (их можно отмечать). Остальные — скрыты.</p>`;
+  }
+
+  // доступ к приложениям каталога: нет / открывать / управлять (управлять — править заметку приложения,
+  // у приложения-проекта — видеть и отмечать его задачи)
+  appRows(on) {
+    const list = this.data.apps || [];
+    if (!list.length) return `<p class="muted small">Каталог приложений пуст.</p>`;
+    const level = Object.fromEntries((on || []).map((a) => [a.id, a.level]));
+    const levels = this.data.app_levels || { use: "Открывать", manage: "Управлять" };
+    return `<div class="tw-apps">${list.map((a) => `<label class="tw-app-row"><span class="tw-app-ic">${esc(a.icon || a.name.slice(0, 1))}</span>
+      <span class="tw-app-name">${esc(a.name)}${a.kind === "builtin" ? ` <small class="muted">встроенное</small>` : ""}</span>
+      <select name="app" data-app-id="${esc(a.id)}"><option value="">Нет доступа</option>
+        ${Object.entries(levels).filter(([k]) => a.kind !== "builtin" || k === "use").map(([k, l]) => `<option value="${k}" ${level[a.id] === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`).join("")}</div>
+      <p class="muted small">«Открывать» — приложение появится в кабинете оператора. «Управлять» — ещё и правка его заметки, а у приложения-проекта — задачи проекта.</p>`;
+  }
+
+  noteRow(n) {
+    return `<li data-note-row="${esc(n.path)}"><span class="tw-note-path">${/\.md$/i.test(n.path) ? "📄" : "📁"} ${esc(n.path)}</span>
+      <label class="tw-check"><input type="checkbox" name="note-edit" value="${esc(n.path)}" ${n.edit ? "checked" : ""}> править</label>
+      <button type="button" class="h-btn" data-act="note-del" aria-label="Убрать">✕</button></li>`;
+  }
+
+  async notesBox(on) {
+    if (!this.vaultPaths) {
+      try {
+        const idx = await this.api("/api/files");
+        this.vaultPaths = [...idx.folders, ...idx.files.filter((f) => f.ext === ".md").map((f) => f.path)].slice(0, 3000);
+      } catch { this.vaultPaths = []; }
+    }
+    return `<ul class="tw-notes" data-el="trusted">${(on || []).map((n) => this.noteRow(n)).join("")}</ul>
+      <div class="inline-add"><input data-el="note-add" list="tw-vault-paths" placeholder="Заметка или папка: Wiki/Регламент.md" autocomplete="off">
+        <button type="button" class="btn" data-act="note-add">＋</button></div>
+      <datalist id="tw-vault-paths">${this.vaultPaths.map((p) => `<option value="${esc(p)}">`).join("")}</datalist>
+      <p class="muted small">Доверенные заметки оператор видит в кабинете («Заметки → Доверенные»). Папка — все заметки в ней. Без галочки — только чтение. Не забудьте «Сохранить».</p>`;
+  }
+
+  collectAccess(f) {
+    const apps = [...f.querySelectorAll("select[name=app]")].filter((x) => x.value).map((x) => ({ id: x.dataset.appId, level: x.value }));
+    const edit = new Set([...f.querySelectorAll("input[name=note-edit]:checked")].map((x) => x.value));
+    const notes = [...f.querySelectorAll("[data-note-row]")].map((li) => ({ path: li.dataset.noteRow, edit: edit.has(li.dataset.noteRow) }));
+    return { apps, notes };
   }
 
   linkBox(token) {
@@ -194,6 +238,8 @@ export class TeamWindow {
       <label>Заметка для себя<input name="note" value="${esc(op.note)}" maxlength="300"></label>
       <fieldset class="tw-perms"><legend>Права</legend>${this.permBoxes(op.perms)}</fieldset>
       <fieldset class="tw-perms"><legend>Общие проекты</legend>${this.projectBoxes(op.projects || [])}</fieldset>
+      <fieldset class="tw-perms"><legend>Приложения</legend>${this.appRows(op.apps || [])}</fieldset>
+      <fieldset class="tw-perms"><legend>Доверенные заметки</legend>${await this.notesBox(op.notes || [])}</fieldset>
       <p class="muted small">Тег поручений: <code>#${esc(op.tag)}</code> — им можно отмечать задачи прямо в Obsidian. Личная папка: <code>${esc(op.folder || "")}</code>.</p>
       <div class="fw-form-acts"><button class="btn primary">Сохранить</button></div></form>
       <section class="tw-card"><h3>Устройства · ${devices.length}</h3>
@@ -266,6 +312,15 @@ export class TeamWindow {
     const b = t.closest("[data-act]");
     if (!b) return;
     const act = b.dataset.act, id = this.sel;
+    if (act === "note-del") { b.closest("[data-note-row]").remove(); return; }
+    if (act === "note-add") {
+      const inp = this.el("note-add"), path = inp.value.trim().replace(/^\/+|\/+$/g, "");
+      if (!path) return;
+      const box = this.el("trusted");
+      if (![...box.children].some((li) => li.dataset.noteRow === path)) box.insertAdjacentHTML("beforeend", this.noteRow({ path, edit: false }));
+      inp.value = ""; inp.focus();
+      return;
+    }
     if (act === "my-others") {
       try { await this.api("/api/sessions", { method: "POST", body: { action: "others" } }); this.toast("Вы вышли на всех других устройствах", "ok"); await this.render(); }
       catch (err) { this.toast(err.message, "error"); }
@@ -302,12 +357,12 @@ export class TeamWindow {
         await this.api("/api/admin/password", { method: "POST", body: { password: v.password } });
         this.toast("Пароль владельца задан — теперь вход только по нему", "ok");
       } else if (f.dataset.form === "new") {
-        const r = await this.api("/api/admin/operators", { method: "POST", body: { name: v.name, note: v.note, perms: fd.getAll("perm"), projects: fd.getAll("project") } });
+        const r = await this.api("/api/admin/operators", { method: "POST", body: { name: v.name, note: v.note, perms: fd.getAll("perm"), projects: fd.getAll("project"), apps: this.collectAccess(f).apps } });
         this.creating = false; this.sel = r.created.id; this.sub = "access";
         this.token = { op: r.created.id, value: r.token };
         this.toast(`Оператор «${r.created.name}» создан — отправьте ему ссылку`, "ok");
       } else if (f.dataset.form === "edit") {
-        await this.api(`/api/admin/operators/${id}`, { method: "POST", body: { action: "update", name: v.name, note: v.note, perms: fd.getAll("perm"), projects: fd.getAll("project") } });
+        await this.api(`/api/admin/operators/${id}`, { method: "POST", body: { action: "update", name: v.name, note: v.note, perms: fd.getAll("perm"), projects: fd.getAll("project"), ...this.collectAccess(f) } });
         this.toast("Сохранено", "ok");
       } else if (f.dataset.form === "chat") {
         f.querySelector("button").disabled = true;

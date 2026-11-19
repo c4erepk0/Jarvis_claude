@@ -34,13 +34,26 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `finance_analytics`, `assets_report`, инструменты Claude с теми же именами. JS — `core/finance.js` (`analytics`),
   `core/assets.js`; ответ обязан совпадать с Python: общий `tests/js/fixtures/finance.json`
   (`REGEN_FIXTURES=1 python -m pytest tests/test_assets.py`). Окно — `static/finance.js`, графики — `static/fin-charts.js`.
-- `jarvis/apps.py` — каталог приложений: проекты с `catalog: true` и заметки `type: app`; `GET/POST /api/apps`,
-  JS — `core/apps.js`, панель «Приложения» в `app.js`.
-- **Карта и навигация** — `static/map.js` (окно `#mw`, кнопка 🗺, вкладка «Карта», событие `open_map`): MapLibre GL 4.7.1
-  с CDN (UMD + CSS), подложки OpenFreeMap / CARTO dark / Esri, 3D-здания (свой слой `atom-3d`, если в стиле нет
-  `building-3d`), поиск Photon (+ `localAlias` — русские названия мест Нью-Йорка), «Что здесь?» Nominatim, маршруты OSRM
-  (routing.openstreetmap.de: авто/пешком/велосипед, альтернативы, шаги), навигация с голосом и перестроением, симуляция
-  поездки, «Рядом» (Overpass), линейка, «поделиться», облёт Нью-Йорка. Без ключей; хосты — `MAP_HOSTS` в CSP `web.py`.
+- `jarvis/apps.py` — каталог приложений: проекты с `catalog: true` и заметки `type: app` (`url`, `icon`, `repo`);
+  `GET/POST /api/apps`, JS — `core/apps.js`. **MK·II: карта, финансы, хранилище, граф, команда и настройки — встроенные
+  приложения каталога**, не панели главной: окно `static/apps-window.js` (#aw, кнопка ⊞ и вкладка «Приложения» нижней
+  навигации), список и поиск без DOM — `static/apps-catalog.js` (`BUILTIN`, `launcherItems`; тест —
+  `tests/js/apps-catalog.test.mjs`), своё https-приложение открывается внутри Atom — `static/app-viewer.js` (#av,
+  iframe; CSP `frame-src https:`). На главной — три колонки: задачи, ядро, проекты.
+- **Настройки и диагностика** — `jarvis/settings.py` (`data/settings.json`, права 600: известные ключи `KNOWN`, свои
+  токены, SSH-серверы, автообновление; `apply_saved_env()` в `__main__` до `load_config` — значения из интерфейса
+  главнее `.env`, вступают в силу после перезапуска; секреты наружу — только `mask()`), `jarvis/updater.py`
+  (`git fetch` + `merge --ff-only`, `pip install` при смене requirements.txt, отказ при локальных правках; ручное
+  обновление — через `ask_confirm("update")`, авто — `Jarvis.auto_update_loop`), перезапуск — `request_restart()` →
+  `os.execv` в `__main__`. API — `/api/system`, `/api/system/{settings,ssh,update,restart}` (только владелец).
+  Окно — `static/system.js` (#sysw, ⚙). Тест — `tests/test_system.py`.
+- **Карта и навигация** — `static/map.js` (окно `#mw`, приложение «Карта» в каталоге, событие `open_map`): MapLibre GL
+  4.7.1 с CDN (UMD + CSS), открывается на текущем месте (геолокация; без неё — последний вид или `WORLD`), без привязки
+  к городу; подложки OpenFreeMap / CARTO dark / Esri, 3D-здания (свой слой `atom-3d`, если в стиле нет `building-3d`),
+  поиск Photon (рядом с центром карты), «Что здесь?» Nominatim, маршруты OSRM (routing.openstreetmap.de:
+  авто/пешком/велосипед, альтернативы, шаги), навигация по GPS с голосом и перестроением (симуляции нет), «Рядом»
+  (Overpass), линейка, «поделиться»; `places: false` — без сохранённых мест (кабинет оператора). Без ключей; хосты —
+  `MAP_HOSTS` в CSP `web.py`.
   Логика без DOM — `static/geo.js` (тест — `tests/js/geo.test.mjs`). Места — `jarvis/places.py` (`Jarvis/Places.md`),
   `GET/POST /api/places`, JS — `core/places.js`; голос — интент `map` (`map_intent` / `mapIntent`), тест — `tests/test_places.py`.
 - **Операторы** — `jarvis/operators.py`: владелец (корень) и операторы-люди. Учётки, хэши паролей и приглашений,
@@ -52,8 +65,12 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   Первый запуск (`/api/setup`), приглашение по одноразовой ссылке `/?invite=…` — оператор задаёт пароль
   (`/api/invite/accept`), дальше входит по имени и паролю (`/api/op-login`). Оператору сервер открывает только
   `/api/op/…` (+ `/api/session`, `/api/logout`, `/api/sessions`, `/ws`), события WebSocket — только его
-  (`ws.atom_filter` в `hub.py`); права — `PERMS` (все задачи, все встречи), проекты — только общие (`projects`). Без пароля владельца приглашать нельзя. Раздел владельца —
-  `/api/admin/…`, окно «Команда» `static/team-admin.js`; кабинет оператора — `static/operator-app.js`; без DOM —
+  (`ws.atom_filter` в `hub.py`); права — `PERMS` (все задачи, все встречи, задачи в общие проекты), проекты — только
+  общие (`projects`), **приложения** — `apps` [{id: путь заметки приложения | `builtin:map`, level: use|manage}]
+  (`/api/op/apps`; manage — правка заметки приложения и задачи его проекта), **доверенные заметки** — `notes`
+  [{path: заметка или папка, edit}] (`Jarvis.op_access` / `op_trusted`, `/api/op/notes` → `shared`, правка через
+  `/api/op/note` с версией; новые и корзина — только в своей папке). Без пароля владельца приглашать нельзя. Раздел владельца —
+  `/api/admin/…`, окно «Команда» `static/team-admin.js` (вкладка «Доступ»: права, проекты, приложения, доверенные заметки); кабинет оператора — `static/operator-app.js`; без DOM —
   `static/team.js`. Только сервер (в JS-ядре для iPhone операторов нет намеренно). Тесты — `tests/test_operators.py`,
   `tests/js/team.test.mjs`.
 - **Встречи и поручения** — `jarvis/meetings.py` (+ `core/meetings.js`): обычные задачи Obsidian Tasks, встреча —

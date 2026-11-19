@@ -13,9 +13,10 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from .finance import guess_category
-from .operators import OWNER_KEY, PERMS
+from .operators import APP_LEVELS, BUILTIN_APPS, OWNER_KEY, PERMS
 from .core import Jarvis
 from .gaze import save_record as save_gaze_record
+from .updater import UpdateError
 from .vault import VaultConflict, VaultError, content_version
 
 log = logging.getLogger("jarvis.web")
@@ -36,7 +37,8 @@ CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-uns
        "font-src 'self' https://fonts.gstatic.com; "
        f"img-src 'self' data: blob: {MAP_HOSTS}; media-src 'self' blob: data:; "
        f"connect-src 'self' ws: wss: https://cdn.jsdelivr.net https://storage.googleapis.com {MAP_HOSTS}; "
-       "worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+       "worker-src 'self' blob:; frame-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+# frame-src https: — приложения из каталога («Ценники» и др.) открываются внутри Atom (app-viewer.js)
 
 JARVIS_KEY = web.AppKey("jarvis", Jarvis)
 WHO = web.RequestKey("who", dict)          # кто пришёл: владелец или оператор (ставит middleware)
@@ -380,7 +382,10 @@ def build_app(jarvis: Jarvis) -> web.Application:
         ops = jarvis.operators.list()
         for op in ops:
             op["unread"] = jarvis.operators.unread(op["id"], "owner")
-        return {"operators": ops, "perms": PERMS, "can_invite": auth.enabled,
+        apps = [{"id": k, "name": v, "icon": "🗺", "kind": "builtin"} for k, v in BUILTIN_APPS.items()]
+        apps += [{"id": a["note"], "name": a["name"], "icon": a["icon"], "kind": a["kind"]}
+                 for a in j.act_apps()["apps"]]
+        return {"operators": ops, "perms": PERMS, "can_invite": auth.enabled, "apps": apps, "app_levels": APP_LEVELS,
                 "projects": [{"name": p.name, "status": p.status} for p in j.projects.list()],
                 "owner_mode": jarvis.operators.owner_mode or ("code" if cfg.access_code else "")}
 
@@ -392,7 +397,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
         if not auth.enabled:
             raise ValueError("сначала задайте пароль владельца — без него оператор мог бы стать владельцем")
         op, token = jarvis.operators.create(str(d.get("name") or ""), d.get("perms"), str(d.get("note") or ""),
-                                            d.get("projects"))
+                                            d.get("projects"), d.get("apps"), d.get("notes"))
         await j.log(f"Приглашён оператор {op['name']}")
         return ok({**ops_overview(), "created": op, "token": token})
 
@@ -416,7 +421,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
                 return ok({**ops_overview(), "sessions": jarvis.operators.sessions(op_id)})
             else:
                 jarvis.operators.update(op_id, name=d.get("name"), perms=d.get("perms"), active=d.get("active"),
-                                        note=d.get("note"), projects=d.get("projects"))
+                                        note=d.get("note"), projects=d.get("projects"), apps=d.get("apps"),
+                                        notes=d.get("notes"))
         except KeyError as e:
             raise ValueError(str(e).strip("'")) from None
         await j.hub.emit("operators", {"id": op_id}, log_it=False)
@@ -472,7 +478,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
         op = me(request)
         if request.method == "POST":                              # личная задача — в свой список
             d = await body(request)
-            return ok(await j.op_add_task(op, str(d.get("text") or ""), d.get("due") or None))
+            return ok(await j.op_add_task(op, str(d.get("text") or ""), d.get("due") or None,
+                                          str(d.get("project") or "") or None))
         return ok(j.operator_tasks(op, request.query.get("view", "all")))
 
     async def op_task_status(request):
@@ -505,30 +512,39 @@ def build_app(jarvis: Jarvis) -> web.Application:
         return ok({"messages": msgs})
 
     async def op_projects(request):
-        return ok({"projects": j.op_projects(me(request))})       # только общие с оператором
+        op = me(request)
+        return ok({"projects": j.op_projects(op), "can_add": "tasks_assign" in op.get("perms", [])})  # только общие
+
+    async def op_apps(request):
+        return ok({"apps": j.op_apps(me(request))})
 
     async def op_notes(request):
         op = me(request)
-        return ok({"notes": j.op_notes(op), "folder": jarvis.operators.folder(op)})
+        return ok({"notes": j.op_notes(op), "folder": jarvis.operators.folder(op), "shared": j.op_shared_notes(op)})
 
     async def op_note(request):
-        """Личная заметка оператора: GET ?path, PUT {path, content, base} — правка с версией, POST {title} — новая,
-        POST {action: trash, path} — в корзину. Всё — только внутри Команда/<Имя>/."""
+        """Заметка оператора: GET ?path, PUT {path, content, base} — правка с версией, POST {title} — новая,
+        POST {action: trash, path} — в корзину. Личные — внутри Команда/<Имя>/; доверенные владельцем — читать
+        (и править, если разрешено); новые и корзина — только в своей папке."""
         op = me(request)
         if request.method == "GET":
-            rel = j.op_path(op, request.query.get("path", ""))
+            rel = j.op_access(op, request.query.get("path", ""))
             text = jarvis.vault.read(rel)
+            own = rel.startswith(jarvis.operators.folder(op) + "/")
             return ok({"path": rel, "title": jarvis.vault.title_of(rel), "content": text,
-                       "version": content_version(text)})
+                       "version": content_version(text), "own": own, "editable": own or bool(j.op_trusted(op, rel))})
         d = await body(request)
         if request.method == "PUT":
-            rel = j.op_path(op, str(d.get("path") or ""))
+            rel = j.op_access(op, str(d.get("path") or ""), write=True)
             current = jarvis.vault.read(rel) if jarvis.vault.exists(rel) else ""
             if d.get("base") and content_version(current) != d["base"]:
                 return ok({"error": "заметку изменили на другом устройстве — обновите", "content": current,
                            "version": content_version(current)}, 409)
             content = str(d.get("content") or "")
             jarvis.vault.write(rel, content if content.endswith("\n") else content + "\n")
+            if not rel.startswith(jarvis.operators.folder(op) + "/"):
+                await j.log(f"{op['name']} изменил(а) заметку «{jarvis.vault.title_of(rel)}»")
+                await j.changed("notes")
             return ok({"path": rel, "version": content_version(jarvis.vault.read(rel))})
         if d.get("action") == "trash":
             rel = j.op_path(op, str(d.get("path") or ""))
@@ -670,6 +686,71 @@ def build_app(jarvis: Jarvis) -> web.Application:
     async def diag(_):
         return ok(j.diagnostics())
 
+    # ---------- приложение «Настройки и диагностика» (только владелец) ----------
+    async def system_get(request):
+        owner_only(request)
+        return ok(await j.act_system())
+
+    async def system_settings(request):
+        owner_only(request)
+        d = await body(request)
+        action = str(d.get("action") or "known")
+        if action == "known":
+            j.settings.set_known(str(d.get("name") or ""), None if d.get("clear") else d.get("value"))
+            await j.log(f"Настройка {d.get('name')} {'сброшена' if d.get('clear') else 'изменена'}", journal=False)
+        elif action == "custom":
+            j.settings.set_custom(str(d.get("name") or ""), d.get("value"), str(d.get("note") or ""),
+                                  remove=bool(d.get("remove")))
+            await j.log(f"Свой токен {str(d.get('name') or '').upper()} {'удалён' if d.get('remove') else 'сохранён'}",
+                        journal=False)
+        else:
+            raise ValueError("неизвестное действие")
+        return ok(j.settings.public())
+
+    async def system_ssh(request):
+        owner_only(request)
+        d = await body(request)
+        action = str(d.get("action") or "save")
+        if action == "check":
+            return ok(await j.act_ssh_check(str(d.get("id") or "")))
+        if action == "remove":
+            j.settings.ssh_remove(str(d.get("id") or ""))
+        elif action == "save":
+            saved = j.settings.ssh_upsert(d)
+            await j.log(f"SSH-сервер «{saved['name']}» сохранён", journal=False)
+        else:
+            raise ValueError("неизвестное действие")
+        return ok(j.settings.public())
+
+    async def system_update(request):
+        owner_only(request)
+        d = await body(request)
+        action = str(d.get("action") or "check")
+        try:
+            if action == "check":
+                return ok(await j.updater.check())
+            if action == "auto":
+                u = j.settings.set_update(d.get("auto"), d.get("hours"), d.get("branch"))
+                j.updater.branch = u.get("branch", "")
+                await j.log(f"Автообновление {'включено' if u['auto'] else 'выключено'}", journal=False)
+                return ok({"update": u})
+        except UpdateError as e:
+            raise ValueError(str(e)) from None
+        if action == "apply":                            # обновление — только с подтверждения владельца
+            if not j.updater.available:
+                raise ValueError("Atom запущен не из клона git-репозитория — обновите вручную")
+            item = j.ask_confirm("update", "Обновить Atom с GitHub и перезапустить", {})
+            await j.hub.emit("pending", {"id": item.id, "state": "new", "item": item.as_dict()}, log_it=False)
+            return ok({"confirm": item.as_dict()})
+        raise ValueError("неизвестное действие")
+
+    async def system_restart(request):
+        owner_only(request)
+        if not j.request_restart(delay=0.8):
+            raise ValueError("перезапуск недоступен в этом режиме запуска")
+        await j.log("Перезапуск Atom по команде владельца", journal=False)
+        return ok({"restarting": True})
+
     async def weather(_):
         w, rates = await asyncio.gather(j.briefing.weather(), j.briefing.rates())
         return ok({"weather": w, "rates": rates})
@@ -786,6 +867,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_route("*", "/api/op/chat", op_chat)
     r.add_get("/api/op/projects", op_projects)
     r.add_get("/api/op/notes", op_notes)
+    r.add_get("/api/op/apps", op_apps)
     r.add_route("*", "/api/op/note", op_note)
     r.add_post("/api/op-login", op_login)
     r.add_route("*", "/api/sessions", sessions)
@@ -813,6 +895,11 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/graph", graph)
     r.add_post("/api/gaze", gaze_save)
     r.add_get("/api/diagnostics", diag)
+    r.add_get("/api/system", system_get)
+    r.add_post("/api/system/settings", system_settings)
+    r.add_post("/api/system/ssh", system_ssh)
+    r.add_post("/api/system/update", system_update)
+    r.add_post("/api/system/restart", system_restart)
     r.add_get("/api/weather", weather)
     r.add_post("/api/tts", tts)
     r.add_post("/api/voice", voice_set)
