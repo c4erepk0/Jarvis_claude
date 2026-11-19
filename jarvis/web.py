@@ -37,8 +37,10 @@ CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-uns
        "font-src 'self' https://fonts.gstatic.com; "
        f"img-src 'self' data: blob: {MAP_HOSTS}; media-src 'self' blob: data:; "
        f"connect-src 'self' ws: wss: https://cdn.jsdelivr.net https://storage.googleapis.com {MAP_HOSTS}; "
-       "worker-src 'self' blob:; frame-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-# frame-src https: — приложения из каталога («Ценники» и др.) открываются внутри Atom (app-viewer.js)
+       "worker-src 'self' blob:; frame-src 'self' https: http://localhost:* http://127.0.0.1:*; "
+       "frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+# frame-src: приложения из каталога («Ценники» и др.) открываются внутри Atom (app-viewer.js); http — только
+# localhost, для разработки своих приложений
 
 JARVIS_KEY = web.AppKey("jarvis", Jarvis)
 WHO = web.RequestKey("who", dict)          # кто пришёл: владелец или оператор (ставит middleware)
@@ -772,6 +774,31 @@ def build_app(jarvis: Jarvis) -> web.Application:
         d = await body(request)
         return ok((await j.act_news_brief(str(d.get("id") or "") or None)).as_dict())
 
+    # ---------- общие данные приложений каталога (appdata.py) ----------
+    async def appdata_common(request, op):
+        if request.method == "GET":
+            return ok(j.act_appdata_get(request.query.get("app", ""), op))
+        d = await body(request)
+        app = str(d.get("app") or "")
+        if d.get("action") == "restore":
+            if op is not None:
+                raise PermissionError("вернуть прошлую версию может только владелец")
+            j.act_appdata_get(app)
+            rec = j.appdata.restore(app, d.get("n"), "Владелец")
+            await j.hub.emit("appdata", {"app": app, "rev": rec["rev"], "by": rec["by"], "client": ""}, log_it=False)
+            return ok(rec)
+        if d.get("action") == "history":
+            j.act_appdata_get(app, op)
+            return ok({"history": j.appdata.history(app)})
+        return ok(await j.act_appdata_set(app, d.get("data"), op, str(d.get("client") or "")))
+
+    async def appdata(request):
+        owner_only(request)
+        return await appdata_common(request, None)
+
+    async def op_appdata(request):
+        return await appdata_common(request, me(request))
+
     async def weather(_):
         w, rates = await asyncio.gather(j.briefing.weather(), j.briefing.rates())
         return ok({"weather": w, "rates": rates})
@@ -832,6 +859,9 @@ def build_app(jarvis: Jarvis) -> web.Application:
                     return d.get("op") == op_id
                 if event["type"] == "refresh":
                     return d.get("what") in ("tasks", "all")
+                if event["type"] == "appdata":                 # общие данные приложений, к которым есть доступ
+                    fresh = jarvis.operators.get(op_id) or {}
+                    return any(a["id"] == d.get("app") for a in fresh.get("apps", []))
                 return event["type"] == "operators" and d.get("id") == op_id
             ws.atom_filter = allow
         j.hub.clients.add(ws)
@@ -889,6 +919,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/op/projects", op_projects)
     r.add_get("/api/op/notes", op_notes)
     r.add_get("/api/op/apps", op_apps)
+    r.add_route("*", "/api/op/appdata", op_appdata)
+    r.add_route("*", "/api/appdata", appdata)
     r.add_route("*", "/api/op/note", op_note)
     r.add_post("/api/op-login", op_login)
     r.add_route("*", "/api/sessions", sessions)

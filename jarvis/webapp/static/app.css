@@ -1549,3 +1549,18 @@ body.operator-mode .layout, body.operator-mode .tabs, body.operator-mode header.
   .gw-top .btn { padding: 9px 11px; }
 }
 @media (prefers-reduced-motion: reduce) { .gw-live i { animation: none; } }
+
+/* ---------- приложение внутри Atom: «Файл готов» и общие данные (app-viewer.js) ---------- */
+.av { position: fixed; }
+.av-sync { font-size: 12px; color: var(--green); white-space: nowrap; }
+.av-sheet { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-end; justify-content: center;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); background: rgba(0, 0, 0, .45); }
+.av-sheet-box { width: 100%; max-width: 440px; padding: 20px; border-radius: 22px; background: var(--panel-solid);
+  border: 1px solid var(--line-strong); box-shadow: 0 20px 50px -20px rgba(0, 0, 0, .9); animation: av-up .22s ease-out; }
+@keyframes av-up { from { transform: translateY(16px); opacity: 0; } }
+.av-sheet-box b { display: block; font-size: 17px; color: var(--bright); }
+.av-sheet-box p { margin: 4px 0 14px; font-size: 13.5px; overflow-wrap: anywhere; }
+.av-sheet-acts { display: grid; gap: 8px; }
+.av-sheet-acts .btn { justify-content: center; text-align: center; padding: 12px; font-size: 14px; text-decoration: none; }
+@media (max-width: 760px) { .av-sync { display: none; } }
+@media (prefers-reduced-motion: reduce) { .av-sheet-box { animation: none; } }

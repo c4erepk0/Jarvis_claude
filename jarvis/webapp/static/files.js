@@ -3,10 +3,10 @@
 // переименование и перемещение (и перетаскиванием) с правкой [[ссылок]], корзина Obsidian; страница проекта —
 // статус, прогресс, задачи, заметки проекта, журнал; синтез проектов — заметки проектов и «спрятанные» проекты
 // подсвечиваются в дереве, кандидата можно оформить проектом. Всё через те же /api/…, поэтому работает и на iPhone без сервера.
-import { esc } from "./markdown.js?v=24";
-import { NotePanel } from "./note-panel.js?v=24";
+import { esc } from "./markdown.js?v=25";
+import { NotePanel } from "./note-panel.js?v=25";
 import { SORTS, buildTree, filterFiles, markSynthesis, moveTarget, nameOf, parentOf, pushRecent, renamePaths, renameTarget, sortFiles,
-  toggleFav, vaultStats } from "./file-tree.js?v=24";
+  toggleFav, vaultStats } from "./file-tree.js?v=25";
 
 const STATUS = { idea: "Идея", active: "В работе", paused: "На паузе", done: "Завершён" };
 const KIND = { note: "type: project", tag: "тег", folder: "папка", hub: "узел ссылок" };

@@ -17,7 +17,7 @@ export const BUILTIN = [
 export function embeddable(url) {
   try {
     const u = new URL(String(url || ""));
-    return u.protocol === "https:";
+    return u.protocol === "https:" || (u.protocol === "http:" && ["localhost", "127.0.0.1"].includes(u.hostname));
   } catch { return false; }
 }
 
