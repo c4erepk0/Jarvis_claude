@@ -19,7 +19,8 @@ test("карта, финансы и хранилище — в каталоге, 
 
 test("на iPhone без сервера — без «Команды»", () => {
   const r = launcherItems({ standalone: true });
-  assert.ok(!r.builtin.some((b) => b.id === "team"));
+  assert.ok(!r.builtin.some((b) => b.id === "team" || b.id === "globe"));     // ленты новостей — только с сервера
+  assert.ok(launcherItems({}).builtin.some((b) => b.id === "globe"));
   assert.ok(r.builtin.some((b) => b.id === "system"));
 });
 

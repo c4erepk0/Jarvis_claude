@@ -751,6 +751,27 @@ def build_app(jarvis: Jarvis) -> web.Application:
         await j.log("Перезапуск Atom по команде владельца", journal=False)
         return ok({"restarting": True})
 
+    # ---------- приложение «Глобус»: новости, сигналы, тактика (только владелец) ----------
+    async def news_get(request):
+        owner_only(request)
+        try:
+            since = float(request.query.get("since") or 0)
+        except ValueError:
+            since = 0
+        if not j.news.items and j.cfg.news_enabled and not j.news.lock.locked():
+            await j.act_news_poll()                     # первый запуск — не ждать фонового опроса
+        return ok(await j.act_news(since))
+
+    async def news_refresh(request):
+        owner_only(request)
+        fresh = await j.act_news_poll()
+        return ok({"new": len(fresh), **(await j.act_news())})
+
+    async def news_brief(request):
+        owner_only(request)
+        d = await body(request)
+        return ok((await j.act_news_brief(str(d.get("id") or "") or None)).as_dict())
+
     async def weather(_):
         w, rates = await asyncio.gather(j.briefing.weather(), j.briefing.rates())
         return ok({"weather": w, "rates": rates})
@@ -895,6 +916,9 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/graph", graph)
     r.add_post("/api/gaze", gaze_save)
     r.add_get("/api/diagnostics", diag)
+    r.add_get("/api/news", news_get)
+    r.add_post("/api/news/refresh", news_refresh)
+    r.add_post("/api/news/brief", news_brief)
     r.add_get("/api/system", system_get)
     r.add_post("/api/system/settings", system_settings)
     r.add_post("/api/system/ssh", system_ssh)

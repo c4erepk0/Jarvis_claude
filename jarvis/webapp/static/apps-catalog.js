@@ -4,6 +4,7 @@
 
 /** Встроенные приложения. server — только с сервером Atom (на iPhone без сервера их нет). */
 export const BUILTIN = [
+  { id: "globe", name: "Глобус", icon: "🌐", description: "Новости мира на глобусе в прямом эфире, прогнозы по рынкам и тактика", server: true },
   { id: "map", name: "Карта", icon: "🗺", description: "Места, маршруты и навигация от того места, где вы" },
   { id: "finance", name: "Финансы", icon: "₽", description: "Доходы и расходы, аналитика, активы и долги" },
   { id: "files", name: "Хранилище", icon: "▤", description: "Заметки и проекты Obsidian: папки, теги, корзина" },

@@ -34,6 +34,9 @@ class Watchers:
             asyncio.create_task(self._loop(j.cfg.ci_check_minutes * 60, self.projects_tick, delay=20), name="ci"),
             asyncio.create_task(self._loop(30, self.briefing_tick), name="briefing"),
         ]
+        if j.cfg.news_enabled:
+            self.tasks.append(asyncio.create_task(self._loop(j.cfg.news_interval * 60, self.news_tick, delay=15),
+                                                  name="news"))
 
     async def stop(self) -> None:
         for t in self.tasks:
@@ -52,6 +55,10 @@ class Watchers:
             except Exception:  # noqa: BLE001
                 log.exception("ошибка датчика %s", getattr(fn, "__name__", fn))
             await asyncio.sleep(interval)
+
+    async def news_tick(self) -> None:
+        """Новости для «Глобуса»: новые маркеры, экономические сигналы, оповещения по вашим активам."""
+        await self.j.act_news_poll()
 
     async def on_vault_change(self, paths: list[str]) -> None:
         """Заметку изменили на телефоне/компьютере → дашборды обновляются сразу."""

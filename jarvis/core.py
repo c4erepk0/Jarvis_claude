@@ -30,6 +30,7 @@ from .finance import Ledger, analytics
 from .github import GitHub, GitHubError
 from .hub import Hub
 from .memory import Memory
+from .news import DEFAULT_FEEDS, MARKETS, SIGNALS_HEADER, NewsDesk, signal_line, tactics
 from .notes import Notes, note_tags
 from .projects import STATUSES, Projects
 from .reminders import Reminders
@@ -113,6 +114,9 @@ class Jarvis:
         self.restart_hook: Callable[[], None] | None = None   # ставит __main__: остановиться и запуститься заново
         self.restart_requested = False
         self.started = time.time()
+        feeds = [u.strip() for u in cfg.news_feeds.split(",") if u.strip().startswith(("https://", "http://"))]
+        self.news = NewsDesk(cfg.data_dir, feeds or list(DEFAULT_FEEDS))
+        self.news_alerted: set[str] = set()
         from .brain import Brain
         from .protocols import Protocols
         self.brain = Brain(self, client=llm)
@@ -141,6 +145,7 @@ class Jarvis:
         await self.projects.close()
         await self.briefing.close()
         await self.quotes.close()
+        await self.news.close()
 
     # ---------- события и оповещения ----------
     async def log(self, text: str, *, journal: bool = True) -> None:
@@ -898,6 +903,23 @@ class Jarvis:
             else:
                 text = f"Открываю карту, {t}."
             return Reply(text, kind="ok", data={"open_map": a})
+        if it.name == "news":
+            if a.get("open"):
+                await self.hub.emit("open_globe", {}, log_it=False)
+            tac = self.news_tactics()
+            econ = [i for i in self.news.list() if i["economic"]][:3]
+            strong = [m for m in tac["markets"] if abs(m["pressure"]) >= .2]
+            if not self.news.items:
+                text = ("Лента новостей пока пуста — Atom опрашивает источники раз в несколько минут. "
+                        "Откройте «Глобус» в приложениях." if self.cfg.news_enabled
+                        else "Новости выключены (NEWS_ENABLED=0).")
+            else:
+                parts = [f"Сигналы по рынкам: {', '.join(m['name'] + ' — ' + m['label'] for m in strong[:4])}."
+                         if strong else "Сильного давления на рынки сейчас нет."]
+                if econ:
+                    parts.append("Прогнозы: " + "; ".join(i["title"] for i in econ) + ".")
+                text = " ".join(parts)
+            return Reply(text, kind="ok", data={"open_globe": bool(a.get("open"))})
         if it.name == "files":
             await self.hub.emit("open_files", {}, log_it=False)
             return Reply(f"Открываю хранилище, {t}.", kind="ok", data={"open_files": True})
@@ -1077,6 +1099,89 @@ class Jarvis:
 
     def diagnostics(self) -> dict:
         return diagnostics.snapshot(str(self.vault.root))
+
+    # ---------- новости: приложение «Глобус» (jarvis/news.py) ----------
+    def news_tactics(self) -> dict:
+        try:
+            assets, _ = self.portfolio.read()
+        except (OSError, VaultError, ValueError):
+            assets = []
+        return tactics(self.news.list(), assets, time.time())
+
+    async def news_quotes(self) -> dict:
+        """Котировки-ориентиры рынков (без ключей): Лукойл, Газпром, Сбер, USD/RUB, BTC, PAXG."""
+        keys = [m["quote"] for m in MARKETS.values() if m.get("quote")]
+        got = await self.quotes.get([{"kind": k.split(":")[0], "ticker": k.split(":")[1]} for k in keys])
+        out = {}
+        for mk, m in MARKETS.items():
+            q = got.get(m.get("quote", ""))
+            if q:
+                out[mk] = {"label": m["quote_label"], "price": q[0], "change": q[1], "invert": bool(m.get("invert"))}
+        return out
+
+    async def act_news(self, since: float = 0) -> dict:
+        quotes = await self.news_quotes()
+        return {"items": self.news.list(since), "tactics": self.news_tactics(), "quotes": quotes,
+                "markets": {k: {"name": v["name"], "hub": v["hub"], "hub_name": v["hub_name"]}
+                            for k, v in MARKETS.items()},
+                "sources": self.news.sources(), "updated": self.news.updated, "enabled": self.cfg.news_enabled,
+                "interval": self.cfg.news_interval,
+                "brain": self.brain.available, "currency": self.cfg.currency}
+
+    async def act_news_poll(self) -> list[dict]:
+        """Опросить ленты: новые маркеры — всем дашбордам, экономические сигналы — в хранилище, сильные — оповещение."""
+        fresh = await self.news.poll()
+        if not fresh:
+            return []
+        econ = [i for i in fresh if i["economic"]]
+        if econ:
+            path = f"{self.cfg.jarvis_dir}/News/Сигналы.md"
+            when = self.now()
+            for it in sorted(econ, key=lambda i: i["ts"]):
+                self.vault.append(path, signal_line(it, when), header=SIGNALS_HEADER)
+        tac = self.news_tactics()
+        await self.hub.emit("news", {"items": fresh[:60], "count": len(fresh), "tactics": tac,
+                                     "updated": self.news.updated}, log_it=False)
+        if self.cfg.news_alerts:
+            mine = {m for p in tac["positions"] for m in p["markets"]}
+            for it in econ:
+                hit = [m for m in it["markets"] if m["conf"] >= .6 and m["name"] in mine]
+                if hit and it["id"] not in self.news_alerted:
+                    self.news_alerted.add(it["id"])
+                    arrows = ", ".join(f"{m['name']} {'↑' if m['dir'] > 0 else '↓'}" for m in hit)
+                    await self.alert(f"Сигнал по вашим активам: {arrows} — {it['title']}", "info", speak=False)
+        return fresh
+
+    async def act_news_brief(self, item_id: str | None = None) -> Reply:
+        """Глубокий разбор через мозг (с поиском в интернете): одна новость или вся картина и тактика."""
+        if not self.brain.available:
+            return Reply(f"Для разбора нужен мозг (ключ Claude, GigaChat или YandexGPT), {self.title}. "
+                         "Сигналы и тактика по правилам работают и без него.", kind="warn")
+        tac = self.news_tactics()
+        if item_id:
+            it = self.news.get(item_id)
+            if not it:
+                raise ValueError("такой новости уже нет в ленте")
+            markets = "; ".join(f"{m['name']} {'↑' if m['dir'] > 0 else '↓'} ({round(m['conf'] * 100)}%: {m['reason']})"
+                                for m in it["markets"]) or "правила влияния на рынки не нашли"
+            prompt = (f"Разбери новость как аналитик и тактический инвестор. «{it['title']}» — {it.get('summary', '')} "
+                      f"(источник: {it.get('source')}, {it.get('link')}). Мои правила оценили так: {markets}. "
+                      "Проверь в интернете свежие подробности. Ответь кратко: что произошло; насколько вероятен "
+                      "сценарий; какие рынки и активы затронет, в какую сторону и на каком горизонте; что это значит "
+                      "для моих активов (Finance/Assets.md) и что разумно сделать — держать, сократить риск, "
+                      "наблюдать. Не выдумывай цифры; это не инвестиционная рекомендация.")
+        else:
+            top = sorted(self.news.list(), key=lambda i: -i.get("severity", 0))[:12]
+            lines = "\n".join(f"- [{i['kind_label']}] {i['title']}" for i in top)
+            press = ", ".join(f"{m['name']}: {m['label']} ({m['pressure']:+.2f})" for m in tac["markets"]
+                              if abs(m["pressure"]) >= .2)
+            prompt = ("Сделай тактическую сводку по миру и рынкам на сегодня. Главные новости:\n"
+                      f"{lines}\nДавление на рынки по моим правилам: {press or 'сильных сигналов нет'}. "
+                      "Проверь в интернете то, что важно. Ответь: 3–5 главных событий и их последствия; "
+                      "рынки под давлением и почему; что это значит для моих активов (Finance/Assets.md); "
+                      "тактический план на неделю — наблюдать, держать, сократить риск. Коротко, без выдуманных цифр, "
+                      "это не инвестиционная рекомендация.")
+        return await self.brain.ask(prompt, source="анализатор новостей")
 
     async def act_system(self) -> dict:
         """Приложение «Настройки и диагностика»: показатели сервера, состояние служб, версия, настройки."""
