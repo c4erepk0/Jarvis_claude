@@ -39,7 +39,14 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   приложения каталога**, не панели главной: окно `static/apps-window.js` (#aw, кнопка ⊞ и вкладка «Приложения» нижней
   навигации), список и поиск без DOM — `static/apps-catalog.js` (`BUILTIN`, `launcherItems`; тест —
   `tests/js/apps-catalog.test.mjs`), своё https-приложение открывается внутри Atom — `static/app-viewer.js` (#av,
-  iframe; CSP `frame-src https:`). На главной — три колонки: задачи, ядро, проекты.
+  iframe; CSP `frame-src https:`, для разработки — http://localhost). На главной — три колонки: задачи, ядро, проекты.
+  **Мост с приложением** — `static/app-bridge.js` (postMessage, протокол `atom-app/1`, принимается только от окна
+  приложения и с его origin; тест — `tests/js/app-bridge.test.mjs`): `download` — готовый файл, Atom показывает своё
+  окно «Файл готов» (во встроенной странице iPhone не даёт скачать и вызвать «Поделиться»); `store:set` / `store` —
+  **общие данные приложения** (`jarvis/appdata.py`: `data/appdata/<sha1>.json`, 5 прошлых версий, до 12 МБ, кто
+  последний — тот прав) у владельца (`/api/appdata`) и операторов с доступом к приложению (`/api/op/appdata`);
+  изменения — событие WS `appdata` (оператору — только по своим приложениям). Тест — `tests/test_appdata.py`.
+  Со стороны приложения мост встроен в «Ценники» (`c4erepk0/cenniki`, раздел «Atom» в `index.html`).
 - **Настройки и диагностика** — `jarvis/settings.py` (`data/settings.json`, права 600: известные ключи `KNOWN`, свои
   токены, SSH-серверы, автообновление; `apply_saved_env()` в `__main__` до `load_config` — значения из интерфейса
   главнее `.env`, вступают в силу после перезапуска; секреты наружу — только `mask()`), `jarvis/updater.py`

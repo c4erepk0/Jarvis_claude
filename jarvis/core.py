@@ -21,6 +21,7 @@ from . import diagnostics, intents, ru
 from .briefing import Briefing
 from .config import Config
 from .apps import catalog, set_in_catalog
+from .appdata import AppData
 from .meetings import OP_TAG, for_operator, meeting_text, meetings
 from .operators import BUILTIN_APPS, TEAM_DIR, Operators
 from .tasks import TaskBook as _TaskBook
@@ -117,6 +118,7 @@ class Jarvis:
         feeds = [u.strip() for u in cfg.news_feeds.split(",") if u.strip().startswith(("https://", "http://"))]
         self.news = NewsDesk(cfg.data_dir, feeds or list(DEFAULT_FEEDS))
         self.news_alerted: set[str] = set()
+        self.appdata = AppData(cfg.data_dir)
         from .brain import Brain
         from .protocols import Protocols
         self.brain = Brain(self, client=llm)
@@ -614,6 +616,30 @@ class Jarvis:
 
     def act_apps(self) -> dict:
         return catalog(self.vault, self.projects)
+
+    # ---------- общие данные приложений (appdata.py): «Ценники» у владельца и операторов ----------
+    def app_allowed(self, app: str, op: dict | None = None) -> bool:
+        """Есть ли такое приложение в каталоге и (для оператора) дан ли к нему доступ."""
+        if app not in {a["note"] for a in catalog(self.vault, self.projects)["apps"]}:
+            return False
+        if op is None:
+            return True
+        fresh = self.operators.get(op["id"]) or op
+        return any(a["id"] == app for a in fresh.get("apps", []))
+
+    def act_appdata_get(self, app: str, op: dict | None = None) -> dict:
+        if not self.app_allowed(app, op):
+            raise PermissionError("нет доступа к данным этого приложения")
+        return self.appdata.get(app)
+
+    async def act_appdata_set(self, app: str, data: Any, op: dict | None = None, client: str = "") -> dict:
+        """Сохранить общие данные и разослать остальным открытым копиям приложения (событие «appdata»)."""
+        if not self.app_allowed(app, op):
+            raise PermissionError("нет доступа к данным этого приложения")
+        rec = self.appdata.set(app, data, op["name"] if op else "Владелец")
+        await self.hub.emit("appdata", {"app": app, "rev": rec["rev"], "by": rec["by"], "client": client[:40]},
+                            log_it=False)
+        return rec
 
     async def act_app_catalog(self, name: str, on: bool = True) -> dict:
         res = set_in_catalog(self.vault, self.projects, name, on)

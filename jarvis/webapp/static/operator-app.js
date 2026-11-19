@@ -2,8 +2,8 @@
 // открыл), приложения из каталога (к которым дан доступ), личные заметки (папка Команда/<Имя>/) и доверенные
 // заметки владельца (читать или править), чат с владельцем, свои устройства (выйти на любом) и пароль.
 // Сервер пускает оператора только в /api/op/… и /api/sessions (web.py), события WebSocket приходят только его.
-import { esc, renderMarkdown } from "./markdown.js?v=24";
-import { chatDays, seen } from "./team.js?v=24";
+import { esc, renderMarkdown } from "./markdown.js?v=25";
+import { chatDays, seen } from "./team.js?v=25";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "");
 const STATUS = { idea: "идея", active: "в работе", paused: "на паузе", done: "завершён" };
@@ -118,7 +118,7 @@ export class OperatorApp {
   async openApp(a) {
     if (a.kind === "builtin" && a.id === "builtin:map") {
       if (!this.map) {
-        const { MapWindow } = await import("./map.js?v=24");
+        const { MapWindow } = await import("./map.js?v=25");
         const store = { get: (k, d) => { try { const v = localStorage.getItem(`atom.op.${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
           set: (k, v) => { try { localStorage.setItem(`atom.op.${k}`, JSON.stringify(v)); } catch { /* приватный режим */ } } };
         this.map = new MapWindow(document.getElementById("mw"), { api: this.api, toast: this.toast, store, places: false,
@@ -128,8 +128,8 @@ export class OperatorApp {
       return;
     }
     if (!this.viewer) {
-      const { AppViewer } = await import("./app-viewer.js?v=24");
-      this.viewer = new AppViewer(document.getElementById("av"));
+      const { AppViewer } = await import("./app-viewer.js?v=25");
+      this.viewer = new AppViewer(document.getElementById("av"), { api: this.api, toast: this.toast, storeApi: "/api/op/appdata" });
     }
     this.viewer.open(a);
   }
@@ -201,6 +201,7 @@ export class OperatorApp {
       }
       if (e.type === "refresh" && ["tasks", "meet", "proj"].includes(this.tab)) { clearTimeout(this.rt); this.rt = setTimeout(() => this.render(), 300); }
       if (e.type === "operators") this.start().catch(() => location.reload());
+      if (e.type === "appdata") this.viewer?.onAppData(e.data);
     };
     this.ws.onclose = () => setTimeout(() => this.api("/api/op/me").then(() => this.connect()).catch(() => location.reload()), 3000);
   }
