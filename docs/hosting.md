@@ -71,6 +71,11 @@ bash /opt/jarvis/scripts/vps.sh check     # какие внешние серви
 nano /opt/jarvis/.env && systemctl restart jarvis   # поменять настройки (ключи, Telegram, голос…)
 ```
 
+То же без ssh — в Atom: **Приложения → Настройки и диагностика**. «Обновления» — проверить, что нового на GitHub,
+обновить (с подтверждения) или включить автообновление раз в N часов; «Ключи и токены» — Claude, Telegram, GitHub и
+свои токены (хранятся в `/opt/jarvis/data/settings.json`, главнее `.env`, действуют после «Перезапустить»);
+«SSH-серверы» — доступы к вашим серверам и проверка, что они отвечают.
+
 Свой домен: создайте у регистратора A-запись на IP сервера и выполните
 `JARVIS_DOMAIN=jarvis.example.ru bash /opt/jarvis/scripts/vps.sh install`.
 

@@ -439,7 +439,7 @@ export class Jarvis {
       case "map": {
         this.emit("open_map", a);
         const text = a.route ? `Строю маршрут до «${a.route}», ${t}.` : a.query ? `Ищу на карте «${a.query}».`
-          : a.nearby ? "Смотрю, что рядом." : a.locate ? "Определяю, где вы." : a.tour ? "Облетаем Нью-Йорк." : `Открываю карту, ${t}.`;
+          : a.nearby ? "Смотрю, что рядом." : a.locate ? "Определяю, где вы." : `Открываю карту, ${t}.`;
         return { text, kind: "ok", data: { open_map: a } };
       }
       case "files": this.emit("open_files", {}); return { text: `Открываю хранилище, ${t}.`, kind: "ok", data: { open_files: true } };

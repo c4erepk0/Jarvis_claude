@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import secrets
 import shutil
 import signal
@@ -16,8 +17,10 @@ from aiohttp import web
 from .config import load_config
 from .core import Jarvis
 from .gitsync import GitSync, GitSyncError
+from .settings import apply_saved_env
 from .telegram import Telegram
 from .tunnel import ORDER, Tunnel
+from .updater import restart_argv
 from .watchers import Watchers
 from .web import build_app
 
@@ -75,6 +78,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 async def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args(sys.argv[1:] if argv is None else argv)
+    saved = apply_saved_env()          # ключи и токены из «Настройки и диагностика» — поверх .env
+    if saved:
+        log.info("Настройки из интерфейса: %s", ", ".join(saved))
     cfg = load_config()
     created_code = False
     if args.tunnel:
@@ -116,6 +122,7 @@ async def main(argv: list[str] | None = None) -> None:
         background.append(asyncio.create_task(git.loop(), name="git"))
     if telegram:
         background.append(asyncio.create_task(telegram.poll(), name="telegram"))
+    background.append(asyncio.create_task(jarvis.auto_update_loop(), name="update"))
     shown = "localhost" if cfg.is_local_only else cfg.host
     log.info("A.T.O.M. онлайн: http://%s:%s  · память: %s%s · мозг: %s · голос: %s", shown, cfg.port,
              jarvis.vault.root, f" ⇄ {cfg.vault_git}" if git else "",
@@ -146,6 +153,7 @@ async def main(argv: list[str] | None = None) -> None:
         background.append(asyncio.create_task(tunnel.watch(lambda u: announce(u, True)), name="tunnel"))
 
     stop = asyncio.Event()
+    jarvis.restart_hook = stop.set                 # перезапуск: остановиться как обычно и запуститься заново
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -170,6 +178,9 @@ async def main(argv: list[str] | None = None) -> None:
             await telegram.close()
         await jarvis.close()
         await runner.cleanup()
+    if jarvis.restart_requested:
+        log.info("Перезапуск…")
+        os.execv(sys.executable, restart_argv())
 
 
 if __name__ == "__main__":

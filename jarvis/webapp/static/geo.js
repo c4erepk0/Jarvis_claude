@@ -2,17 +2,10 @@
 // расстояния, форматирование, подсказки манёвров по-русски из шагов OSRM, сход с маршрута, разбор ответов
 // Photon / Nominatim / OSRM / Overpass. Координаты — [lon, lat], как в GeoJSON и MapLibre.
 
-export const NYC = { center: [-73.9857, 40.7484], zoom: 13.2, pitch: 55, bearing: -17 };
-
-/** Обзор Нью-Йорка: камера облетает места по очереди (кнопка «Нью-Йорк»). */
-export const NYC_TOUR = [
-  { name: "Таймс-сквер", center: [-73.9855, 40.758], zoom: 16.6, pitch: 62, bearing: 30 },
-  { name: "Эмпайр-стейт-билдинг", center: [-73.9857, 40.7484], zoom: 16.4, pitch: 65, bearing: -40 },
-  { name: "Центральный парк", center: [-73.9654, 40.7829], zoom: 14.2, pitch: 50, bearing: 29 },
-  { name: "Бруклинский мост", center: [-73.9969, 40.7061], zoom: 15.8, pitch: 60, bearing: 70 },
-  { name: "Всемирный торговый центр", center: [-74.0134, 40.7127], zoom: 16.2, pitch: 65, bearing: -20 },
-  { name: "Статуя Свободы", center: [-74.0445, 40.6892], zoom: 15.6, pitch: 55, bearing: 120 },
-];
+/** Вид до первого определения места: весь мир. Дальше — где вы (геолокация) или где закрыли карту. */
+export const WORLD = { center: [30, 35], zoom: 1.6, pitch: 0, bearing: 0 };
+/** Масштаб и наклон, с которыми карта открывается на вашем месте. */
+export const HERE_VIEW = { zoom: 15.5, pitch: 50 };
 
 const R = 6371008.8;
 const rad = (d) => (d * Math.PI) / 180;
@@ -221,33 +214,3 @@ export function parseOverpass(json, from) {
   }).filter(Boolean).sort((a, b) => (a.dist ?? 0) - (b.dist ?? 0));
 }
 
-// Русские названия мест Нью-Йорка в любом падеже → запрос, который поймёт геопоиск (основа слова → название).
-const ALIASES = [
-  [["таймс", "times sq"], "Times Square, New York"], [["эмпайр", "empire"], "Empire State Building"],
-  [["центральн парк", "central park"], "Central Park, New York"],
-  [["бруклинск мост", "brooklyn bridge"], "Brooklyn Bridge"], [["статуя свобод", "статуи свобод", "статую свобод"], "Statue of Liberty"],
-  [["уолл", "wall st"], "Wall Street, New York"], [["бродве", "broadway"], "Broadway, New York"],
-  [["манхэттен", "манхеттен"], "Manhattan, New York"], [["бруклин"], "Brooklyn, New York"], [["квинс"], "Queens, New York"],
-  [["бронкс"], "Bronx, New York"], [["всемирн торгов", "торгов центр", "wtc"], "One World Trade Center"],
-  [["рокфеллер"], "Rockefeller Center"], [["хай лайн", "хайлайн", "high line"], "High Line, New York"],
-  [["гранд централ", "grand central"], "Grand Central Terminal"], [["пятая авеню", "пятой авеню", "5-я авеню", "5-й авеню"], "5th Avenue, New York"],
-  [["метрополитен", "метрополитен-музе", "met museum"], "Metropolitan Museum of Art"], [["мома", "moma", "музей современ"], "Museum of Modern Art"],
-  [["джфк", "jfk", "кеннеди"], "John F. Kennedy International Airport"], [["ла гуардия", "лагуардия"], "LaGuardia Airport"],
-  [["кони", "coney"], "Coney Island"], [["чайнатаун", "чайна-таун"], "Chinatown, Manhattan"], [["сохо"], "SoHo, Manhattan"],
-  [["нью-йорк", "нью йорк", "ньюйорк"], "New York City"],
-];
-const words = (s) => String(s || "").toLowerCase().replace(/ё/g, "е").replace(/[^a-zа-я0-9\s-]/g, " ").split(/[\s-]+/).filter(Boolean);
-
-/** «до центрального парка» → «Central Park, New York»; незнакомое — как есть. Ключ — начала слов подряд. */
-export function localAlias(query) {
-  const q = words(query);
-  for (const [keys, name] of ALIASES) {
-    for (const key of keys) {
-      const k = words(key);
-      for (let i = 0; i + k.length <= q.length; i++) {
-        if (k.every((w, j) => q[i + j].startsWith(w))) return name;
-      }
-    }
-  }
-  return String(query || "").trim();
-}

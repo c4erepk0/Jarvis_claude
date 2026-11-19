@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { NYC_TOUR, arrival, bearing, distance, formatDistance, formatDuration, instruction, lineLength, nearestOnLine,
+import { HERE_VIEW, WORLD, arrival, bearing, distance, formatDistance, formatDuration, instruction, lineLength, nearestOnLine,
   overpassQuery, parseCoords, parseNominatim, parseOverpass, parsePhoton, parseRoute, progress, routeUrl, shareLink,
   spoken } from "../../jarvis/webapp/static/geo.js";
 
@@ -15,7 +15,7 @@ test("расстояние и направление", () => {
   assert.ok(Math.abs(bearing(TIMES_SQ, EMPIRE) - 180) < 2);  // на юг
   assert.ok(Math.abs(bearing([0, 0], [1, 0]) - 90) < 1e-6);
   assert.ok(Math.abs(lineLength([[0, 0], [1, 0], [2, 0]]) - 222390) < 10);
-  assert.equal(NYC_TOUR.length, 6);
+  assert.ok(WORLD.zoom < 3 && HERE_VIEW.zoom > 14);         // без привязки к городу: мир, потом — где вы
 });
 
 test("форматирование по-русски", () => {
@@ -110,18 +110,6 @@ test("поиск и «Рядом»: разбор ответов", () => {
   assert.equal(op[0].hours, "24/7");
 });
 
-test("русские названия мест Нью-Йорка в падежах", async () => {
-  const { localAlias } = await import("../../jarvis/webapp/static/geo.js");
-  assert.equal(localAlias("центрального парка"), "Central Park, New York");
-  assert.equal(localAlias("Центральный парк"), "Central Park, New York");
-  assert.equal(localAlias("статуи свободы"), "Statue of Liberty");
-  assert.equal(localAlias("таймс-сквер"), "Times Square, New York");
-  assert.equal(localAlias("бруклинского моста"), "Brooklyn Bridge");
-  assert.equal(localAlias("эмпайр стейт"), "Empire State Building");
-  assert.equal(localAlias("Бруклин"), "Brooklyn, New York");
-  assert.equal(localAlias("Красная площадь"), "Красная площадь");
-});
-
 test("голосовые команды карты — как в Python", async () => {
   const { mapIntent } = await import("../../jarvis/webapp/static/core/intents.js");
   assert.deepEqual(mapIntent("открой карту"), { name: "map", args: {} });
@@ -131,7 +119,7 @@ test("голосовые команды карты — как в Python", async 
   assert.deepEqual(mapIntent("где я"), { name: "map", args: { locate: true } });
   assert.deepEqual(mapIntent("аптеки рядом"), { name: "map", args: { nearby: "pharmacy" } });
   assert.deepEqual(mapIntent("ближайшее метро рядом"), { name: "map", args: { nearby: "metro" } });
-  assert.deepEqual(mapIntent("покажи нью-йорк"), { name: "map", args: { tour: true } });
+  assert.equal(mapIntent("покажи нью-йорк"), null);              // облёта Нью-Йорка больше нет
   assert.equal(mapIntent("покажи задачи"), null);
 });
 

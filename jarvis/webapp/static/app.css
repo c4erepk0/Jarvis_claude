@@ -1318,3 +1318,139 @@ body.operator-mode .layout, body.operator-mode .tabs, body.operator-mode header.
   .op-notes { grid-template-columns: minmax(0, 1fr); }
 }
 .op-notes-list .inline-add input { min-width: 0; }
+
+/* ==========================================================================
+   MK·II — меньше шума: три колонки на главной, карта / финансы / файлы / настройки — в каталоге приложений,
+   кнопки шапки — значками, нижняя навигация — плавающая панель со значками.
+   ========================================================================== */
+.layout { grid-template-columns: 330px minmax(420px, 1fr) 380px; grid-template-areas: "left center right"; }
+@media (max-width: 1500px) { .layout { grid-template-columns: 300px minmax(380px, 1fr) 340px; grid-template-areas: "left center right"; } }
+.chips .chip { opacity: .85; }
+@media (max-width: 1280px) { .chips { display: none; } }
+.top-acts { display: flex; gap: 6px; align-items: center; }
+.top-btn { position: relative; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; cursor: pointer;
+  background: var(--raised); border: 1px solid var(--line-soft); color: var(--text); transition: background .15s, border-color .15s, color .15s; }
+.top-btn:hover { background: var(--hover); border-color: var(--line-strong); color: var(--bright); }
+.top-btn svg { width: 19px; height: 19px; fill: currentColor; }
+.top-btn .tw-badge { position: absolute; top: -5px; right: -5px; }
+@media (max-width: 1080px) {
+  .top { flex-wrap: nowrap; }
+  .top-acts { margin-left: auto; }
+  .clock { margin-left: 0; }
+  #clock-date { display: none; }
+  .layout { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  /* нижняя навигация: плавающая панель, значок + подпись, активный — с подложкой */
+  .tabs { left: 10px; right: 10px; bottom: calc(8px + env(safe-area-inset-bottom)); padding: 6px; gap: 4px; border-radius: 20px;
+    background: rgba(26, 22, 23, .86); border: 1px solid var(--line); backdrop-filter: blur(18px) saturate(1.4);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4); box-shadow: 0 12px 34px -12px rgba(0, 0, 0, .85); }
+  .tabs button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 2px 6px; border-radius: 14px;
+    font: 600 10.5px/1.1 var(--font); letter-spacing: .01em; color: var(--muted); transition: color .18s, background .18s; text-shadow: none; }
+  .tabs button svg { width: 22px; height: 22px; fill: currentColor; transition: transform .18s; }
+  .tabs button.on { color: var(--bright); background: var(--active); text-shadow: none; }
+  .tabs button.on svg { color: var(--holo-text); transform: translateY(-1px); }
+  .tabs button.on::before { display: none; }
+  .tabs button:active svg { transform: scale(.9); }
+  /* каталог открыт — навигация видна поверх (вкладка «Приложения»), остальные окна — на весь экран */
+  .aw { z-index: 54; padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+}
+
+/* ---------- каталог приложений ---------- */
+.aw-search { flex: 0 1 320px; margin-left: auto; }
+.aw-body { flex: 1; min-height: 0; overflow: auto; max-width: 1280px; width: 100%; margin: 0 auto; display: grid; gap: 22px; align-content: start; }
+.aw-h { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font: 650 14px var(--font); color: var(--muted); }
+.aw-h .btn { margin-left: auto; padding: 7px 11px; }
+.aw-grid, .op-apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.app-tile { position: relative; display: grid; gap: 6px; align-content: start; padding: 16px; border-radius: var(--r); cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line); transition: transform .18s ease, border-color .18s, background .18s; min-width: 0; }
+.app-tile:hover, .app-tile:focus-visible { transform: translateY(-2px); border-color: var(--line-strong); background: var(--panel-solid); }
+.app-tile b { font: 650 15px var(--font); color: var(--bright); }
+.app-tile small { color: var(--muted); font-size: 12.5px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.app-tile .app-acts { grid-column: auto; margin-top: 4px; }
+.app-ic.big { width: 48px; height: 48px; border-radius: 14px; font-size: 24px; margin-bottom: 4px;
+  background: linear-gradient(145deg, rgba(255, 69, 58, .22), rgba(255, 69, 58, .06)); border: 1px solid rgba(255, 69, 58, .25); color: var(--bright); }
+.app-tile.builtin .app-ic.big { background: var(--raised); border-color: var(--line); }
+.aw-add { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; }
+@media (max-width: 760px) {
+  .aw-grid, .op-apps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .app-tile { padding: 13px; }
+  .aw-search { order: 9; flex: 1 1 100%; }
+}
+
+/* ---------- приложение внутри Atom (app-viewer.js) ---------- */
+.av { position: fixed; inset: 0; z-index: 74; display: flex; flex-direction: column; background: var(--bg);
+  padding: max(8px, env(safe-area-inset-top)) 10px max(8px, env(safe-area-inset-bottom)); }
+.av.hidden { display: none; }
+.av-top { display: flex; align-items: center; gap: 10px; padding: 2px 4px 10px; }
+.av-top b { color: var(--bright); font-size: 15px; }
+.av-top small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.av-top .btn:first-of-type { margin-left: auto; }
+.av-top a.btn { text-decoration: none; }
+.av-ic { font-size: 20px; }
+.av-frame { position: relative; flex: 1; min-height: 0; border-radius: var(--r); overflow: hidden; border: 1px solid var(--line); background: #fff; }
+.av-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; z-index: 1; background: #fff; }
+.av-hint { position: absolute; left: 0; right: 0; top: 45%; text-align: center; margin: 0; padding: 0 20px; color: #666; }
+@media (max-width: 760px) { .av-top a.btn { padding: 8px 9px; font-size: 0; } .av-top a.btn::before { content: "↗"; font-size: 15px; } }
+
+/* ---------- настройки и диагностика (system.js) ---------- */
+.sys-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border-radius: var(--r);
+  background: var(--amber-faint); border: 1px solid var(--amber-dim); }
+.sys-banner span { flex: 1; }
+.sys-meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 22px; }
+.sys-meter .meter-h { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.sys-meter .meter-h b { color: var(--bright); font-weight: 600; }
+.sys-meter .meter { height: 6px; }
+.sys-meter .meter i { display: block; height: 100%; }
+.sys-meter .meter i.warn { background: var(--amber); } .sys-meter .meter i.bad { background: var(--red); }
+.sys-facts { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 16px; font-size: 13px; color: var(--muted); }
+.sys-facts b { color: var(--text); font-weight: 600; }
+.sys-tips { margin: 14px 0 0; padding-left: 18px; color: var(--amber); font-size: 13px; display: grid; gap: 4px; }
+.sys-services { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.sys-services li { display: grid; grid-template-columns: 10px 96px minmax(0, 1fr); gap: 8px; align-items: baseline; font-size: 13px; }
+.sys-services i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); align-self: center; }
+.sys-services li.warn i { background: var(--amber); }
+.sys-services span { color: var(--muted); overflow-wrap: anywhere; }
+.sys-key { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 6px 8px; align-items: end; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+.sys-key:last-child { border-bottom: 0; }
+.sys-key label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); min-width: 0; }
+.sys-key label code { font-size: 10.5px; opacity: .8; }
+.sys-key input { width: 100%; }
+.sys-key .btn { padding: 8px 10px; }
+.sys-src { font-size: 11px; color: var(--faint); align-self: center; white-space: nowrap; }
+.sys-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
+.sys-list li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 10px; border-radius: var(--r-sm); background: var(--raised); font-size: 13px; }
+.sys-list li .muted { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sys-list li.empty { background: none; }
+.sys-list .btn { padding: 6px 10px; }
+.sys-ping { font-size: 12px; color: var(--muted); }
+.sys-add { display: grid; grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; }
+.sys-ssh { display: grid; gap: 10px; align-content: start; }
+.sys-ssh label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
+.sys-ssh textarea { font: 12px var(--mono); }
+.sys-inline { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13.5px; }
+.sys-inline input { width: 120px; }
+.sys-commits { margin: 6px 0 12px; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
+.sys-foot { grid-column: 1 / -1; }
+@media (max-width: 900px) {
+  .sys-add { grid-template-columns: 1fr; }
+  .sys-key { grid-template-columns: minmax(0, 1fr) auto; }
+  .sys-key .sys-src { grid-column: 1; grid-row: 2; }
+}
+
+/* ---------- права операторов: приложения и доверенные заметки ---------- */
+.tw-apps { display: grid; gap: 6px; }
+.tw-app-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 150px; gap: 10px; align-items: center; font-size: 13.5px; color: var(--text) !important; }
+.tw-app-ic { font-size: 17px; text-align: center; }
+.tw-app-row select { padding: 6px 8px; }
+.tw-notes { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 4px; }
+.tw-notes li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--r-sm); background: var(--raised); font-size: 13px; }
+.tw-note-path { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.tw-notes .tw-check { font-size: 12.5px !important; }
+.sys-meter .meter-h { font: 500 12.5px var(--font); letter-spacing: 0; text-transform: none; }
+.sys-meter .meter-h b { font-variant-numeric: tabular-nums; }
+.sys-services i { align-self: start; margin-top: .45em; }
+@media (max-width: 760px) {
+  .aw .fw-top [data-act=close] { margin-left: auto; }
+  .app-ic.big { width: 40px; height: 40px; font-size: 20px; border-radius: 12px; }
+  .app-tile b { font-size: 14px; }
+  .brand-mark { letter-spacing: .12em; }
+}

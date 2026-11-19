@@ -304,3 +304,74 @@ def test_meetings_voice(tmp_path):
         assert (await j.handle("какие встречи")).text == "1 встреча: Встреча с юристом в 15:00, завтра."
         await j.close()
     asyncio.run(run())
+
+
+def test_apps_and_trusted_notes_normalized(tmp_path):
+    ops = Operators(tmp_path / "d", Vault(tmp_path / "v"))
+    op, _ = ops.create("Анна", apps=["Apps/Ценники.md", {"id": "builtin:map", "level": "manage"},
+                                     {"id": "builtin:нет"}, {"id": "../x.md"}, {"id": "a.md", "level": "root"}],
+                       notes=[{"path": "/Wiki/", "edit": True}, "Справка.md", {"path": "../Finance"},
+                              {"path": ".obsidian"}])
+    assert op["apps"] == [{"id": "Apps/Ценники.md", "level": "use"}, {"id": "builtin:map", "level": "manage"}]
+    assert op["notes"] == [{"path": "Wiki", "edit": True}, {"path": "Справка.md", "edit": False}]
+    assert ops.update(op["id"], apps=[], notes=None)["apps"] == [] and ops.get(op["id"])["notes"]
+
+
+def test_operator_apps_and_trusted_notes(tmp_path):
+    async def run():
+        j = make_jarvis(tmp_path)
+        j.vault.write("Apps/Ценники.md", "---\ntype: app\nicon: 🏷\nurl: https://c4erepk0.github.io/cenniki/\n---\n"
+                                         "# Ценники\n\nЦенники и прайс-листы.\n")
+        j.vault.write("Apps/Секрет.md", "---\ntype: app\n---\n# Секрет\n")
+        j.projects.create("Студия", NOW, description="3D", tag="студия")
+        note = j.vault.read("Projects/Студия.md")
+        j.vault.write("Projects/Студия.md", note.replace("type: project", "type: project\ncatalog: true"))
+        await j.act_add_task("Отрисовать модель #студия")
+        j.vault.write("Wiki/Регламент.md", "# Регламент\n\nКак работаем\n")
+        j.vault.write("Wiki/Глубже/Контакты.md", "# Контакты\n")
+        j.vault.write("Справка.md", "# Справка\n")
+        async with TestClient(TestServer(build_app(j))) as c:
+            await c.post("/api/setup", json={"mode": "password", "password": "корень-123"})
+            ov = await (await c.post("/api/admin/operators", json={"name": "Анна"})).json()
+            token, op_id = ov["token"], ov["created"]["id"]
+            ids = {a["id"] for a in ov["apps"]}
+            assert {"builtin:map", "Apps/Ценники.md", "Projects/Студия.md"} <= ids and ov["app_levels"]
+            await c.post(f"/api/admin/operators/{op_id}", json={
+                "action": "update", "perms": ["tasks_assign"],
+                "apps": [{"id": "Apps/Ценники.md", "level": "use"}, {"id": "Projects/Студия.md", "level": "manage"},
+                         {"id": "builtin:map"}],
+                "notes": [{"path": "Wiki", "edit": True}, {"path": "Справка.md", "edit": False}]})
+        async with TestClient(TestServer(build_app(j))) as op:
+            await op.post("/api/invite/accept", json={"token": token, "password": "анна-пароль"})
+            apps = (await (await op.get("/api/op/apps")).json())["apps"]
+            assert [a["name"] for a in apps] == ["Карта", "Студия", "Ценники"]
+            assert apps[2]["url"] == "https://c4erepk0.github.io/cenniki/" and apps[1]["level"] == "manage"
+            # управление приложением-проектом — проект виден с задачами, можно ставить задачи
+            pr = await (await op.get("/api/op/projects")).json()
+            assert [p["name"] for p in pr["projects"]] == ["Студия"] and pr["can_add"] is True
+            r = await op.post("/api/op/tasks", json={"text": "Проверить печать", "project": "Студия"})
+            assert r.status == 200 and "#студия" in j.vault.read("Tasks/Inbox.md")
+            r = await op.post("/api/op/tasks", json={"text": "x", "project": "Нет такого"})
+            assert r.status == 403
+            # доверенные заметки: папка раскрывается, правка — где разрешено
+            shared = (await (await op.get("/api/op/notes")).json())["shared"]
+            assert {n["path"]: n["edit"] for n in shared} == {
+                "Wiki/Глубже/Контакты.md": True, "Wiki/Регламент.md": True, "Справка.md": False}
+            got = await (await op.get("/api/op/note?path=Wiki/Регламент.md")).json()
+            assert got["editable"] is True and got["own"] is False
+            r = await op.put("/api/op/note", json={"path": "Wiki/Регламент.md", "content": "# Регламент\n\nНовое",
+                                                   "base": got["version"]})
+            assert r.status == 200 and "Новое" in j.vault.read("Wiki/Регламент.md")
+            ro = await (await op.get("/api/op/note?path=Справка.md")).json()
+            assert ro["editable"] is False
+            r = await op.put("/api/op/note", json={"path": "Справка.md", "content": "взлом", "base": ro["version"]})
+            assert r.status == 403 and j.vault.read("Справка.md") == "# Справка\n"
+            # заметка приложения, которым управляет, — правится; чужие — закрыты
+            st = await (await op.get("/api/op/note?path=Projects/Студия.md")).json()
+            assert st["editable"] is True
+            for bad in ("Apps/Секрет.md", "Apps/Ценники.md", "Wiki/../Finance/2026-11.md", "Tasks/Inbox.md"):
+                assert (await op.get("/api/op/note?path=" + bad)).status in (400, 403), bad
+            r = await op.post("/api/op/note", json={"action": "trash", "path": "Wiki/Регламент.md"})
+            assert r.status == 403 and j.vault.exists("Wiki/Регламент.md")        # в корзину — только своё
+        await j.close()
+    asyncio.run(run())

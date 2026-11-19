@@ -2,7 +2,8 @@
 
 Владелец (корень) приглашает оператора ссылкой, задаёт права и общие проекты, переписывается с ним и поручает задачи
 и встречи. У оператора — свой кабинет: порученное (отметить выполненное), личные задачи и заметки (своя папка в
-хранилище), общие с ним проекты, чат с владельцем и свои устройства (выйти на любом).
+хранилище), общие с ним проекты, приложения из каталога (apps: открывать / управлять), доверенные заметки владельца
+(notes: заметка или папка, только чтение или с правкой), чат с владельцем и свои устройства (выйти на любом).
 
 Вход оператора: по одноразовой ссылке-приглашению он задаёт пароль, дальше входит по имени и паролю с любого
 устройства. Каждое устройство — отдельная сессия: видно, откуда и когда заходили, любую можно завершить.
@@ -37,7 +38,13 @@ from .vault import Vault
 PERMS = {
     "tasks_all": "Видеть и отмечать все задачи владельца (иначе — только порученные)",
     "meetings_all": "Видеть все встречи (иначе — только свои)",
+    "tasks_assign": "Ставить задачи в общие проекты",
 }
+# доступ к приложению из каталога: use — открывать; manage — ещё и править его заметку, а у приложения-проекта
+# видеть и отмечать задачи проекта (как общий проект)
+APP_LEVELS = {"use": "Открывать", "manage": "Управлять"}
+BUILTIN_APPS = {"builtin:map": "Карта"}          # встроенные приложения Atom, которые можно открыть оператору
+MAX_SHARED = 100
 INVITE_DAYS = 7
 OWNER = "Владелец"
 OWNER_KEY = ""                     # «кто» для сессий владельца
@@ -232,7 +239,8 @@ class Operators:
         else:
             status = "invited" if invite.get("expires", 0) > now else "expired"
         return {"id": op["id"], "name": op["name"], "slug": op["slug"], "tag": TAG_PREFIX + op["slug"],
-                "perms": op.get("perms", []), "projects": op.get("projects", []), "active": op.get("active", True),
+                "perms": op.get("perms", []), "projects": op.get("projects", []), "apps": op.get("apps", []),
+                "notes": op.get("notes", []), "active": op.get("active", True),
                 "status": status, "created": op.get("created"), "joined": op.get("joined"),
                 "last_seen": op.get("last_seen"), "invite_expires": invite.get("expires"), "note": op.get("note", ""),
                 "chat": op.get("chat", ""), "folder": self.folder(op), "has_password": bool(op.get("password")),
@@ -260,11 +268,46 @@ class Operators:
     def _projects(projects: Any) -> list[str]:
         return sorted({str(p).strip() for p in (projects or []) if str(p).strip()})
 
+    @staticmethod
+    def _apps(apps: Any) -> list[dict]:
+        """[{id, level}] — id: путь заметки приложения из каталога или builtin:…; повтор — последний побеждает."""
+        out: dict[str, str] = {}
+        for a in apps or []:
+            if isinstance(a, str):
+                a = {"id": a}
+            if not isinstance(a, dict):
+                continue
+            app_id = str(a.get("id") or "").strip().lstrip("/")
+            level = str(a.get("level") or "use")
+            if not app_id or ".." in app_id.split("/") or level not in APP_LEVELS:
+                continue
+            if app_id.startswith("builtin:") and app_id not in BUILTIN_APPS:
+                continue
+            out[app_id] = level
+        return [{"id": k, "level": v} for k, v in sorted(out.items())][:MAX_SHARED]
+
+    @staticmethod
+    def _notes(notes: Any) -> list[dict]:
+        """Доверенные заметки: [{path, edit}] — путь заметки или папки (тогда — все заметки в ней)."""
+        out: dict[str, bool] = {}
+        for n in notes or []:
+            if isinstance(n, str):
+                n = {"path": n}
+            if not isinstance(n, dict):
+                continue
+            path = str(n.get("path") or "").replace("\\", "/").strip().strip("/")
+            if not path or any(x in ("..", "") for x in path.split("/")) or path.startswith("."):
+                continue
+            out[path] = bool(n.get("edit"))
+        return [{"path": k, "edit": v} for k, v in sorted(out.items())][:MAX_SHARED]
+
     def create(self, name: str, perms: list[str] | None = None, note: str = "",
-               projects: list[str] | None = None) -> tuple[dict, str]:
+               projects: list[str] | None = None, apps: list | None = None,
+               notes: list | None = None) -> tuple[dict, str]:
         name = self._check_name(name)
         op = {"id": secrets.token_hex(6), "name": name, "slug": slug(name), "perms": self._perms(perms),
-              "projects": self._projects(projects), "active": True, "created": int(time.time()),
+              "projects": self._projects(projects), "apps": self._apps(apps), "notes": self._notes(notes),
+              "active": True, "created": int(time.time()),
               "note": note.strip()[:300], "chat": f"{self.chat_dir}/{name}.md", "read": {"owner": 0, "operator": 0},
               "sessions": {}}
         self.data["operators"].append(op)
@@ -327,7 +370,8 @@ class Operators:
         self._save()
 
     def update(self, op_id: str, *, name: str | None = None, perms: list[str] | None = None,
-               active: bool | None = None, note: str | None = None, projects: list[str] | None = None) -> dict:
+               active: bool | None = None, note: str | None = None, projects: list[str] | None = None,
+               apps: list | None = None, notes: list | None = None) -> dict:
         op = self._find(op_id)
         if name is not None and name.strip() != op["name"]:
             new = self._check_name(name, skip=op_id)
@@ -343,6 +387,10 @@ class Operators:
             op["perms"] = self._perms(perms)
         if projects is not None:
             op["projects"] = self._projects(projects)
+        if apps is not None:
+            op["apps"] = self._apps(apps)
+        if notes is not None:
+            op["notes"] = self._notes(notes)
         if note is not None:
             op["note"] = note.strip()[:300]
         if active is not None and bool(active) != op.get("active", True):
