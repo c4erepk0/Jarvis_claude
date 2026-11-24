@@ -24,6 +24,11 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/llm.py` — тот же мозг на GigaChat / YandexGPT / DeepSeek (`JARVIS_LLM`; незнакомое имя не роняет запуск): перевод формата функций, OAuth GigaChat,
   сертификат Минцифры (`jarvis/certs/`) — только для запросов GigaChat. Тест — `tests/test_llm.py`, инструкция —
   `docs/brain.md`. В JS-ядро для iPhone не перенесено намеренно: из браузера к этим API не обратиться.
+- `jarvis/models.py` — **выбор модели**: каталог по провайдерам, список подключённых (`Config.llm_ready`), подписи;
+  `Brain.select` меняет модель без перезапуска (новый разговор с резюме), выбор — `data/settings.json` `brain`,
+  ошибка ключа — `Brain.health`. `GET/POST /api/brain`, состояние — `backend`/`model_label`. Кнопка под строкой
+  команды — `static/brain-picker.js` (без DOM — `groupOptions`/`buttonView`, тест — `tests/js/brain-picker.test.mjs`);
+  JS-ядро — `core/models.js` (только Claude). У Haiku — без `fallbacks` и поиска. Тест — `tests/test_models.py`.
 - `jarvis/protocols.py` — протоколы (встроенные + `Jarvis/Protocols.md`).
 - `jarvis/vault.py` — безопасные пути, атомарная запись, frontmatter, поиск, граф, наблюдение за изменениями.
 - `jarvis/tasks.py` (формат Obsidian Tasks) · `jarvis/finance.py` (таблицы по месяцам, копейки; `analytics()` —

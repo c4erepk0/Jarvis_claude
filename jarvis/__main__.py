@@ -143,7 +143,8 @@ async def main(argv: list[str] | None = None) -> None:
     shown = "localhost" if cfg.is_local_only else cfg.host
     log.info("A.T.O.M. онлайн: http://%s:%s  · память: %s%s · мозг: %s · голос: %s", shown, cfg.port,
              jarvis.vault.root, f" ⇄ {cfg.vault_git}" if git else "",
-             cfg.model if jarvis.brain.available else "только команды", cfg.tts_engine)
+             f"{jarvis.brain.title} · {jarvis.brain.model}" if jarvis.brain.available else "только команды",
+             cfg.tts_engine)
     tunnel = None
     if args.tunnel:
         order = ORDER if args.tunnel == "auto" else (args.tunnel,)

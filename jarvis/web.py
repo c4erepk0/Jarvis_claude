@@ -688,6 +688,19 @@ def build_app(jarvis: Jarvis) -> web.Application:
     async def diag(_):
         return ok(j.diagnostics())
 
+    # ---------- мозг: какая модель отвечает (выбор на главном экране) ----------
+    async def brain_get(request):
+        owner_only(request)
+        return ok(j.brain.options())
+
+    async def brain_set(request):
+        owner_only(request)
+        d = await body(request)
+        res = await j.brain.select(str(d.get("backend") or ""), str(d.get("model") or ""))
+        await j.log(f"Мозг: {res['provider']} · {res['label']}", journal=False)
+        await j.changed("brain")
+        return ok(res)
+
     # ---------- приложение «Настройки и диагностика» (только владелец) ----------
     async def system_get(request):
         owner_only(request)
@@ -951,6 +964,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/news", news_get)
     r.add_post("/api/news/refresh", news_refresh)
     r.add_post("/api/news/brief", news_brief)
+    r.add_get("/api/brain", brain_get)
+    r.add_post("/api/brain", brain_set)
     r.add_get("/api/system", system_get)
     r.add_post("/api/system/settings", system_settings)
     r.add_post("/api/system/ssh", system_ssh)

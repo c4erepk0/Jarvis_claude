@@ -7,7 +7,8 @@
   {"env":    {"TELEGRAM_BOT_TOKEN": "…"},            — известные настройки (см. KNOWN), поверх .env
    "custom": [{"name": "OPENWEATHER_KEY", "value": "…", "note": "…"}],   — свои токены (тоже в окружение)
    "ssh":    [{"id", "name", "host", "port", "user", "password", "key", "note"}],
-   "update": {"auto": false, "hours": 6, "branch": ""}}
+   "update": {"auto": false, "hours": 6, "branch": ""},
+   "brain":  {"backend": "deepseek", "model": "deepseek-chat"}}   — модель, выбранная на главном экране (сразу)
 
 Значения из интерфейса попадают в окружение при запуске (apply_saved_env — до load_config) и потому вступают в силу
 после перезапуска Atom. Секреты наружу не отдаются: в API — только «задано» и последние символы.
@@ -128,6 +129,7 @@ class Settings:
         _migrate(data)
         data.setdefault("ssh", [])
         data.setdefault("update", {"auto": False, "hours": 6, "branch": ""})
+        data.setdefault("brain", {})
         return data
 
     def _save(self) -> None:
@@ -273,6 +275,11 @@ class Settings:
             u["branch"] = b
         self._save()
         return dict(u)
+
+    def set_brain(self, backend: str, model: str) -> None:
+        """Модель, выбранная на главном экране: действует сразу, перезапуск не нужен."""
+        self.data["brain"] = {"backend": str(backend), "model": self._value(model)}
+        self._save()
 
     def _touch(self) -> None:
         self.changed_at = time.time()

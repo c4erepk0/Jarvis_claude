@@ -135,8 +135,9 @@ class ChatLLM:
     name = ""
     title = ""
 
-    def __init__(self, cfg: "Config"):
+    def __init__(self, cfg: "Config", model: str = ""):
         self.cfg = cfg
+        self.chosen = model            # модель, выбранная в интерфейсе; пусто — из настроек
         self._session: aiohttp.ClientSession | None = None
 
     @property
@@ -200,15 +201,15 @@ class ChatLLM:
 class GigaChat(ChatLLM):
     name, title = "gigachat", "GigaChat"
 
-    def __init__(self, cfg: "Config"):
-        super().__init__(cfg)
+    def __init__(self, cfg: "Config", model: str = ""):
+        super().__init__(cfg, model)
         self.token: str | None = None
         self.token_until = 0.0
         self._ssl: ssl.SSLContext | None = None
 
     @property
     def model(self) -> str:
-        return self.cfg.gigachat_model
+        return self.chosen or self.cfg.gigachat_model
 
     def ssl_context(self) -> ssl.SSLContext:
         if self._ssl is None:
@@ -320,7 +321,7 @@ class YandexGPT(OpenAIChat):
 
     @property
     def model(self) -> str:
-        m = self.cfg.yandex_model
+        m = self.chosen or self.cfg.yandex_model
         return m if "://" in m else f"gpt://{self.cfg.yandex_folder_id}/{m}"
 
     @property
@@ -337,7 +338,7 @@ class DeepSeek(OpenAIChat):
 
     @property
     def model(self) -> str:
-        return self.cfg.deepseek_model
+        return self.chosen or self.cfg.deepseek_model
 
     @property
     def url(self) -> str:
@@ -353,8 +354,8 @@ class DeepSeek(OpenAIChat):
 PROVIDERS: dict[str, type[ChatLLM]] = {"gigachat": GigaChat, "yandex": YandexGPT, "deepseek": DeepSeek}
 
 
-def make_chat(cfg: "Config", backend: str) -> ChatLLM:
+def make_chat(cfg: "Config", backend: str, model: str = "") -> ChatLLM:
     try:
-        return PROVIDERS[backend](cfg)
+        return PROVIDERS[backend](cfg, model)
     except KeyError:
         raise ValueError(f"неизвестная модель {backend!r}") from None

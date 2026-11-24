@@ -125,16 +125,20 @@ class Config:
     def is_local_only(self) -> bool:
         return self.host in ("127.0.0.1", "localhost", "::1")
 
-    @property
-    def llm_backend(self) -> str:
-        """Какая модель — мозг: claude | gigachat | yandex | deepseek, пусто — нет ни одного ключа."""
-        ready = {
+    def llm_ready(self) -> dict[str, bool]:
+        """У каких моделей-мозгов задан ключ (порядок — приоритет, когда JARVIS_LLM пуст)."""
+        return {
             "claude": bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")
                            or os.getenv("ANTHROPIC_PROFILE")),
             "gigachat": bool(self.gigachat_auth_key),
             "yandex": bool(self.yandex_api_key and self.yandex_folder_id),
             "deepseek": bool(self.deepseek_api_key),
         }
+
+    @property
+    def llm_backend(self) -> str:
+        """Какая модель — мозг: claude | gigachat | yandex | deepseek, пусто — нет ни одного ключа."""
+        ready = self.llm_ready()
         if self.llm_provider:
             return self.llm_provider if ready.get(self.llm_provider) else ""
         return next((name for name, ok in ready.items() if ok), "")

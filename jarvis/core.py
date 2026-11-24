@@ -1102,6 +1102,7 @@ class Jarvis:
         st: dict[str, Any] = {
             "now": n.isoformat(), "title": self.title, "name": self.cfg.user_name,
             "llm": self.brain.available, "brain": self.brain.title or None, "model": self.brain.model,
+            "backend": self.brain.backend or None, "model_label": self.brain.model_label or None,
             "voice": {"engine": self.cfg.tts_engine, "server": self.voice.server_side, "muted": self.voice.muted,
                       "wake_word": self.cfg.wake_word},
             "tasks": {"summary": self.tasks.summary(ref), "today": self.act_list_tasks("today"),
