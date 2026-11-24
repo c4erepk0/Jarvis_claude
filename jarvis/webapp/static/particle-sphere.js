@@ -2,7 +2,7 @@
 // когда Atom думает — частицы закручиваются, вокруг медленно плывёт кольцо. Рисует на своём WebGL-холсте
 // под 2D-холстом с дугами показателей (reactor.js). Нет WebGL или нет сети к CDN — reactor.js рисует сферу сам.
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { MOODS, blendMood, corePoints } from "./sphere-points.js?v=25";
+import { MOODS, blendMood, corePoints } from "./sphere-points.js?v=26";
 
 const VS = `
 uniform float uTime, uLevel, uNoise, uSwirl, uSize, uDist;

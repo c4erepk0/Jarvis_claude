@@ -2,7 +2,7 @@
 // ключи и токены (Telegram, Claude, GitHub… и свои), SSH-серверы, версия и обновления с GitHub (вручную —
 // с подтверждения, или автоматически раз в N часов), перезапуск. Данные — /api/system/… (только владелец).
 // В режиме «только iPhone» сервера нет — показываются диагностика устройства и настройки телефона (standalone.js).
-import { esc } from "./markdown.js?v=25";
+import { esc } from "./markdown.js?v=26";
 
 const TABS = [["diag", "Диагностика"], ["keys", "Ключи и токены"], ["ssh", "SSH-серверы"], ["update", "Обновления"]];
 const when = (iso) => (iso ? new Date(iso).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
@@ -62,7 +62,9 @@ export class SystemWindow {
     const restart = d?.settings?.restart_needed
       ? `<div class="sys-banner"><span>Настройки изменены — они вступят в силу после перезапуска Atom.</span>
           ${d.can_restart ? `<button class="btn primary" data-act="restart">Перезапустить</button>` : `<small class="muted">Перезапустите службу: bash scripts/vps.sh update или make run.</small>`}</div>` : "";
-    this.el("body").innerHTML = restart + (this.standalone ? this.render_device() : this[`render_${this.tab}`]());
+    const safe = d?.safe_mode
+      ? `<div class="sys-banner warn"><span>Atom запущен без настроек из интерфейса: ${esc(d.safe_mode)}. Исправьте значение и перезапустите.</span></div>` : "";
+    this.el("body").innerHTML = safe + restart + (this.standalone ? this.render_device() : this[`render_${this.tab}`]());
   }
 
   // ---------- диагностика ----------

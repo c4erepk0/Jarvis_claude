@@ -21,7 +21,7 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/core.py` — класс `Jarvis`: все действия `act_*`, очередь подтверждений, `handle()` — главный вход.
 - `jarvis/intents.py` — локальный разбор русских команд; `jarvis/ru.py` — даты, суммы, склонения.
 - `jarvis/brain.py` — Claude: инструменты, append-only история, `fallbacks="default"`, отказ (`refusal`).
-- `jarvis/llm.py` — тот же мозг на GigaChat / YandexGPT (`JARVIS_LLM`): перевод формата функций, OAuth GigaChat,
+- `jarvis/llm.py` — тот же мозг на GigaChat / YandexGPT / DeepSeek (`JARVIS_LLM`; незнакомое имя не роняет запуск): перевод формата функций, OAuth GigaChat,
   сертификат Минцифры (`jarvis/certs/`) — только для запросов GigaChat. Тест — `tests/test_llm.py`, инструкция —
   `docs/brain.md`. В JS-ядро для iPhone не перенесено намеренно: из браузера к этим API не обратиться.
 - `jarvis/protocols.py` — протоколы (встроенные + `Jarvis/Protocols.md`).
@@ -49,7 +49,7 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   Со стороны приложения мост встроен в «Ценники» (`c4erepk0/cenniki`, раздел «Atom» в `index.html`).
 - **Настройки и диагностика** — `jarvis/settings.py` (`data/settings.json`, права 600: известные ключи `KNOWN`, свои
   токены, SSH-серверы, автообновление; `apply_saved_env()` в `__main__` до `load_config` — значения из интерфейса
-  главнее `.env`, вступают в силу после перезапуска; секреты наружу — только `mask()`), `jarvis/updater.py`
+  главнее `.env`, вступают в силу после перезапуска; не подошли — запуск без них, `safe_mode` в `/api/system`; секреты наружу — только `mask()`), `jarvis/updater.py`
   (`git fetch` + `merge --ff-only`, `pip install` при смене requirements.txt, отказ при локальных правках; ручное
   обновление — через `ask_confirm("update")`, авто — `Jarvis.auto_update_loop`), перезапуск — `request_restart()` →
   `os.execv` в `__main__`. API — `/api/system`, `/api/system/{settings,ssh,update,restart}` (только владелец).

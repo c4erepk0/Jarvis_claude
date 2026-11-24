@@ -31,7 +31,7 @@ export class Reactor {
   async loadParticles() {
     if (typeof WebGLRenderingContext === "undefined" || new URLSearchParams(location.search).has("flat")) return;
     try {
-      const { ParticleSphere } = await import("./particle-sphere.js?v=25");
+      const { ParticleSphere } = await import("./particle-sphere.js?v=26");
       this.gl = new ParticleSphere(this.c.parentElement);
       this.c.parentElement.classList.add("particles");
     } catch (e) {

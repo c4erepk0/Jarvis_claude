@@ -4,9 +4,9 @@
 // новости с явным прогнозом, который влияет на рынок; от них дуги тянутся к рынкам (нефть — Лондон, ставки —
 // Вашингтон…). Справа — лента, тактика (давление на рынки, ваши позиции, идеи) и котировки-ориентиры.
 // Данные — /api/news (jarvis/news.py), разбор — /api/news/brief (мозг Atom). Геометрия без DOM — globe-geo.js.
-import { esc, renderMarkdown } from "./markdown.js?v=25";
+import { esc, renderMarkdown } from "./markdown.js?v=26";
 import { FILTERS, MARKER_COLORS, ago, arc, arrow, centerOn, matches, mergeItems, pick, pressureClass, project,
-  shortestTurn, spherePoints, toVec, rotate } from "./globe-geo.js?v=25";
+  shortestTurn, spherePoints, toVec, rotate } from "./globe-geo.js?v=26";
 
 const POINTS = 16000;
 const TABS = [["feed", "Лента"], ["tactics", "Тактика"], ["markets", "Рынки"]];

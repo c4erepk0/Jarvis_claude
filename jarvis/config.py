@@ -2,6 +2,7 @@
 
 Новая настройка → поле здесь + строка в .env.example + раздел README.
 """
+import logging
 import os
 import secrets
 from dataclasses import dataclass
@@ -10,6 +11,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+log = logging.getLogger("jarvis.config")
+LLM_PROVIDERS = ("claude", "gigachat", "yandex", "deepseek")
+LLM_ALIASES = {"anthropic": "claude", "giga": "gigachat", "yandexgpt": "yandex", "дипсик": "deepseek",
+               "deep-seek": "deepseek", "deep_seek": "deepseek"}
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -69,7 +74,7 @@ class Config:
     local_first: bool = True        # простые команды (задачи, траты, протоколы) — без обращения к Claude
     max_history_turns: int = 40     # после — разговор сжимается в краткое резюме
     # --- мозг: другие модели (jarvis/llm.py) ---
-    llm_provider: str = ""          # claude | gigachat | yandex; пусто — та, для которой задан ключ
+    llm_provider: str = ""          # claude | gigachat | yandex | deepseek; пусто — та, для которой задан ключ
     gigachat_auth_key: str = ""     # «Ключ авторизации» из личного кабинета GigaChat API
     gigachat_scope: str = "GIGACHAT_API_PERS"
     gigachat_model: str = "GigaChat-2-Max"
@@ -80,6 +85,9 @@ class Config:
     yandex_folder_id: str = ""
     yandex_model: str = "yandexgpt/rc"
     yandex_url: str = "https://ai.api.cloud.yandex.net/v1"
+    deepseek_api_key: str = ""      # platform.deepseek.com → API keys (sk-…)
+    deepseek_model: str = "deepseek-chat"
+    deepseek_url: str = "https://api.deepseek.com/v1"
     # --- голос ---
     tts_engine: str = "edge"        # edge | piper | browser
     tts_voice: str = "ru-RU-DmitryNeural"
@@ -119,12 +127,13 @@ class Config:
 
     @property
     def llm_backend(self) -> str:
-        """Какая модель — мозг: claude | gigachat | yandex, пусто — нет ни одного ключа."""
+        """Какая модель — мозг: claude | gigachat | yandex | deepseek, пусто — нет ни одного ключа."""
         ready = {
             "claude": bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")
                            or os.getenv("ANTHROPIC_PROFILE")),
             "gigachat": bool(self.gigachat_auth_key),
             "yandex": bool(self.yandex_api_key and self.yandex_folder_id),
+            "deepseek": bool(self.deepseek_api_key),
         }
         if self.llm_provider:
             return self.llm_provider if ready.get(self.llm_provider) else ""
@@ -162,6 +171,31 @@ def _vault_git(raw: str) -> str:
     return raw
 
 
+def _llm_provider(raw: str) -> str:
+    """JARVIS_LLM. Опечатка или незнакомое имя не должны ронять Atom: предупреждаем и выбираем по ключу."""
+    name = raw.strip().lower()
+    name = LLM_ALIASES.get(name, name)
+    if name and name not in LLM_PROVIDERS:
+        log.warning("JARVIS_LLM=%s: такого мозга нет (есть %s) — выбираю по заданному ключу",
+                    raw, " | ".join(LLM_PROVIDERS))
+        return ""
+    return name
+
+
+def _deepseek_key() -> str:
+    """Ключ DeepSeek. Если его по ошибке вставили в поле ключа Claude (у Claude ключи «sk-ant-…»),
+    а мозгом выбран DeepSeek, — берём оттуда, чтобы Atom не стучался с ним в Anthropic."""
+    key = _str("DEEPSEEK_API_KEY") or _str("DEEPSEEK_KEY")
+    if key:
+        return key
+    claude = _str("ANTHROPIC_API_KEY")
+    if claude and not claude.startswith("sk-ant-") and _llm_provider(_str("JARVIS_LLM")) == "deepseek":
+        log.warning("ключ DeepSeek задан в поле ANTHROPIC_API_KEY — использую его для DeepSeek; "
+                    "перенесите его в DEEPSEEK_API_KEY")
+        return claude
+    return ""
+
+
 def load_config() -> Config:
     cfg = Config(
         host=_str("JARVIS_HOST", "127.0.0.1"),
@@ -187,7 +221,7 @@ def load_config() -> Config:
         web_search=_bool("JARVIS_WEB_SEARCH", True),
         local_first=_bool("JARVIS_LOCAL_FIRST", True),
         max_history_turns=max(6, _int("JARVIS_MAX_TURNS", 40)),
-        llm_provider=_str("JARVIS_LLM").lower(),
+        llm_provider=_llm_provider(_str("JARVIS_LLM")),
         gigachat_auth_key=_str("GIGACHAT_AUTH_KEY"),
         gigachat_scope=_str("GIGACHAT_SCOPE", "GIGACHAT_API_PERS"),
         gigachat_model=_str("GIGACHAT_MODEL", "GigaChat-2-Max"),
@@ -198,6 +232,9 @@ def load_config() -> Config:
         yandex_folder_id=_str("YANDEX_FOLDER_ID"),
         yandex_model=_str("YANDEX_MODEL", "yandexgpt/rc"),
         yandex_url=_str("YANDEX_URL", "https://ai.api.cloud.yandex.net/v1"),
+        deepseek_api_key=_deepseek_key(),
+        deepseek_model=_str("DEEPSEEK_MODEL", "deepseek-chat"),
+        deepseek_url=_str("DEEPSEEK_URL", "https://api.deepseek.com/v1"),
         tts_engine=_str("TTS_ENGINE", "edge").lower(),
         tts_voice=_str("TTS_VOICE", "ru-RU-DmitryNeural"),
         tts_rate=_str("TTS_RATE", "-4%"),
@@ -227,8 +264,6 @@ def load_config() -> Config:
     )
     if cfg.effort not in ("low", "medium", "high", "xhigh", "max"):
         raise RuntimeError("JARVIS_EFFORT: допустимо low | medium | high | xhigh | max")
-    if cfg.llm_provider not in ("", "claude", "gigachat", "yandex"):
-        raise RuntimeError("JARVIS_LLM: допустимо claude | gigachat | yandex (или пусто — по заданному ключу)")
     if cfg.tts_engine not in ("edge", "piper", "browser"):
         raise RuntimeError("TTS_ENGINE: допустимо edge | piper | browser")
     return cfg

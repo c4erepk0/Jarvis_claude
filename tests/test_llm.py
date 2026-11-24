@@ -168,3 +168,89 @@ def test_errors_do_not_break_history(tmp_path, status, kind, phrase):
             assert j.brain.messages == []                      # неудачный ход не остался в истории
             await j.close()
     asyncio.run(run())
+
+
+def test_deepseek_backend_and_bad_provider_do_not_crash(monkeypatch):
+    from jarvis.config import load_config
+
+    assert Config(deepseek_api_key="sk-ds").llm_backend == "deepseek"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    assert Config(llm_provider="deepseek", deepseek_api_key="sk-ds").llm_backend == "deepseek"
+    # опечатка в JARVIS_LLM раньше роняла запуск (RuntimeError) — теперь мозг выбирается по ключу
+    monkeypatch.setenv("JARVIS_LLM", "deepseak")
+    assert load_config().llm_provider == ""
+    monkeypatch.setenv("JARVIS_LLM", "DeepSeek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
+    cfg = load_config()
+    assert cfg.llm_provider == "deepseek" and cfg.llm_backend == "deepseek" and cfg.deepseek_model == "deepseek-chat"
+    # ключ DeepSeek вставили в поле Claude — берём его для DeepSeek, а не стучимся с ним в Anthropic
+    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-0123456789abcdef")
+    assert load_config().deepseek_api_key == "sk-0123456789abcdef"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-real")
+    assert load_config().deepseek_api_key == ""
+
+
+class FakeDeepSeek:
+    def __init__(self, status: int = 200):
+        self.status, self.calls = status, []
+
+    async def chat(self, request):
+        if self.status != 200:
+            msg = {401: "Authentication Fails", 402: "Insufficient Balance"}.get(self.status, "Server Error")
+            return web.json_response({"error": {"message": msg, "type": "invalid_request_error"}}, status=self.status)
+        assert request.headers["Authorization"] == "Bearer sk-ds-test"
+        body = await request.json()
+        assert body["model"] == "deepseek-reasoner" and body["tool_choice"] == "auto"
+        assert body["messages"][0]["role"] == "system" and "A.T.O.M." in body["messages"][0]["content"]
+        assert {t["function"]["name"] for t in body["tools"]} >= {"task_add", "money_add"}
+        self.calls.append(body)
+        if body["messages"][-1]["role"] == "user":
+            args = json.dumps({"text": "продлить домен"}, ensure_ascii=False)
+            call = {"id": "call_0_ds", "type": "function", "function": {"name": "task_add", "arguments": args}}
+            message = {"role": "assistant", "content": "", "reasoning_content": "Нужна задача.", "tool_calls": [call]}
+            return web.json_response({"choices": [{"index": 0, "finish_reason": "tool_calls", "message": message}],
+                                      "usage": {"prompt_tokens": 120, "completion_tokens": 20}})
+        return web.json_response({"choices": [{"index": 0, "finish_reason": "stop", "message": {
+            "role": "assistant", "content": "Задача добавлена, сэр.", "reasoning_content": "Готово."}}]})
+
+    def app(self):
+        app = web.Application()
+        app.router.add_post("/v1/chat/completions", self.chat)
+        return app
+
+
+def test_deepseek_calls_jarvis_tools(tmp_path):
+    async def run():
+        api = FakeDeepSeek()
+        async with TestServer(api.app()) as srv:
+            j = make_jarvis(tmp_path, llm_provider="deepseek", deepseek_api_key="sk-ds-test",
+                            deepseek_model="deepseek-reasoner", deepseek_url=str(srv.make_url("/v1")))
+            assert j.brain.title == "DeepSeek" and j.brain.model == "deepseek-reasoner"
+            r = await j.brain.ask("напомни продлить домен")
+            assert r.text == "Задача добавлена, сэр." and r.source == "deepseek"
+            assert "продлить домен" in j.vault.read("Tasks/Inbox.md")
+            follow = api.calls[-1]["messages"]
+            assert follow[-2]["tool_calls"][0]["id"] == "call_0_ds"
+            assert follow[-2]["reasoning_content"] == "Нужна задача."       # нужен reasoner в цикле с инструментами
+            assert follow[-1]["role"] == "tool" and follow[-1]["tool_call_id"] == "call_0_ds"
+            assert "reasoning_content" not in j.brain.messages[-1]          # финальный ответ — без рассуждения
+            st = await j.state()
+            assert st["brain"] == "DeepSeek"
+            await j.close()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("status,kind,phrase", [(401, "error", "не принял ключ"), (402, "warn", "закончились деньги"),
+                                                (503, "warn", "недоступен")])
+def test_deepseek_errors(tmp_path, status, kind, phrase):
+    async def run():
+        api = FakeDeepSeek(status=status)
+        async with TestServer(api.app()) as srv:
+            j = make_jarvis(tmp_path, llm_provider="deepseek", deepseek_api_key="sk-ds-test",
+                            deepseek_url=str(srv.make_url("/v1")))
+            r = await j.brain.ask("привет")
+            assert r.kind == kind and phrase in r.text and "DeepSeek" in r.text
+            assert j.brain.messages == []
+            await j.close()
+    asyncio.run(run())

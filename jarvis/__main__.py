@@ -68,6 +68,25 @@ def banner(url: str, code: str, created: bool = False, again: bool = False) -> s
             f"  Затем «Поделиться» → «На экран „Домой“».\n{bar}\n")
 
 
+def load_config_safely(data_dir: Path | None = None):
+    """Настройки из «Настройки и диагностика» поверх .env → Config. Если с ними Atom не запускается (опечатка
+    в числе и т.п.), запускаемся по одному .env: ошибку покажет окно «Настройки» (safe_mode), а не systemd."""
+    clean_env = dict(os.environ)
+    saved = apply_saved_env(data_dir)
+    if saved:
+        log.info("Настройки из интерфейса: %s", ", ".join(saved))
+    try:
+        return load_config(), ""
+    except (RuntimeError, ValueError) as e:
+        if not saved:
+            raise
+        error = str(e) or type(e).__name__
+        log.error("Настройки из интерфейса не подошли (%s) — запускаюсь без них. Исправьте в «Настройки».", error)
+        os.environ.clear()
+        os.environ.update(clean_env)
+        return load_config(), error
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m jarvis", description="A.T.O.M.")
     p.add_argument("--tunnel", nargs="?", const="auto", choices=["auto", "cloudflare", "localhostrun", "pinggy"],
@@ -78,10 +97,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 async def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    saved = apply_saved_env()          # ключи и токены из «Настройки и диагностика» — поверх .env
-    if saved:
-        log.info("Настройки из интерфейса: %s", ", ".join(saved))
-    cfg = load_config()
+    cfg, safe_mode = load_config_safely()
     created_code = False
     if args.tunnel:
         cfg, created_code = ensure_access_code(cfg)
@@ -104,6 +120,7 @@ async def main(argv: list[str] | None = None) -> None:
         except GitSyncError as e:
             log.warning("Первая синхронизация с GitHub не удалась: %s", e)
     jarvis = Jarvis(cfg)
+    jarvis.safe_mode = safe_mode
     watchers = Watchers(jarvis)
     telegram = None
     if cfg.telegram_enabled:

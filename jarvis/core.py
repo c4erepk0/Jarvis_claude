@@ -113,6 +113,7 @@ class Jarvis:
         self.settings = Settings(cfg.data_dir)
         self.updater = Updater(token=cfg.github_token, branch=self.settings.data["update"].get("branch", ""))
         self.restart_hook: Callable[[], None] | None = None   # ставит __main__: остановиться и запуститься заново
+        self.safe_mode = ""   # запуск без настроек из интерфейса — они не подошли (текст ошибки)
         self.restart_requested = False
         self.started = time.time()
         feeds = [u.strip() for u in cfg.news_feeds.split(",") if u.strip().startswith(("https://", "http://"))]
@@ -1231,7 +1232,7 @@ class Jarvis:
         ]
         return {"diag": self.diagnostics(), "services": services, "version": version,
                 "settings": self.settings.public(), "atom_uptime_min": round((time.time() - self.started) / 60),
-                "can_restart": self.restart_hook is not None}
+                "can_restart": self.restart_hook is not None, "safe_mode": self.safe_mode}
 
     async def act_ssh_check(self, sid: str) -> dict:
         """Проверить, отвечает ли SSH-сервер (без входа: соединение и приветствие сервера)."""
