@@ -9,12 +9,12 @@
 <meta name="apple-mobile-web-app-title" content="ATOM">
 <title>A.T.O.M.</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="static/icon.svg?v=26" type="image/svg+xml">
-<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=26">
+<link rel="icon" href="static/icon.svg?v=27" type="image/svg+xml">
+<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=27">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="static/app.css?v=26">
+<link rel="stylesheet" href="static/app.css?v=27">
 </head>
 <body>
 <!-- загрузка -->
@@ -118,6 +118,7 @@
       </button>
     </form>
     <div class="toggles">
+      <button type="button" class="brain-pick" id="btn-brain" aria-haspopup="menu" title="Какая модель отвечает">Модель…</button>
       <label class="tgl"><input type="checkbox" id="opt-wake"><span>Слушать «Атом»</span></label>
       <label class="tgl"><input type="checkbox" id="opt-fx" checked><span>Эффект голоса</span></label>
       <label class="tgl"><input type="checkbox" id="opt-mute"><span>Без звука</span></label>
@@ -196,6 +197,6 @@
   <canvas id="holo-hands" class="holo-hands hidden"></canvas>
 </div>
 
-<script type="module" src="static/app.js?v=26"></script>
+<script type="module" src="static/app.js?v=27"></script>
 </body>
 </html>

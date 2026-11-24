@@ -1,8 +1,8 @@
 // Окно «Приложения» — каталог: встроенные приложения Atom (карта, финансы, хранилище, граф, команда, настройки и
 // диагностика) и свои программы из каталога (/api/apps). Открывается кнопкой в нижней навигации и в шапке.
 // Логика без DOM — apps-catalog.js; своё приложение со ссылкой открывается внутри Atom (app-viewer.js).
-import { esc } from "./markdown.js?v=26";
-import { appIcon, launcherItems } from "./apps-catalog.js?v=26";
+import { esc } from "./markdown.js?v=27";
+import { appIcon, launcherItems } from "./apps-catalog.js?v=27";
 
 export class AppsWindow {
   /** launch(id) — открыть встроенное; openApp(app) — своё по ссылке; openPage(app) — страница проекта / заметка. */

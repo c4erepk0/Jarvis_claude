@@ -20,7 +20,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from . import ru
+from . import models, ru
 from .core import Reply
 from .github import GitHubError
 from .vault import VaultError
@@ -172,10 +172,24 @@ class Brain:
         self.lock = asyncio.Lock()
         self.usage = {"input": 0, "output": 0, "cache_read": 0}
         self._chat: Any = None   # GigaChat / YandexGPT / DeepSeek (jarvis/llm.py), если мозг — не Claude
+        self.choice: tuple[str, str] | None = None   # выбранные в интерфейсе (провайдер, модель); None — из настроек
+        self.health: dict[str, str] = {}             # провайдер → последняя ошибка ключа («ключ не принят»)
+        saved = (getattr(jarvis, "settings", None) and jarvis.settings.data.get("brain")) or {}
+        if saved.get("backend") and saved.get("model"):
+            self.choice = (str(saved["backend"]), str(saved["model"]))
+
+    def ready(self) -> dict[str, bool]:
+        """У каких провайдеров есть ключ (подставной клиент в тестах — тоже Claude)."""
+        ready = self.j.cfg.llm_ready()
+        if self._client is not None:
+            ready["claude"] = True
+        return ready
 
     @property
     def backend(self) -> str:
         """claude | gigachat | yandex | deepseek; пусто — мозга нет, только команды."""
+        if self.choice and self.ready().get(self.choice[0]):
+            return self.choice[0]
         return "claude" if self._client is not None else self.j.cfg.llm_backend
 
     @property
@@ -184,19 +198,51 @@ class Brain:
 
     @property
     def title(self) -> str:
-        return {"claude": "Claude", "gigachat": "GigaChat", "yandex": "YandexGPT",
-                "deepseek": "DeepSeek"}.get(self.backend, "")
+        return models.TITLES.get(self.backend, "")
 
     @property
     def model(self) -> str | None:
-        cfg = self.j.cfg
-        return {"claude": cfg.model, "gigachat": cfg.gigachat_model, "yandex": cfg.yandex_model,
-                "deepseek": cfg.deepseek_model}.get(self.backend)
+        backend = self.backend
+        if not backend:
+            return None
+        if self.choice and self.choice[0] == backend:
+            return self.choice[1]
+        return models.default_model(self.j.cfg, backend)
+
+    @property
+    def model_label(self) -> str:
+        return models.label(self.backend, self.model or "") if self.available else ""
+
+    def options(self) -> dict:
+        """Для списка выбора: активная модель и все модели подключённых провайдеров."""
+        active = (self.backend, self.model or "") if self.available else None
+        return {"backend": self.backend or None, "provider": self.title or None, "model": self.model,
+                "label": self.model_label or None, "chosen": bool(self.choice and active == self.choice),
+                "options": models.options(self.j.cfg, self.ready(), active, self.health)}
+
+    async def select(self, backend: str, model: str) -> dict:
+        """Сменить модель сразу, без перезапуска. Разговор начинается заново (кратко помня прошлый):
+        у моделей разный формат истории, а внутри разговора модель и инструменты не меняются."""
+        backend, model = str(backend or "").strip(), str(model or "").strip()
+        if not self.ready().get(backend):
+            raise ValueError(f"{models.TITLES.get(backend, backend)} не подключён — задайте ключ в «Настройках»")
+        if not models.is_known(self.j.cfg, backend, model):
+            raise ValueError(f"нет такой модели: {model}")
+        async with self.lock:
+            if (self.backend, self.model) != (backend, model):
+                self.reset()
+                if self._chat is not None:
+                    await self._chat.close()
+                    self._chat = None
+            self.choice = (backend, model)
+            if getattr(self.j, "settings", None):
+                self.j.settings.set_brain(backend, model)
+        return self.options()
 
     def chat(self):
-        if self._chat is None:
+        if self._chat is None or self._chat.name != self.backend or self._chat.chosen != (self.model or ""):
             from .llm import make_chat
-            self._chat = make_chat(self.j.cfg, self.backend)
+            self._chat = make_chat(self.j.cfg, self.backend, self.model or "")
         return self._chat
 
     async def close(self) -> None:
@@ -215,7 +261,7 @@ class Brain:
 
     def tools(self) -> list[dict]:
         tools = list(TOOLS)
-        if self.j.cfg.web_search and self.backend == "claude":
+        if self.j.cfg.web_search and self.backend == "claude" and models.claude_web_search(self.model or ""):
             tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 3})
         return tools
 
@@ -290,17 +336,19 @@ class Brain:
             return await self._run(msgs, system=system)
 
     async def _create(self, messages: list[dict], system: str):
-        cfg = self.j.cfg
+        model = self.model or self.j.cfg.model
+        extra: dict[str, Any] = {}
+        if models.claude_fallback(model):      # у Haiku серверного фолбэка нет
+            extra = {"betas": [FALLBACK_BETA], "fallbacks": "default"}
         return await self.client().beta.messages.create(
-            model=cfg.model,
+            model=model,
             max_tokens=16000,
             system=system,
             tools=self.tools(),
             messages=messages,
-            output_config={"effort": cfg.effort},
+            output_config={"effort": self.j.cfg.effort},
             cache_control={"type": "ephemeral"},
-            betas=[FALLBACK_BETA],
-            fallbacks="default",
+            **extra,
         )
 
     async def _run(self, messages: list[dict], system: str | None = None) -> Reply:
@@ -316,6 +364,7 @@ class Brain:
                 resp = await self._create(messages, system)
             except anthropic.AuthenticationError:
                 del messages[start_len - 1:]
+                self.health["claude"] = "ключ не принят"
                 return Reply("Ключ Claude API недействителен, " + self.j.title + ". Проверьте ANTHROPIC_API_KEY.",
                              kind="error", source="system")
             except anthropic.RateLimitError:
@@ -332,6 +381,7 @@ class Brain:
                 return Reply(f"Claude ответил ошибкой {e.status_code}. Подробности — в логе.", kind="error",
                              source="system")
             self._count(resp)
+            self.health.pop("claude", None)
             if resp.stop_reason == "refusal":
                 # история не должна содержать отклонённый ход: убираем последнее сообщение пользователя
                 del messages[start_len - 1:]
@@ -370,6 +420,7 @@ class Brain:
                 turn = await chat.complete(system, messages, TOOLS)
             except LLMAuthError as e:
                 del messages[start_len - 1:]
+                self.health[chat.name] = "ключ не принят"
                 log.error("%s: ключ не принят: %s", chat.title, e)
                 return Reply(f"{chat.title} не принял ключ, {self.j.title}: {e}. Проверьте настройки в .env.",
                              kind="error", source="system")
@@ -378,6 +429,7 @@ class Brain:
                 log.error("%s: %s", chat.title, e)
                 return Reply(f"{chat.title} сейчас недоступен: {e}. Команды без ИИ по-прежнему работают.",
                              kind="warn", source="system")
+            self.health.pop(chat.name, None)
             self.usage["input"] += turn.usage[0]
             self.usage["output"] += turn.usage[1]
             if turn.refused:

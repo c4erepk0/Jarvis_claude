@@ -2,6 +2,7 @@
 // Как и на сервере: история только дописывается, системный промпт и инструменты неизменны в разговоре,
 // время — в начале сообщения, отказ модели не остаётся в истории, включён фолбэк fallbacks: "default".
 import { WEEKDAYS, speechText } from "./ru.js";
+import { DEFAULT_MODEL, claudeFallback, claudeWebSearch } from "./models.js";
 
 export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const IDLE_RESET_MS = 30 * 60 * 1000;
@@ -116,8 +117,17 @@ export class Brain {
 
   note(text) { this.notes.push(text); }
 
+  get model() { return this.j.settings.model || DEFAULT_MODEL; }
+
+  /** Новый разговор, кратко помня прошлый (после смены модели). */
+  reset() {
+    const s = this.summary();
+    this.messages = []; this.system = null; this.turns = 0;
+    if (s) this.notes.unshift(s);
+  }
+
   tools() {
-    return this.j.settings.webSearch === false ? TOOLS
+    return this.j.settings.webSearch === false || !claudeWebSearch(this.model) ? TOOLS
       : [...TOOLS, { type: "web_search_20260209", name: "web_search", max_uses: 3 }];
   }
 
@@ -146,11 +156,7 @@ export class Brain {
 
   ask(text, source = "iphone", note = null) {
     const run = this.busy.then(async () => {
-      if (this.messages.length && (Date.now() - this.last > IDLE_RESET_MS || this.turns >= 40)) {
-        const s = this.summary();
-        this.messages = []; this.system = null; this.turns = 0;
-        if (s) this.notes.unshift(s);
-      }
+      if (this.messages.length && (Date.now() - this.last > IDLE_RESET_MS || this.turns >= 40)) this.reset();
       if (!this.system) this.system = this.buildSystem();
       this.last = Date.now();
       this.messages.push({ role: "user", content: `${this.header(source, note)}\n${text}` });
@@ -178,15 +184,14 @@ export class Brain {
       let resp;
       try {
         resp = await this.client.beta.messages.create({
-          model: this.j.settings.model || "claude-opus-5-5",
+          model: this.model,
           max_tokens: 16000,
           system,
           tools: this.tools(),
           messages,
           output_config: { effort: this.j.settings.effort || "low" },
           cache_control: { type: "ephemeral" },
-          betas: [FALLBACK_BETA],
-          fallbacks: "default",
+          ...(claudeFallback(this.model) ? { betas: [FALLBACK_BETA], fallbacks: "default" } : {}),   // у Haiku фолбэка нет
         });
       } catch (e) {
         messages.splice(start - 1);

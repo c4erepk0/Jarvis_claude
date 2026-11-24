@@ -14,6 +14,7 @@ import { Projects, STATUSES, projectLine } from "./projects.js";
 import { Notes, noteTags } from "./notes.js";
 import { Briefing } from "./briefing.js";
 import { Brain } from "./brain.js";
+import { label as modelLabel, isKnown as isKnownModel, options as modelOptions } from "./models.js";
 import { Protocols } from "./protocols.js";
 import { description as synthesisDescription, synthesize } from "./synthesis.js";
 
@@ -33,8 +34,10 @@ export const HELP = `Вот что я умею, {t}:
 • С ключом Claude — свободный разговор, поиск в интернете и разбор фото чеков.`;
 
 export class Jarvis {
-  constructor(settings, { store, github = null, clientFactory = null, fetchImpl = (...a) => fetch(...a), clock = () => new Date() }) {
+  constructor(settings, { store, github = null, clientFactory = null, fetchImpl = (...a) => fetch(...a), clock = () => new Date(),
+    saveSettings = null }) {
     this.settings = settings;
+    this.saveSettings = saveSettings;   // (settings) => void: запомнить выбор модели на устройстве
     this.clock = clock;
     this.vault = new Vault(store);
     this.tasks = new TaskBook(this.vault, "Tasks/Inbox.md", ["Jarvis/Conversations/", "Команда/"]);   // личные задачи операторов — не в списках владельца
@@ -553,12 +556,33 @@ export class Jarvis {
     return { text: `Нашёл в заметках: ${hits.slice(0, 4).map((h) => h.title).join(", ")}. ${hits[0].snippet}`, data: hits };
   }
 
+  // ---------- мозг: выбор модели на главном экране (как POST /api/brain на сервере) ----------
+  brainOptions() {
+    const on = this.brain.available;
+    return { backend: on ? "claude" : null, provider: on ? "Claude" : null, model: on ? this.brain.model : null,
+      label: on ? modelLabel(this.brain.model) : null, chosen: on && Boolean(this.settings.model),
+      options: modelOptions(this.settings, on) };
+  }
+
+  async selectModel(backend, model) {
+    if (backend !== "claude" || !this.brain.available) throw new VaultError("в режиме «только iPhone» доступен только Claude — нужен ключ в настройках");
+    if (!isKnownModel(this.settings, model)) throw new VaultError(`нет такой модели: ${model}`);
+    if (model !== this.brain.model) this.brain.reset();
+    this.settings.model = model;
+    if (this.saveSettings) this.saveSettings(this.settings);
+    await this.log(`Мозг: Claude · ${modelLabel(model)}`, false);
+    this.changed("brain");
+    return this.brainOptions();
+  }
+
   // ---------- состояние, диагностика, фоновые проверки ----------
   state() {
     const ref = this.today();
     return {
       now: this.now().toISOString(), title: this.title, name: this.settings.name || "",
-      mode: "standalone", llm: this.brain.available, model: this.brain.available ? (this.settings.model || "claude-opus-5-5") : null,
+      mode: "standalone", llm: this.brain.available, model: this.brain.available ? this.brain.model : null,
+      brain: this.brain.available ? "Claude" : null, backend: this.brain.available ? "claude" : null,
+      model_label: this.brain.available ? modelLabel(this.brain.model) : null,
       voice: { engine: "browser", server: false, muted: this.muted, wake_word: this.settings.wakeWord || "атом" },
       tasks: { summary: this.tasks.summary(ref), today: this.actListTasks("today"), week: this.actListTasks("week").slice(0, 20),
         nodate: this.actListTasks("nodate").slice(0, 15), done_today: this.tasks.doneOn(ref) },
@@ -631,6 +655,8 @@ export class Jarvis {
     let m;
     if (p === "/api/session") return { auth: false, logged_in: true, standalone: true };
     if (p === "/api/state") return this.state();
+    if (p === "/api/brain" && method === "GET") return this.brainOptions();
+    if (p === "/api/brain") return this.selectModel(String(body.backend || ""), String(body.model || ""));
     if (p === "/api/command") return this.handle(String(body.text || "").slice(0, 4000), body.source || "iphone", 0, body.note || null);
     if (p === "/api/tasks" && method === "GET") return this.actListTasks(q.view || "today", q.project || null);
     if (p === "/api/tasks") return this.actAddTask(String(body.text || ""), body.due || null, body.priority || null, body.project || null);

@@ -127,6 +127,28 @@ test("мозг: инструменты, append-only история, фолбэк
   assert.equal(calls[3].system, first.system);
 });
 
+test("мозг: выбор модели на главном экране (/api/brain)", async () => {
+  const { calls, factory } = fakeClaude([resp([text("Opus.")]), resp([text("Haiku.")])]);
+  const saved = [];
+  const j = await makeJarvis({ anthropicKey: "sk-test" }, { clientFactory: factory, saveSettings: (s) => saved.push(s.model) });
+  let info = await j.request("GET", "/api/brain");
+  assert.equal(info.label, "Opus 5.5");
+  assert.ok(info.options.length >= 4 && info.options.every((o) => o.backend === "claude"));
+  await j.handle("привет");
+  info = await j.request("POST", "/api/brain", { backend: "claude", model: "claude-haiku-5-5" });
+  assert.equal(info.label, "Haiku 5.5");
+  assert.deepEqual(saved, ["claude-haiku-5-5"]);
+  assert.equal(j.brain.messages.length, 0);                        // новый разговор
+  assert.equal(j.state().model_label, "Haiku 5.5");
+  await j.handle("кто ты");
+  const last = calls.at(-1);
+  assert.equal(last.model, "claude-haiku-5-5");
+  assert.equal(last.fallbacks, undefined);
+  assert.ok(!last.tools.some((t) => t.name === "web_search"));
+  await assert.rejects(j.request("POST", "/api/brain", { backend: "deepseek", model: "deepseek-chat" }), /только Claude/);
+  await assert.rejects(j.request("POST", "/api/brain", { backend: "claude", model: "gpt-5" }), /нет такой модели/);
+});
+
 // ---------- GitHub как хранилище ----------
 function fakeGitHub(files) {
   // минимальная модель репозитория: путь → текст; sha = номер версии

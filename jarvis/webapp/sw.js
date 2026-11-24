@@ -1,7 +1,7 @@
 // Сервис-воркер: оболочка дашборда открывается даже без сети; данные всегда берутся с сервера.
-const CACHE = "atom-v26";
-const SHELL = ["./", "static/app.css?v=26", "static/app.js?v=26", "static/reactor.js?v=26", "static/voice.js?v=26",
-  "static/standalone.js?v=26", "static/vault-template.json?v=26", "manifest.webmanifest"];
+const CACHE = "atom-v27";
+const SHELL = ["./", "static/app.css?v=27", "static/app.js?v=27", "static/reactor.js?v=27", "static/voice.js?v=27",
+  "static/standalone.js?v=27", "static/vault-template.json?v=27", "manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

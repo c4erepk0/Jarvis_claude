@@ -51,7 +51,7 @@ class BlobCache {
 }
 
 export async function vaultTemplate() {
-  const r = await fetch("static/vault-template.json?v=26");
+  const r = await fetch("static/vault-template.json?v=27");
   return r.ok ? r.json() : {};
 }
 
@@ -65,7 +65,7 @@ export async function createLocal(settings) {
     const Anthropic = mod.default || mod.Anthropic;
     return new Anthropic({ apiKey: settings.anthropicKey, dangerouslyAllowBrowser: true, maxRetries: 2 });
   };
-  const j = new Jarvis(settings, { store, github, clientFactory });
+  const j = new Jarvis(settings, { store, github, clientFactory, saveSettings });
   await j.init();
   return j;
 }
