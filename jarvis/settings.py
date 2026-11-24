@@ -27,10 +27,12 @@ KNOWN: dict[str, tuple[str, str, bool]] = {
     "ANTHROPIC_API_KEY": ("Ключ Claude API", "Мозг", True),
     "JARVIS_MODEL": ("Модель Claude", "Мозг", False),
     "JARVIS_EFFORT": ("Глубина размышлений (low · medium · high)", "Мозг", False),
-    "JARVIS_LLM": ("Какой мозг (claude · gigachat · yandex, пусто — по ключу)", "Мозг", False),
+    "JARVIS_LLM": ("Какой мозг (claude · gigachat · yandex · deepseek, пусто — по ключу)", "Мозг", False),
     "GIGACHAT_AUTH_KEY": ("GigaChat: ключ авторизации", "Мозг", True),
     "YANDEX_API_KEY": ("YandexGPT: API-ключ", "Мозг", True),
     "YANDEX_FOLDER_ID": ("YandexGPT: каталог (folder id)", "Мозг", False),
+    "DEEPSEEK_API_KEY": ("DeepSeek: API-ключ (sk-…)", "Мозг", True),
+    "DEEPSEEK_MODEL": ("DeepSeek: модель (deepseek-chat · deepseek-reasoner)", "Мозг", False),
     "TELEGRAM_BOT_TOKEN": ("Токен бота Telegram", "Telegram", True),
     "TELEGRAM_OWNER_ID": ("Ваш ID в Telegram", "Telegram", False),
     "BRIEFING_TIME": ("Утренний брифинг в Telegram (ЧЧ:ММ, пусто — выкл.)", "Telegram", False),
@@ -82,7 +84,8 @@ def apply_saved_env(data_dir: Path | None = None) -> list[str]:
     except (OSError, ValueError):
         return []
     names = []
-    for k, v in (data.get("env") or {}).items():
+    env = _migrate(data)
+    for k, v in env.items():
         if k in KNOWN and isinstance(v, str):
             os.environ[k] = v
             names.append(k)
@@ -92,6 +95,22 @@ def apply_saved_env(data_dir: Path | None = None) -> list[str]:
             os.environ[k] = v
             names.append(k)
     return names
+
+
+def _migrate(data: dict) -> dict:
+    """Свой токен, который потом стал известной настройкой (например, DEEPSEEK_API_KEY), — переносим в env,
+    иначе после обновления он молча пропал бы."""
+    env = data.setdefault("env", {})
+    keep = []
+    for c in data.get("custom") or []:
+        k = str(c.get("name") or "")
+        if k in KNOWN:
+            if k not in env and isinstance(c.get("value"), str):
+                env[k] = c["value"]
+            continue
+        keep.append(c)
+    data["custom"] = keep
+    return env
 
 
 class Settings:
@@ -105,8 +124,8 @@ class Settings:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        data.setdefault("env", {})
         data.setdefault("custom", [])
+        _migrate(data)
         data.setdefault("ssh", [])
         data.setdefault("update", {"auto": False, "hours": 6, "branch": ""})
         return data
@@ -152,7 +171,13 @@ class Settings:
         if value is None:
             self.data["env"].pop(name, None)
         else:
-            self.data["env"][name] = self._value(value)
+            v = self._value(value)
+            if name == "JARVIS_LLM":
+                from .config import LLM_ALIASES, LLM_PROVIDERS
+                v = LLM_ALIASES.get(v.lower(), v.lower())
+                if v and v not in LLM_PROVIDERS:
+                    raise ValueError(f"мозг — {' · '.join(LLM_PROVIDERS)} или пусто (по заданному ключу)")
+            self.data["env"][name] = v
         self._touch()
 
     def set_custom(self, name: str, value: Any = None, note: str = "", remove: bool = False) -> None:

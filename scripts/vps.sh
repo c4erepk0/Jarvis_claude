@@ -6,7 +6,7 @@
 #   bash vps.sh status    — работает ли, адрес, код входа, последние строки журнала
 #   bash vps.sh logs      — журнал в реальном времени (выход — Ctrl+C)
 #   bash vps.sh check     — какие внешние сервисы доступны с этого сервера
-#   bash vps.sh brain     — подключить «мозг»: GigaChat (Сбер) или YandexGPT (Яндекс), docs/brain.md
+#   bash vps.sh brain     — подключить «мозг»: GigaChat (Сбер), YandexGPT (Яндекс) или DeepSeek, docs/brain.md
 #
 # Запускать от root. Вопросы можно не задавать — переменные окружения: GITHUB_TOKEN, VAULT_GIT,
 # ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_ID, JARVIS_DOMAIN (свой домен вместо <ip>.sslip.io),
@@ -271,6 +271,7 @@ Telegram (оповещения)|https://api.telegram.org|оповещения �
 Курсы ЦБ|https://www.cbr-xml-daily.ru/daily_json.js|в брифинге не будет курсов
 Мозг GigaChat|https://ngw.devices.sberbank.ru:9443/api/v2/oauth|GigaChat не подключить с этого сервера|jarvis/certs/russian_trusted_root_ca.pem
 Мозг YandexGPT|https://ai.api.cloud.yandex.net/v1/models|YandexGPT не подключить с этого сервера
+Мозг DeepSeek|https://api.deepseek.com/models|DeepSeek не подключить с этого сервера
 EOF
 }
 
@@ -278,7 +279,7 @@ EOF
 # в tests/test_vps.py) или вопросами в терминале.
 brain_env() {
   local file=$1 choice=${2:-}
-  ask choice "Какой мозг подключить? 1 — GigaChat (Сбер), 2 — YandexGPT (Яндекс): "
+  ask choice "Какой мозг подключить? 1 — GigaChat (Сбер), 2 — YandexGPT (Яндекс), 3 — DeepSeek: "
   case "$choice" in
     1|g*|G*)
       ask GIGACHAT_AUTH_KEY "Ключ авторизации GigaChat (ввод скрыт): " secret
@@ -297,7 +298,13 @@ brain_env() {
       set_env "$file" YANDEX_API_KEY "$YANDEX_API_KEY"
       set_env "$file" YANDEX_FOLDER_ID "$YANDEX_FOLDER_ID"
       [ -z "${YANDEX_MODEL:-}" ] || set_env "$file" YANDEX_MODEL "$YANDEX_MODEL" ;;
-    *) die "Ответьте 1 (GigaChat) или 2 (YandexGPT)." ;;
+    3|d*|D*)
+      ask DEEPSEEK_API_KEY "API-ключ DeepSeek, sk-… (ввод скрыт): " secret
+      [ -n "${DEEPSEEK_API_KEY:-}" ] || die "Нужен API-ключ с platform.deepseek.com → API keys (docs/brain.md)."
+      set_env "$file" JARVIS_LLM deepseek
+      set_env "$file" DEEPSEEK_API_KEY "$DEEPSEEK_API_KEY"
+      [ -z "${DEEPSEEK_MODEL:-}" ] || set_env "$file" DEEPSEEK_MODEL "$DEEPSEEK_MODEL" ;;
+    *) die "Ответьте 1 (GigaChat), 2 (YandexGPT) или 3 (DeepSeek)." ;;
   esac
 }
 

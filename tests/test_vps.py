@@ -63,6 +63,10 @@ def test_brain_settings_written_to_env(tmp_path):
     text = env.read_text()
     assert "JARVIS_LLM=yandex" in text and "YANDEX_FOLDER_ID=b1gfolder" in text and "YANDEX_API_KEY=AQVN-key" in text
 
+    vps("_brain-env", str(env), "3", DEEPSEEK_API_KEY="sk-ds-key")
+    text = env.read_text()
+    assert "JARVIS_LLM=deepseek" in text and "DEEPSEEK_API_KEY=sk-ds-key" in text and text.count("JARVIS_LLM=") == 1
+
     bad = subprocess.run(["bash", str(SCRIPT), "_brain-env", str(env), "2"], capture_output=True, text=True,
                          env={**os.environ, "YANDEX_API_KEY": "k"}, stdin=subprocess.DEVNULL)
     assert bad.returncode != 0 and "ID каталога" in bad.stderr

@@ -138,3 +138,43 @@ def test_system_api_owner_only(tmp_path):
         server.close()
         await j.close()
     asyncio.run(run())
+
+
+def test_brain_setting_and_old_custom_token(tmp_path, monkeypatch):
+    s = Settings(tmp_path)
+    with pytest.raises(ValueError):
+        s.set_known("JARVIS_LLM", "deepseak")                         # опечатку не сохраняем — она бы сбила мозг
+    s.set_known("JARVIS_LLM", "DeepSeek")
+    assert s.data["env"]["JARVIS_LLM"] == "deepseek"
+    # ключ, сохранённый раньше «своим токеном», после обновления становится настройкой и не теряется
+    raw = json.loads((tmp_path / "settings.json").read_text())
+    raw["custom"] = [{"name": "DEEPSEEK_API_KEY", "value": "sk-ds-old", "note": ""},
+                     {"name": "OPENWEATHER_KEY", "value": "ow", "note": ""}]
+    (tmp_path / "settings.json").write_text(json.dumps(raw))
+    for name in ("DEEPSEEK_API_KEY", "JARVIS_LLM", "OPENWEATHER_KEY"):
+        monkeypatch.setenv(name, "")          # чтобы monkeypatch вернул окружение после теста
+        monkeypatch.delenv(name)
+    assert "DEEPSEEK_API_KEY" in apply_saved_env(tmp_path)
+    assert os.environ["DEEPSEEK_API_KEY"] == "sk-ds-old" and os.environ["OPENWEATHER_KEY"] == "ow"
+    pub = Settings(tmp_path).public()
+    ds = next(k for k in pub["known"] if k["name"] == "DEEPSEEK_API_KEY")
+    assert ds["set"] and ds["source"] == "ui" and "sk-ds-old" not in json.dumps(pub)
+    assert [c["name"] for c in pub["custom"]] == ["OPENWEATHER_KEY"]
+
+
+def test_bad_ui_setting_starts_without_it(tmp_path, monkeypatch):
+    from jarvis.__main__ import load_config_safely
+
+    for name in ("NEWS_INTERVAL", "USER_NAME"):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    s = Settings(tmp_path)
+    s.set_known("NEWS_INTERVAL", "десять")                            # int() не разберёт — раньше Atom падал
+    s.set_known("USER_NAME", "Тест")
+    cfg, error = load_config_safely(tmp_path)
+    assert error and cfg.news_interval == 10 and cfg.user_name != "Тест"
+    assert os.getenv("NEWS_INTERVAL") is None                         # окружение — как до настроек
+    s.set_known("NEWS_INTERVAL", "15")
+    cfg, error = load_config_safely(tmp_path)
+    assert error == "" and cfg.news_interval == 15 and cfg.user_name == "Тест"

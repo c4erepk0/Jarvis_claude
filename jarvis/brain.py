@@ -171,11 +171,11 @@ class Brain:
         self.notes: list[str] = []
         self.lock = asyncio.Lock()
         self.usage = {"input": 0, "output": 0, "cache_read": 0}
-        self._chat: Any = None   # GigaChat / YandexGPT (jarvis/llm.py), если мозг — не Claude
+        self._chat: Any = None   # GigaChat / YandexGPT / DeepSeek (jarvis/llm.py), если мозг — не Claude
 
     @property
     def backend(self) -> str:
-        """claude | gigachat | yandex; пусто — мозга нет, только команды."""
+        """claude | gigachat | yandex | deepseek; пусто — мозга нет, только команды."""
         return "claude" if self._client is not None else self.j.cfg.llm_backend
 
     @property
@@ -184,12 +184,14 @@ class Brain:
 
     @property
     def title(self) -> str:
-        return {"claude": "Claude", "gigachat": "GigaChat", "yandex": "YandexGPT"}.get(self.backend, "")
+        return {"claude": "Claude", "gigachat": "GigaChat", "yandex": "YandexGPT",
+                "deepseek": "DeepSeek"}.get(self.backend, "")
 
     @property
     def model(self) -> str | None:
         cfg = self.j.cfg
-        return {"claude": cfg.model, "gigachat": cfg.gigachat_model, "yandex": cfg.yandex_model}.get(self.backend)
+        return {"claude": cfg.model, "gigachat": cfg.gigachat_model, "yandex": cfg.yandex_model,
+                "deepseek": cfg.deepseek_model}.get(self.backend)
 
     def chat(self):
         if self._chat is None:
@@ -356,7 +358,7 @@ class Brain:
                      source="claude", confirm=confirm)
 
     async def _run_chat(self, messages: list[dict], system: str) -> Reply:
-        """Тот же цикл «ответ → инструменты → ответ», но через GigaChat / YandexGPT (jarvis/llm.py).
+        """Тот же цикл «ответ → инструменты → ответ», но через GigaChat / YandexGPT / DeepSeek (jarvis/llm.py).
         История — в формате этой модели (модель не меняется посреди работы Atom)."""
         from .llm import LLMAuthError, LLMError
 

@@ -1,4 +1,4 @@
-"""Мозг Atom на моделях, доступных в России: GigaChat (Сбер) и YandexGPT (Яндекс AI Studio).
+"""Мозг Atom на других моделях: GigaChat (Сбер), YandexGPT (Яндекс AI Studio) и DeepSeek.
 
 Разговор ведёт `Brain` одинаково для всех моделей: личность, служебная строка, инструменты Atom,
 история только дописывается. Здесь — только перевод в формат конкретного API:
@@ -11,6 +11,9 @@
 - **YandexGPT** (`https://ai.api.cloud.yandex.net/v1`): OpenAI-совместимый Chat Completions —
   `tools`, `tool_calls`, результат с ролью `tool`; заголовки `Authorization: Api-Key …`
   и `OpenAI-Project: <каталог>`.
+- **DeepSeek** (`https://api.deepseek.com/v1`): тот же OpenAI-совместимый формат, ключ — `Authorization: Bearer`.
+  Модель по умолчанию — `deepseek-chat`; у `deepseek-reasoner` ход с инструментами возвращается вместе
+  с `reasoning_content`. 402 — на балансе DeepSeek закончились деньги.
 """
 from __future__ import annotations
 
@@ -178,6 +181,9 @@ class ChatLLM:
             data = {"data": data}
         if status in (401, 403):
             raise LLMAuthError(_message(data) or f"HTTP {status}")
+        if status == 402:
+            detail = _message(data) or "HTTP 402"
+            raise LLMError(f"на балансе {self.title} закончились деньги — пополните счёт ({detail})")
         if status == 429:
             raise LLMError("лимит запросов — попробуйте через минуту", transient=True)
         if status >= 400:
@@ -272,24 +278,27 @@ class GigaChat(ChatLLM):
         return {"role": "function", "name": name, "content": json.dumps(value, ensure_ascii=False)}
 
 
-class YandexGPT(ChatLLM):
-    name, title = "yandex", "YandexGPT"
+class OpenAIChat(ChatLLM):
+    """OpenAI-совместимый Chat Completions: `tools` / `tool_calls` / роль `tool`."""
+    refusal_reason = "content_filter"
+    keep_fields: tuple[str, ...] = ()        # что ещё из ответа модели вернуть ей в истории
 
     @property
-    def model(self) -> str:
-        m = self.cfg.yandex_model
-        return m if "://" in m else f"gpt://{self.cfg.yandex_folder_id}/{m}"
+    def url(self) -> str:
+        raise NotImplementedError
+
+    def headers(self) -> dict:
+        raise NotImplementedError
 
     async def complete(self, system: str, messages: list[dict], tools: list[dict]) -> Turn:
         body = {"model": self.model, "messages": [{"role": "system", "content": system}, *messages],
                 "tools": [{"type": "function", "function": f} for f in functions(tools)], "tool_choice": "auto"}
-        data = await self.post(f"{self.cfg.yandex_url.rstrip('/')}/chat/completions", json_body=body, headers={
-            "Authorization": f"Api-Key {self.cfg.yandex_api_key}", "OpenAI-Project": self.cfg.yandex_folder_id})
+        data = await self.post(f"{self.url.rstrip('/')}/chat/completions", json_body=body, headers=self.headers())
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
         usage = data.get("usage") or {}
         used = (int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0))
-        if choice.get("finish_reason") == "content_filter":
+        if choice.get("finish_reason") == self.refusal_reason:
             return Turn(refused=True, usage=used)
         tool_calls = msg.get("tool_calls") or []
         calls = [(tc.get("id") or f"call_{i}", (tc.get("function") or {}).get("name", ""),
@@ -297,13 +306,51 @@ class YandexGPT(ChatLLM):
         keep: dict = {"role": "assistant", "content": msg.get("content") or ""}
         if tool_calls:
             keep["tool_calls"] = tool_calls
+            for k in self.keep_fields:
+                if msg.get(k):
+                    keep[k] = msg[k]
         return Turn(text=msg.get("content") or "", calls=[c for c in calls if c[1]], message=keep, usage=used)
 
     def tool_message(self, call_id: str, name: str, content: str, is_error: bool) -> dict:
         return {"role": "tool", "tool_call_id": call_id, "content": content}
 
 
-PROVIDERS: dict[str, type[ChatLLM]] = {"gigachat": GigaChat, "yandex": YandexGPT}
+class YandexGPT(OpenAIChat):
+    name, title = "yandex", "YandexGPT"
+
+    @property
+    def model(self) -> str:
+        m = self.cfg.yandex_model
+        return m if "://" in m else f"gpt://{self.cfg.yandex_folder_id}/{m}"
+
+    @property
+    def url(self) -> str:
+        return self.cfg.yandex_url
+
+    def headers(self) -> dict:
+        return {"Authorization": f"Api-Key {self.cfg.yandex_api_key}", "OpenAI-Project": self.cfg.yandex_folder_id}
+
+
+class DeepSeek(OpenAIChat):
+    name, title = "deepseek", "DeepSeek"
+    keep_fields = ("reasoning_content",)     # deepseek-reasoner: рассуждение нужно ему в цикле с инструментами
+
+    @property
+    def model(self) -> str:
+        return self.cfg.deepseek_model
+
+    @property
+    def url(self) -> str:
+        return self.cfg.deepseek_url
+
+    def headers(self) -> dict:
+        key = self.cfg.deepseek_api_key.strip()
+        if key.lower().startswith("bearer "):
+            key = key[7:].strip()
+        return {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+
+
+PROVIDERS: dict[str, type[ChatLLM]] = {"gigachat": GigaChat, "yandex": YandexGPT, "deepseek": DeepSeek}
 
 
 def make_chat(cfg: "Config", backend: str) -> ChatLLM:

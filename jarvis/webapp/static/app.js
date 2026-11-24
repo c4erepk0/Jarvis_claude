@@ -1,9 +1,9 @@
 // A.T.O.M. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=25";
-import { Voice } from "./voice.js?v=25";
-import { stagger } from "./motion.js?v=25";
+import { Reactor } from "./reactor.js?v=26";
+import { Voice } from "./voice.js?v=26";
+import { stagger } from "./motion.js?v=26";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -55,7 +55,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Atom работает прямо на телефоне
-    SA = await import("./standalone.js?v=25");
+    SA = await import("./standalone.js?v=26");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -90,13 +90,13 @@ async function boot() {
 // ---------- первый запуск, приглашение, кабинет оператора ----------
 async function startOperator() {
   document.querySelector("header.top")?.classList.add("hidden");
-  const { OperatorApp } = await import("./operator-app.js?v=25");
+  const { OperatorApp } = await import("./operator-app.js?v=26");
   try { await new OperatorApp($("#opapp"), { api, toast }).start(); }
   catch (e) { toast(`Кабинет оператора: ${e.message}`, "error"); }
 }
 
 async function acceptInvite(text, password = "", password2 = null) {
-  const { inviteToken } = await import("./team.js?v=25");
+  const { inviteToken } = await import("./team.js?v=26");
   const token = inviteToken(text);
   if (!token) throw new Error("Вставьте ссылку-приглашение целиком или код из неё");
   if (password2 !== null && password !== password2) throw new Error("Пароли не совпадают");
@@ -176,7 +176,7 @@ async function showGate(mode, token = "") {
   });
   $("#gate-op").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const { inviteToken } = await import("./team.js?v=25");
+    const { inviteToken } = await import("./team.js?v=26");
     const t = inviteToken(e.target.link.value);
     if (!t) { $("#gate-op-err").textContent = "Вставьте ссылку-приглашение целиком или код из неё"; return; }
     showGate("invite", t);                         // дальше — задать пароль
@@ -493,7 +493,7 @@ let fw = null;
 async function openFinance(tab = null) {
   try {
     if (!fw) {
-      const { FinanceWindow } = await import("./finance.js?v=25");
+      const { FinanceWindow } = await import("./finance.js?v=26");
       fw = new FinanceWindow($("#fw"), { api, toast, store, openNote, today: () => S.now.slice(0, 10) });
     }
     await fw.show(tab);
@@ -505,7 +505,7 @@ let mw = null;
 async function openMap(args = {}) {
   try {
     if (!mw) {
-      const { MapWindow } = await import("./map.js?v=25");
+      const { MapWindow } = await import("./map.js?v=26");
       mw = new MapWindow($("#mw"), { api, toast, store, speak: (t) => { if (!voice.muted) voice.say(t); } });
     }
     await mw.show(args || {});
@@ -517,7 +517,7 @@ let tw = null;
 async function openTeam(opts = {}) {
   try {
     if (!tw) {
-      const { TeamWindow } = await import("./team-admin.js?v=25");
+      const { TeamWindow } = await import("./team-admin.js?v=26");
       tw = new TeamWindow($("#ow"), { api, toast, store, today: () => S.now.slice(0, 10), standalone: Boolean(local) });
     }
     await tw.show(opts);
@@ -560,7 +560,7 @@ let aw = null, av = null;
 async function openApps() {
   try {
     if (!aw) {
-      const { AppsWindow } = await import("./apps-window.js?v=25");
+      const { AppsWindow } = await import("./apps-window.js?v=26");
       aw = new AppsWindow($("#aw"), { api, toast, standalone: Boolean(local), launch: launchApp, openApp: openAppView,
         openPage: (a) => (a.kind === "project" ? openFiles({ kind: "project", name: a.name }) : openNote(a.note)) });
       new MutationObserver(() => markTab()).observe($("#aw"), { attributes: true, attributeFilter: ["class"] });
@@ -571,7 +571,7 @@ async function openApps() {
 function loadApps() { if (aw?.isOpen) aw.reload(); }
 async function openAppView(app) {
   try {
-    if (!av) { const { AppViewer } = await import("./app-viewer.js?v=25"); av = new AppViewer($("#av"), { api, toast }); }
+    if (!av) { const { AppViewer } = await import("./app-viewer.js?v=26"); av = new AppViewer($("#av"), { api, toast }); }
     av.open(app);
   } catch (err) { toast(err.message, "error"); }
 }
@@ -588,7 +588,7 @@ async function openGlobe() {
   if (local) { toast("«Глобус» работает с сервером Atom: из браузера ленты новостей недоступны", "warn"); return; }
   try {
     if (!gw) {
-      const { GlobeWindow } = await import("./globe.js?v=25");
+      const { GlobeWindow } = await import("./globe.js?v=26");
       gw = new GlobeWindow($("#gw"), { api, toast, store });
     }
     await gw.show();
@@ -600,7 +600,7 @@ let sysw = null;
 async function openSystem(tab = null) {
   try {
     if (!sysw) {
-      const { SystemWindow } = await import("./system.js?v=25");
+      const { SystemWindow } = await import("./system.js?v=26");
       sysw = new SystemWindow($("#sysw"), { api, toast, store, standalone: Boolean(local),
         device: () => api("/api/diagnostics"), settings: () => openSettings(false) });
     }
@@ -960,7 +960,7 @@ tick(); setInterval(tick, 1000);
 let fm = null;
 async function fileManager() {
   if (fm) return fm;
-  const { FileManager } = await import("./files.js?v=25");
+  const { FileManager } = await import("./files.js?v=26");
   fm = new FileManager($("#fm"), {
     api, toast, store,
     projects: () => (S ? S.projects : []),
@@ -993,7 +993,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=25");
+    const { Hologram } = await import("./hologram.js?v=26");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -1016,7 +1016,7 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=25");
+  const { NotePanel } = await import("./note-panel.js?v=26");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
@@ -1057,7 +1057,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=25");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=26");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1108,7 +1108,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=25").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=26").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -1129,7 +1129,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=25");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=26");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1142,7 +1142,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=25");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=26");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),
