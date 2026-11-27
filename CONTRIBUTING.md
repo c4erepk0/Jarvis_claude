@@ -18,7 +18,7 @@
 
 | Тип | Когда | Пример |
 |---|---|---|
-| `feat/` | новая возможность, новый экран, новый коннектор | `feat/gdrive-connector` |
+| `feat/` | новая возможность, новый экран, новый коннектор | `feat/file-exchange` |
 | `fix/` | исправление ошибки в `main` | `fix/operator-notes-404` |
 | `docs/` | только тексты: README, docs/, CLAUDE.md, AGENTS.md | `docs/branch-architecture` |
 | `refactor/` | поведение не меняется, меняется устройство кода | `refactor/vault-paths` |
@@ -28,7 +28,7 @@
 | `hotfix/` | срочная правка уже выпущенной версии | `hotfix/login-cookie` |
 | `exp/` | эксперимент, который может не дойти до `main` | `exp/globe-webgl` |
 
-В имени — что меняется, а не кто и когда: `feat/drive-share`, а не `feat/ivan-tuesday-v2`.
+В имени — что меняется, а не кто и когда: `feat/exchange-grants`, а не `feat/ivan-tuesday-v2`.
 Служебные ветки `claude/<имя>` создаются автоматикой GitHub и живут по тем же правилам.
 
 ## Коммиты
@@ -36,7 +36,7 @@
 [Conventional Commits](https://www.conventionalcommits.org/) на русском:
 
 ```
-feat(drive): коннектор Google Drive и выдача доступа операторам
+feat(exchange): обмен файлами и доступ операторам
 fix(web): оператор видел чужие доверенные заметки при пустом списке
 docs(branches): схема веток и правило одной причины
 ```
@@ -48,7 +48,7 @@ docs(branches): схема веток и правило одной причин�
 
 ## PR
 
-- Заголовок как у коммита: `feat(drive): …`. В описании — шаблон из
+- Заголовок как у коммита: `feat(exchange): …`. В описании — шаблон из
   [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md): что, зачем, как проверить.
 - PR открывается рано, черновиком (`Draft`), если работа больше одного дня: так видно направление.
 - Перед просьбой о ревью: `make check` локально и зелёный CI.

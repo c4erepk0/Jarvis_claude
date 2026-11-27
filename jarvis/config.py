@@ -116,14 +116,9 @@ class Config:
     news_interval: int = 10         # раз в сколько минут
     news_feeds: str = ""            # свои RSS/Atom через запятую; пусто — встроенные (BBC, Al Jazeera, РИА, ТАСС…)
     news_alerts: bool = True        # сильный прогноз по рынку ваших активов — оповещение (и в Telegram)
-    # --- Google Drive: коннектор «Диск ядра» (jarvis/gdrive.py) ---
-    gdrive_enabled: bool = True
-    gdrive_client_id: str = ""
-    gdrive_client_secret: str = ""
-    gdrive_refresh_token: str = ""
-    gdrive_folder_id: str = ""      # пусто — весь Диск аккаунта; иначе только эта папка
-    gdrive_max_mb: int = 4          # больше — не открываем в заметке
-    gdrive_write: bool = False      # загрузка и создание папок (нужен scope drive)
+    # --- Обмен файлами с операторами (jarvis/fileshare.py): папки на этом сервере ---
+    exchange_max_mb: int = 32       # больше — не принимаем
+    exchange_quota_mb: int = 2000   # общий объём хранилища data/exchange
     # --- диагностика ---
     cpu_alert: int = 90
     ram_alert: int = 90
@@ -270,13 +265,8 @@ def load_config() -> Config:
         news_interval=max(2, _int("NEWS_INTERVAL", 10)),
         news_feeds=_str("NEWS_FEEDS"),
         news_alerts=_bool("NEWS_ALERTS", True),
-        gdrive_enabled=_bool("GDRIVE_ENABLED", True),
-        gdrive_client_id=_str("GDRIVE_CLIENT_ID"),
-        gdrive_client_secret=_str("GDRIVE_CLIENT_SECRET"),
-        gdrive_refresh_token=_str("GDRIVE_REFRESH_TOKEN"),
-        gdrive_folder_id=_str("GDRIVE_FOLDER_ID"),
-        gdrive_max_mb=max(1, min(20, _int("GDRIVE_MAX_MB", 4))),
-        gdrive_write=_bool("GDRIVE_WRITE", False),
+        exchange_max_mb=max(1, min(200, _int("EXCHANGE_MAX_MB", 32))),
+        exchange_quota_mb=max(10, _int("EXCHANGE_QUOTA_MB", 2000)),
         cpu_alert=_int("DIAG_CPU_ALERT", 90),
         ram_alert=_int("DIAG_RAM_ALERT", 90),
         disk_alert=_int("DIAG_DISK_ALERT", 90),

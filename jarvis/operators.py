@@ -3,9 +3,8 @@
 Владелец (корень) приглашает оператора ссылкой, задаёт права и общие проекты, переписывается с ним и поручает задачи
 и встречи. У оператора — свой кабинет: порученное (отметить выполненное), личные задачи и заметки (своя папка в
 хранилище), общие с ним проекты, приложения из каталога (apps: открывать / управлять), доверенные заметки владельца
-(notes: заметка или папка, только чтение или с правкой), файлы «Диска ядра» (drive: отмеченные владельцем файлы
-Google Drive — только просмотр или ещё и копия к себе; см. gdrive.py), чат с владельцем и свои устройства
-(выйти на любом).
+(notes: заметка или папка, только чтение или с правкой), обмен файлами (files: папки на сервере Atom —
+смотреть или ещё и загружать; см. fileshare.py), чат с владельцем и свои устройства (выйти на любом).
 
 Вход оператора: по одноразовой ссылке-приглашению он задаёт пароль, дальше входит по имени и паролю с любого
 устройства. Каждое устройство — отдельная сессия: видно, откуда и когда заходили, любую можно завершить.
@@ -35,7 +34,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .gdrive import ID_RE as DRIVE_ID_RE, LEVELS_BY_KIND as DRIVE_LEVELS_BY_KIND
+from .fileshare import LEVELS as FILE_LEVELS
 from .vault import Vault
 
 PERMS = {
@@ -46,9 +45,9 @@ PERMS = {
 # доступ к приложению из каталога: use — открывать; manage — ещё и править его заметку, а у приложения-проекта
 # видеть и отмечать задачи проекта (как общий проект)
 APP_LEVELS = {"use": "Открывать", "manage": "Управлять"}
-BUILTIN_APPS = {"builtin:map": "Карта", "builtin:drive": "Диск"}   # встроенные приложения для оператора
+BUILTIN_APPS = {"builtin:map": "Карта", "builtin:exchange": "Обмен файлами"}   # встроенные приложения
 BUILTIN_INFO = {"builtin:map": {"icon": "🗺", "description": "Поиск мест, маршруты и навигация"},
-                "builtin:drive": {"icon": "☁", "description": "Google Drive: папки, загрузка файлов, доступ"}}
+                "builtin:exchange": {"icon": "⇅", "description": "Файлы для операторов: папки, загрузка, доступ"}}
 MAX_SHARED = 100
 INVITE_DAYS = 7
 OWNER = "Владелец"
@@ -245,7 +244,7 @@ class Operators:
             status = "invited" if invite.get("expires", 0) > now else "expired"
         return {"id": op["id"], "name": op["name"], "slug": op["slug"], "tag": TAG_PREFIX + op["slug"],
                 "perms": op.get("perms", []), "projects": op.get("projects", []), "apps": op.get("apps", []),
-                "notes": op.get("notes", []), "drive": op.get("drive", []), "active": op.get("active", True),
+                "notes": op.get("notes", []), "files": op.get("files", []), "active": op.get("active", True),
                 "status": status, "created": op.get("created"), "joined": op.get("joined"),
                 "last_seen": op.get("last_seen"), "invite_expires": invite.get("expires"), "note": op.get("note", ""),
                 "chat": op.get("chat", ""), "folder": self.folder(op), "has_password": bool(op.get("password")),
@@ -307,36 +306,37 @@ class Operators:
         return [{"path": k, "edit": v} for k, v in sorted(out.items())][:MAX_SHARED]
 
     @staticmethod
-    def _drive(items: Any) -> list[dict]:
-        """Что открыто оператору на Диске: [{id, name, kind, level}].
+    def _files(items: Any) -> list[dict]:
+        """Папки обмена файлами: [{path, name, level}]. Уровни — только view/upload.
 
-        kind: `folder` — доступно поддерево (уровни view/upload), `file` — один файл (view/copy).
-        Старые выдачи без kind считаются файлами. Имя хранится рядом с id, чтобы панель показывала,
-        что выдано, даже когда Диск недоступен. Ничего о владельце аккаунта здесь нет: только эти поля.
+        Путь нормализуется и проверяется здесь же: выдать папку с `..` или скрытым именем нельзя.
+        Имя хранится рядом с путём, чтобы панель показывала, что выдано, даже если папку переименовали.
         """
         out: dict[str, dict] = {}
         for it in items or []:
             if isinstance(it, str):
-                it = {"id": it}
+                it = {"path": it}
             if not isinstance(it, dict):
                 continue
-            fid = str(it.get("id") or "").strip()
-            kind = "folder" if str(it.get("kind") or "file") == "folder" else "file"
-            level = str(it.get("level") or "view")
-            name = re.sub(r"[\\/\n\r\t]+", " ", str(it.get("name") or "")).strip()[:200]
-            if not DRIVE_ID_RE.match(fid) or level not in DRIVE_LEVELS_BY_KIND[kind]:
+            raw = str(it.get("path") or "").replace("\\", "/").strip().strip("/")
+            parts = [p for p in raw.split("/") if p]
+            if not parts or len(parts) > 6 or any(p in (".", "..") or p.startswith(".") for p in parts):
                 continue
-            out[fid] = {"id": fid, "name": name or ("Папка Диска" if kind == "folder" else "Файл Диска"),
-                        "kind": kind, "level": level}
+            path = "/".join(parts)
+            level = str(it.get("level") or "view")
+            if level not in FILE_LEVELS:
+                continue
+            name = re.sub(r"[\\/\n\r\t]+", " ", str(it.get("name") or "")).strip()[:200] or parts[-1]
+            out[path] = {"path": path, "name": name, "level": level}
         return list(out.values())[:MAX_SHARED]
 
     def create(self, name: str, perms: list[str] | None = None, note: str = "",
                projects: list[str] | None = None, apps: list | None = None,
-               notes: list | None = None, drive: list | None = None) -> tuple[dict, str]:
+               notes: list | None = None, files: list | None = None) -> tuple[dict, str]:
         name = self._check_name(name)
         op = {"id": secrets.token_hex(6), "name": name, "slug": slug(name), "perms": self._perms(perms),
               "projects": self._projects(projects), "apps": self._apps(apps), "notes": self._notes(notes),
-              "drive": self._drive(drive), "active": True, "created": int(time.time()),
+              "files": self._files(files), "active": True, "created": int(time.time()),
               "note": note.strip()[:300], "chat": f"{self.chat_dir}/{name}.md", "read": {"owner": 0, "operator": 0},
               "sessions": {}}
         self.data["operators"].append(op)
@@ -400,7 +400,7 @@ class Operators:
 
     def update(self, op_id: str, *, name: str | None = None, perms: list[str] | None = None,
                active: bool | None = None, note: str | None = None, projects: list[str] | None = None,
-               apps: list | None = None, notes: list | None = None, drive: list | None = None) -> dict:
+               apps: list | None = None, notes: list | None = None, files: list | None = None) -> dict:
         op = self._find(op_id)
         if name is not None and name.strip() != op["name"]:
             new = self._check_name(name, skip=op_id)
@@ -420,8 +420,8 @@ class Operators:
             op["apps"] = self._apps(apps)
         if notes is not None:
             op["notes"] = self._notes(notes)
-        if drive is not None:
-            op["drive"] = self._drive(drive)
+        if files is not None:
+            op["files"] = self._files(files)
         if note is not None:
             op["note"] = note.strip()[:300]
         if active is not None and bool(active) != op.get("active", True):

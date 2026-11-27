@@ -1,7 +1,7 @@
 // Окно первоначального обучения жестам поверх голограммы. Логика шагов — gesture-coach.js,
 // схемы рук рисуются из тех же эталонных поз, по которым проверяется распознавание (gestures.js).
-import { GestureCoach, STEPS } from "./gesture-coach.js?v=30";
-import { BONES, KIND_LABEL, POSES } from "./gestures.js?v=30";
+import { GestureCoach, STEPS } from "./gesture-coach.js?v=31";
+import { BONES, KIND_LABEL, POSES } from "./gestures.js?v=31";
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 

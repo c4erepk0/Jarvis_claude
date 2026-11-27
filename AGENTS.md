@@ -91,8 +91,8 @@ jarvis/                  сервер: core.py — действия, web.py — 
   webapp/static/          фронтенд без сборки; core/ — порт ядра для iPhone
   vault.py notes.py       хранилище и заметки; tasks.py finance.py — форматы
   operators.py            операторы, права, приглашения
-  gdrive.py               коннектор Google Drive (см. docs/drive.md)
-docs/                    iphone, hosting, sync, brain, branches, drive
+  fileshare.py            обмен файлами с операторами (см. docs/exchange.md)
+docs/                    iphone, hosting, sync, brain, branches, exchange
 vault-template/          стартовое хранилище (генерируется в static/vault-template.json)
 tests/                   pytest; tests/js — node --test
 scripts/                 bootstrap, vps, gaze_eval, build_template, livesync_config
@@ -118,6 +118,6 @@ scripts/                 bootstrap, vps, gaze_eval, build_template, livesync_con
   агент будет искать модуль, которого уже нет.
 - **Не запускайте `make dev` на iOS-песочнице**: `aiohttp` требует компилятор. Там достаточно `python3`.
 - **В iOS-песочнице не гоняйте весь `pytest` разом** (особенно `tests/test_web.py`): процесс приложения может
-  не выдержать нагрузки и упасть вместе с ходом работы. Проверяйте точечно — `pytest tests/test_gdrive.py -q` —
+  не выдержать нагрузки и упасть вместе с ходом работы. Проверяйте точечно — `pytest tests/test_fileshare.py -q` —
   а полный набор оставьте CI: он и есть арбитр.
 - **`git rebase` в этой истории не используется**: ветка подтягивает `main` через `merge`.

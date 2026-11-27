@@ -22,14 +22,14 @@ Atom обновляется сам: `jarvis/updater.py` делает `git fetch`
 ```mermaid
 gitGraph
    commit id: "v0.8.0"
-   branch feat/gdrive-connector
-   checkout feat/gdrive-connector
-   commit id: "gdrive.py"
+   branch feat/file-exchange
+   checkout feat/file-exchange
+   commit id: "fileshare.py"
    commit id: "права и панель"
    commit id: "тесты"
    checkout main
    commit id: "docs/branch-architecture"
-   merge feat/gdrive-connector id: "squash PR #24"
+   merge feat/file-exchange id: "squash PR #24"
    commit id: "v0.9.0"
    branch hotfix/login-cookie
    commit id: "fix"
@@ -75,7 +75,7 @@ git merge main        # merge, не rebase: rebase в истории PR пута
 
 | Меняется | Ветка | Пример |
 |---|---|---|
-| Появилось то, чего не было: экран, коннектор, панель, интент, инструмент Claude | `feat/` | `feat/drive-connector`, `feat/meetings-week` |
+| Появилось то, чего не было: экран, коннектор, панель, интент, инструмент Claude | `feat/` | `feat/file-exchange`, `feat/meetings-week` |
 | Сломанное поведение становится правильным | `fix/` | `fix/gaze-session-404` |
 | Только тексты: README, docs/, CLAUDE.md, AGENTS.md, тексты интерфейса | `docs/` | `docs/branch-architecture` |
 | Код переставлен, поведение прежнее | `refactor/` | `refactor/vault-atomic-write` |
@@ -99,7 +99,7 @@ git merge main        # merge, не rebase: rebase в истории PR пута
 
 - латиница, строчные, дефисы, цифры; до 40 символов;
 - без имён людей, дат и слов `new`, `update`, `fix2`, `final`;
-- `feat/gdrive-connector` — хорошо; `feat/AddNewGoogleDriveConnectorForOperators` — плохо.
+- `feat/file-exchange` — хорошо; `feat/AddNewGoogleDriveConnectorForOperators` — плохо.
 
 Ветка отвечает на вопрос «что я увижу в диффе», поэтому имя — существительное с уточнением:
 `fix/operator-notes-404`, `docs/branches`.
@@ -110,7 +110,7 @@ git merge main        # merge, не rebase: rebase в истории PR пута
 `chore`, `perf`). Область — модуль или окно: `drive`, `web`, `operators`, `core`, `news`, `webapp`.
 
 ```
-feat(drive): коннектор Google Drive и выдача доступа операторам
+feat(exchange): обмен файлами и доступ операторам
 
 Владелец подключает Диск по refresh-токену, отмечает файлы в «Команде» — оператор видит
 только отмеченное и без личности владельца: ни почты, ни владельцев файла, ни общего пути.

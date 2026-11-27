@@ -39,7 +39,7 @@ test("встраивать — только https; значок — эмодзи
   assert.equal(appIcon({ name: "студия" }), "С");
 });
 
-test("«Диск» — приложение каталога и только с сервером", () => {
-  assert.ok(BUILTIN.some((b) => b.id === "drive"));
-  assert.ok(!launcherItems({ standalone: true }).builtin.some((b) => b.id === "drive"));
+test("«Обмен файлами» — приложение каталога и только с сервером", () => {
+  assert.ok(BUILTIN.some((b) => b.id === "exchange"));
+  assert.ok(!launcherItems({ standalone: true }).builtin.some((b) => b.id === "exchange"));
 });
