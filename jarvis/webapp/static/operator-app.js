@@ -2,8 +2,8 @@
 // открыл), приложения из каталога (к которым дан доступ), личные заметки (папка Команда/<Имя>/) и доверенные
 // заметки владельца (читать или править), чат с владельцем, свои устройства (выйти на любом) и пароль.
 // Сервер пускает оператора только в /api/op/… и /api/sessions (web.py), события WebSocket приходят только его.
-import { esc, renderMarkdown } from "./markdown.js?v=27";
-import { chatDays, seen } from "./team.js?v=27";
+import { esc, renderMarkdown } from "./markdown.js?v=30";
+import { chatDays, seen } from "./team.js?v=30";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "");
 const STATUS = { idea: "идея", active: "в работе", paused: "на паузе", done: "завершён" };
@@ -120,7 +120,7 @@ export class OperatorApp {
     if (a.kind === "builtin" && a.id === "builtin:drive") { await this.driveApp(); return; }
     if (a.kind === "builtin" && a.id === "builtin:map") {
       if (!this.map) {
-        const { MapWindow } = await import("./map.js?v=27");
+        const { MapWindow } = await import("./map.js?v=30");
         const store = { get: (k, d) => { try { const v = localStorage.getItem(`atom.op.${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
           set: (k, v) => { try { localStorage.setItem(`atom.op.${k}`, JSON.stringify(v)); } catch { /* приватный режим */ } } };
         this.map = new MapWindow(document.getElementById("mw"), { api: this.api, toast: this.toast, store, places: false,
@@ -130,7 +130,7 @@ export class OperatorApp {
       return;
     }
     if (!this.viewer) {
-      const { AppViewer } = await import("./app-viewer.js?v=27");
+      const { AppViewer } = await import("./app-viewer.js?v=30");
       this.viewer = new AppViewer(document.getElementById("av"), { api: this.api, toast: this.toast, storeApi: "/api/op/appdata" });
     }
     this.viewer.open(a);
@@ -158,7 +158,7 @@ export class OperatorApp {
   /** Приложение «Диск»: выданные папки и загрузка туда, где владелец разрешил. */
   async driveApp(folder = "") {
     if (!this.drive) {
-      const { DriveWindow } = await import("./drive.js?v=29");
+      const { DriveWindow } = await import("./drive.js?v=30");
       this.drive = new DriveWindow(document.getElementById("dw"), { api: this.api, toast: this.toast, mode: "operator" });
     }
     document.body.classList.add("fw-on");

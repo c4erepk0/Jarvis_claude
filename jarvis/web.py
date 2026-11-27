@@ -173,6 +173,10 @@ def build_app(jarvis: Jarvis) -> web.Application:
             resp = web.json_response({"error": str(e)}, status=403)
         except FileNotFoundError as e:
             resp = web.json_response({"error": f"не найдено: {e}"}, status=404)
+        if path.startswith("/static/"):
+            # всегда перепроверять у сервера (ETag → 304, если не менялось): иначе браузер держит
+            # старые модули по прежнему ?v= и интерфейс обновляется наполовину
+            resp.headers.setdefault("Cache-Control", "no-cache")
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "no-referrer")
         return resp

@@ -195,7 +195,9 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   на `<ip>.sslip.io`, `install|update|status|logs|check`; тест — `tests/test_vps.py`, инструкция — `docs/hosting.md`.
 - `.github/workflows/pages.yml` — публикация дашборда для iPhone на GitHub Pages.
 - `static/vault-template.json` — генерируется `scripts/build_template.py` из `vault-template/` (CI проверяет).
-  **При изменении css/js поднимайте `?v=N` в `index.html`, `app.js` и `sw.js` (CACHE)**.
+  **При изменении css/js поднимайте `?v=N` во ВСЕХ импортах `webapp/` и `V` в `sw.js`** — не только в `index.html`
+  и `app.js`: иначе браузер держит старые модули по прежнему URL и интерфейс обновляется наполовину. Версии
+  сверяет `tests/js/assets-version.test.mjs`; статика отдаётся с `Cache-Control: no-cache` (перепроверка по ETag).
 - `vault-template/` — стартовое хранилище. `sync/` и `docs/sync.md` — LiveSync (CouchDB + мост) и Syncthing.
 
 ## Правила
