@@ -13,6 +13,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from .finance import guess_category
+from .gdrive import DriveError
 from .operators import APP_LEVELS, BUILTIN_APPS, OWNER_KEY, PERMS
 from .core import Jarvis
 from .gaze import save_record as save_gaze_record
@@ -388,8 +389,21 @@ def build_app(jarvis: Jarvis) -> web.Application:
         apps += [{"id": a["note"], "name": a["name"], "icon": a["icon"], "kind": a["kind"]}
                  for a in j.act_apps()["apps"]]
         return {"operators": ops, "perms": PERMS, "can_invite": auth.enabled, "apps": apps, "app_levels": APP_LEVELS,
+                "drive": j.drive.status(),
                 "projects": [{"name": p.name, "status": p.status} for p in j.projects.list()],
                 "owner_mode": jarvis.operators.owner_mode or ("code" if cfg.access_code else "")}
+
+    async def gdrive_get(request):
+        """Файлы Google Drive для панели «Команда». Только владелец; без сети, если Диск не подключён."""
+        owner_only(request)
+        out = {**j.drive.status(), "files": []}
+        if not out["ready"]:
+            return ok(out)
+        try:
+            out["files"] = await j.drive.list(request.query.get("q", ""), folder=request.query.get("folder", ""))
+        except DriveError as e:
+            out["error"] = str(e)
+        return ok(out)
 
     async def admin_ops(request):
         owner_only(request)
@@ -399,7 +413,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
         if not auth.enabled:
             raise ValueError("сначала задайте пароль владельца — без него оператор мог бы стать владельцем")
         op, token = jarvis.operators.create(str(d.get("name") or ""), d.get("perms"), str(d.get("note") or ""),
-                                            d.get("projects"), d.get("apps"), d.get("notes"))
+                                            d.get("projects"), d.get("apps"), d.get("notes"), d.get("drive"))
         await j.log(f"Приглашён оператор {op['name']}")
         return ok({**ops_overview(), "created": op, "token": token})
 
@@ -424,7 +438,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
             else:
                 jarvis.operators.update(op_id, name=d.get("name"), perms=d.get("perms"), active=d.get("active"),
                                         note=d.get("note"), projects=d.get("projects"), apps=d.get("apps"),
-                                        notes=d.get("notes"))
+                                        notes=d.get("notes"), drive=d.get("drive"))
         except KeyError as e:
             raise ValueError(str(e).strip("'")) from None
         await j.hub.emit("operators", {"id": op_id}, log_it=False)
@@ -516,6 +530,20 @@ def build_app(jarvis: Jarvis) -> web.Application:
     async def op_projects(request):
         op = me(request)
         return ok({"projects": j.op_projects(op), "can_add": "tasks_assign" in op.get("perms", [])})  # только общие
+
+    async def op_drive(request):
+        op = me(request)
+        return ok({"files": j.op_drive(op), "ready": j.drive.ready})
+
+    async def op_drive_file(request):
+        """GET — текст открытого файла; POST {action: save} — копия в свою папку (если уровень «копия»)."""
+        op = me(request)
+        file_id = request.match_info["id"]
+        if request.method == "POST":
+            d = await body(request)
+            if str(d.get("action") or "") == "save":
+                return ok(await j.op_drive_save(op, file_id))
+        return ok(await j.op_drive_content(op, file_id))
 
     async def op_apps(request):
         return ok({"apps": j.op_apps(me(request))})
@@ -918,6 +946,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_post("/api/setup", setup)
     r.add_get("/api/invite", invite_info)
     r.add_post("/api/invite/accept", invite_accept)
+    r.add_get("/api/gdrive", gdrive_get)
     r.add_route("*", "/api/admin/operators", admin_ops)
     r.add_post("/api/admin/operators/{id}", admin_op)
     r.add_post("/api/admin/password", admin_password)
@@ -932,6 +961,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/op/projects", op_projects)
     r.add_get("/api/op/notes", op_notes)
     r.add_get("/api/op/apps", op_apps)
+    r.add_get("/api/op/drive", op_drive)
+    r.add_route("*", "/api/op/drive/{id}", op_drive_file)
     r.add_route("*", "/api/op/appdata", op_appdata)
     r.add_route("*", "/api/appdata", appdata)
     r.add_route("*", "/api/op/note", op_note)

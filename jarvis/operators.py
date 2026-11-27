@@ -3,7 +3,9 @@
 Владелец (корень) приглашает оператора ссылкой, задаёт права и общие проекты, переписывается с ним и поручает задачи
 и встречи. У оператора — свой кабинет: порученное (отметить выполненное), личные задачи и заметки (своя папка в
 хранилище), общие с ним проекты, приложения из каталога (apps: открывать / управлять), доверенные заметки владельца
-(notes: заметка или папка, только чтение или с правкой), чат с владельцем и свои устройства (выйти на любом).
+(notes: заметка или папка, только чтение или с правкой), файлы «Диска ядра» (drive: отмеченные владельцем файлы
+Google Drive — только просмотр или ещё и копия к себе; см. gdrive.py), чат с владельцем и свои устройства
+(выйти на любом).
 
 Вход оператора: по одноразовой ссылке-приглашению он задаёт пароль, дальше входит по имени и паролю с любого
 устройства. Каждое устройство — отдельная сессия: видно, откуда и когда заходили, любую можно завершить.
@@ -33,6 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .gdrive import ID_RE as DRIVE_ID_RE, LEVELS as DRIVE_LEVELS
 from .vault import Vault
 
 PERMS = {
@@ -240,7 +243,7 @@ class Operators:
             status = "invited" if invite.get("expires", 0) > now else "expired"
         return {"id": op["id"], "name": op["name"], "slug": op["slug"], "tag": TAG_PREFIX + op["slug"],
                 "perms": op.get("perms", []), "projects": op.get("projects", []), "apps": op.get("apps", []),
-                "notes": op.get("notes", []), "active": op.get("active", True),
+                "notes": op.get("notes", []), "drive": op.get("drive", []), "active": op.get("active", True),
                 "status": status, "created": op.get("created"), "joined": op.get("joined"),
                 "last_seen": op.get("last_seen"), "invite_expires": invite.get("expires"), "note": op.get("note", ""),
                 "chat": op.get("chat", ""), "folder": self.folder(op), "has_password": bool(op.get("password")),
@@ -301,13 +304,34 @@ class Operators:
             out[path] = bool(n.get("edit"))
         return [{"path": k, "edit": v} for k, v in sorted(out.items())][:MAX_SHARED]
 
+    @staticmethod
+    def _drive(items: Any) -> list[dict]:
+        """Файлы «Диска ядра»: [{id, name, level}] — только существующие уровни и правдоподобные id.
+
+        Имя хранится рядом с id, чтобы панель показывала, что выдано, даже когда Диск недоступен.
+        Ничего о владельце аккаунта здесь нет и быть не может: наружу уходят только эти три поля.
+        """
+        out: dict[str, dict] = {}
+        for it in items or []:
+            if isinstance(it, str):
+                it = {"id": it}
+            if not isinstance(it, dict):
+                continue
+            fid = str(it.get("id") or "").strip()
+            level = str(it.get("level") or "view")
+            name = re.sub(r"[\\/\n\r\t]+", " ", str(it.get("name") or "")).strip()[:200]
+            if not DRIVE_ID_RE.match(fid) or level not in DRIVE_LEVELS:
+                continue
+            out[fid] = {"id": fid, "name": name or "Файл Диска", "level": level}
+        return list(out.values())[:MAX_SHARED]
+
     def create(self, name: str, perms: list[str] | None = None, note: str = "",
                projects: list[str] | None = None, apps: list | None = None,
-               notes: list | None = None) -> tuple[dict, str]:
+               notes: list | None = None, drive: list | None = None) -> tuple[dict, str]:
         name = self._check_name(name)
         op = {"id": secrets.token_hex(6), "name": name, "slug": slug(name), "perms": self._perms(perms),
               "projects": self._projects(projects), "apps": self._apps(apps), "notes": self._notes(notes),
-              "active": True, "created": int(time.time()),
+              "drive": self._drive(drive), "active": True, "created": int(time.time()),
               "note": note.strip()[:300], "chat": f"{self.chat_dir}/{name}.md", "read": {"owner": 0, "operator": 0},
               "sessions": {}}
         self.data["operators"].append(op)
@@ -371,7 +395,7 @@ class Operators:
 
     def update(self, op_id: str, *, name: str | None = None, perms: list[str] | None = None,
                active: bool | None = None, note: str | None = None, projects: list[str] | None = None,
-               apps: list | None = None, notes: list | None = None) -> dict:
+               apps: list | None = None, notes: list | None = None, drive: list | None = None) -> dict:
         op = self._find(op_id)
         if name is not None and name.strip() != op["name"]:
             new = self._check_name(name, skip=op_id)
@@ -391,6 +415,8 @@ class Operators:
             op["apps"] = self._apps(apps)
         if notes is not None:
             op["notes"] = self._notes(notes)
+        if drive is not None:
+            op["drive"] = self._drive(drive)
         if note is not None:
             op["note"] = note.strip()[:300]
         if active is not None and bool(active) != op.get("active", True):

@@ -100,6 +100,14 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `/api/admin/…`, окно «Команда» `static/team-admin.js` (вкладка «Доступ»: права, проекты, приложения, доверенные заметки); кабинет оператора — `static/operator-app.js`; без DOM —
   `static/team.js`. Только сервер (в JS-ядре для iPhone операторов нет намеренно). Тесты — `tests/test_operators.py`,
   `tests/js/team.test.mjs`.
+- **«Диск ядра»** — `jarvis/gdrive.py`: Google Drive только на чтение (refresh-токен, право `drive.readonly`).
+  Список файлов без папок, документы Google — экспорт в markdown, текстовые — как есть; наружу уходят только
+  `id/имя/вид/размер/дата` — ни владельцев файла, ни почты аккаунта, ни путей (белый список в `Drive._item`).
+  Владелец отмечает файлы оператору: «Команда» → «Доступ» → «Диск ядра» (`drive: [{id, name, level: view|copy}]`
+  в `operators.py`); оператор видит их вкладкой «Диск», «копия» кладёт заметку в `Команда/<Имя>/Диск/`.
+  API — `GET /api/gdrive` (владелец), `GET/POST /api/op/drive[/{id}]` (оператор); окна `team-admin.js`,
+  `operator-app.js`. Настройки — `GDRIVE_*` (`config.py`, `.env.example`), инструкция — `docs/drive.md`,
+  тест — `tests/test_gdrive.py`. Только сервер: в JS-ядре для iPhone Диска нет.
 - **Встречи и поручения** — `jarvis/meetings.py` (+ `core/meetings.js`): обычные задачи Obsidian Tasks, встреча —
   тег `#встреча`, время `🕒 15:00`, место `📍 …`; поручение — тег `#оператор/<имя>`. Отметить «состоялась» — выполнить
   задачу. `GET /api/meetings`, `POST /api/admin/assign`, интент `meetings` («встречи на завтра»), панель «Встречи».

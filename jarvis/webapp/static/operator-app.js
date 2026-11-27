@@ -7,7 +7,8 @@ import { chatDays, seen } from "./team.js?v=27";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "");
 const STATUS = { idea: "идея", active: "в работе", paused: "на паузе", done: "завершён" };
-const TABS = [["tasks", "Задачи"], ["meet", "Встречи"], ["proj", "Проекты"], ["apps", "Приложения"], ["notes", "Заметки"], ["chat", "Чат"], ["me", "Устройства"]];
+const TABS = [["tasks", "Задачи"], ["meet", "Встречи"], ["proj", "Проекты"], ["apps", "Приложения"], ["drive", "Диск"], ["notes", "Заметки"], ["chat", "Чат"], ["me", "Устройства"]];
+const KIND = { doc: "📄", sheet: "📊", slides: "🖼", text: "📝", file: "📎", folder: "📁" };
 const LEVEL = { use: "открывать", manage: "управлять" };
 
 export class OperatorApp {
@@ -135,6 +136,33 @@ export class OperatorApp {
   }
 
   // ---------- личные заметки ----------
+  // ---------- «Диск ядра»: только то, что открыл владелец, и без его данных ----------
+  async tab_drive() {
+    const r = await this.api("/api/op/drive");
+    if (!r.files.length) {
+      return `<div class="tw-work single"><section class="tw-card"><h3>Диск ядра</h3>
+        <p class="empty">${r.ready ? "Владелец пока не открыл вам файлы с Диска." : "Диск не подключён на сервере."}</p></section></div>`;
+    }
+    return `<div class="tw-work single"><section class="tw-card"><h3>Диск ядра · ${r.files.length}</h3>
+      <p class="muted small">Только то, что открыл владелец: чьи это файлы и где они лежат, не показывается.</p>
+      <ul class="tw-notes">${r.files.map((f) => `<li><span class="tw-note-path">${KIND[f.kind] || "📄"} ${esc(f.name)}</span>
+        <button class="btn ghost" data-drive-open="${esc(f.id)}">Открыть</button></li>`).join("")}</ul>
+      <div data-el="drive-text"></div></section></div>`;
+  }
+
+  async openDrive(id) {
+    const box = this.el("drive-text");
+    if (!box) return;
+    box.innerHTML = `<p class="muted">Загружаю…</p>`;
+    try {
+      const f = await this.api(`/api/op/drive/${encodeURIComponent(id)}`);
+      box.innerHTML = `<section class="tw-card"><h3>${esc(f.name)}</h3>
+        <div class="op-note-body">${renderMarkdown(f.text)}</div>
+        ${f.can_save ? `<div class="mw-acts"><button class="btn ghost" data-drive-save="${esc(f.id)}">Сохранить копию к себе</button></div>` : ""}
+        <p class="muted small">Источник: Диск ядра. ${f.can_save ? "" : "Владелец открыл файл только для просмотра."}</p></section>`;
+    } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  }
+
   async tab_notes() {
     const r = await this.api("/api/op/notes");
     const list = `<aside class="op-notes-list">
@@ -224,6 +252,16 @@ export class OperatorApp {
     if (appOpen) { this.openApp(this.apps[+appOpen.dataset.appOpen]).catch((err) => this.toast(err.message, "error")); return; }
     const appNote = t.closest("[data-app-note]");
     if (appNote) { this.tab = "notes"; this.openNote(appNote.dataset.appNote, true).catch((err) => this.toast(err.message, "error")); return; }
+    const driveOpen = t.closest("[data-drive-open]");
+    if (driveOpen) { this.openDrive(driveOpen.dataset.driveOpen).catch((err) => this.toast(err.message, "error")); return; }
+    const driveSave = t.closest("[data-drive-save]");
+    if (driveSave) {
+      try {
+        await this.api(`/api/op/drive/${encodeURIComponent(driveSave.dataset.driveSave)}`, { method: "POST", body: { action: "save" } });
+        this.toast("Копия сохранена в вашу папку «Диск»", "ok");
+      } catch (err) { this.toast(err.message, "error"); }
+      return;
+    }
     const rev = t.closest("[data-revoke]");
     if (rev) { await this.call(() => this.api("/api/sessions", { method: "POST", body: { action: "revoke", sid: rev.dataset.revoke } }), "Устройство отключено"); return; }
     const b = t.closest("[data-act]");

@@ -6,6 +6,8 @@ import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=27";
 import { devicesList } from "./operator-app.js?v=27";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "без даты");
+// значки файлов «Диска ядра» (gdrive.py): вид приходит с сервера, личности владельца в нём нет
+const KIND = { doc: "📄", sheet: "📊", slides: "🖼", text: "📝", file: "📎", folder: "📁" };
 
 export class TeamWindow {
   constructor(root, { api, toast, store, today, standalone = false }) {
@@ -76,7 +78,7 @@ export class TeamWindow {
         <input name="password" type="password" minlength="6" placeholder="Пароль владельца (от 6 символов)" required autocomplete="new-password">
         <button class="btn primary">Задать пароль</button></form>` : "";
     let main;
-    if (this.creating) main = this.newForm();
+    if (this.creating) main = await this.newForm();
     else if (!op) main = null;
     else main = await this.opPage(op);
     const list = `<aside class="tw-list">
@@ -94,13 +96,14 @@ export class TeamWindow {
     return `${lock}<div class="tw-grid">${list}<section class="tw-main">${main}</section></div>`;
   }
 
-  newForm() {
+  async newForm() {
     return `<form class="tw-card" data-form="new"><h3>Новый оператор</h3>
       <label>Имя<input name="name" required maxlength="60" placeholder="Анна" autocomplete="off"></label>
       <label>Заметка для себя<input name="note" maxlength="300" placeholder="например: ассистент, бухгалтерия" autocomplete="off"></label>
       <fieldset class="tw-perms"><legend>Права</legend>${this.permBoxes([])}</fieldset>
       <fieldset class="tw-perms"><legend>Общие проекты</legend>${this.projectBoxes([])}</fieldset>
       <fieldset class="tw-perms"><legend>Приложения</legend>${this.appRows([])}</fieldset>
+      <fieldset class="tw-perms"><legend>Диск ядра</legend>${await this.driveBox([])}</fieldset>
       <div class="fw-form-acts"><button class="btn primary">Создать и получить ссылку</button>
       <button type="button" class="btn ghost" data-act="cancel-new">Отмена</button></div></form>`;
   }
@@ -156,7 +159,38 @@ export class TeamWindow {
     const apps = [...f.querySelectorAll("select[name=app]")].filter((x) => x.value).map((x) => ({ id: x.dataset.appId, level: x.value }));
     const edit = new Set([...f.querySelectorAll("input[name=note-edit]:checked")].map((x) => x.value));
     const notes = [...f.querySelectorAll("[data-note-row]")].map((li) => ({ path: li.dataset.noteRow, edit: edit.has(li.dataset.noteRow) }));
-    return { apps, notes };
+    // «Диск ядра»: имя едет рядом с id, чтобы панель знала, что выдано, даже когда Диск недоступен
+    const drive = [...f.querySelectorAll("select[name=drive]")].filter((x) => x.value)
+      .map((x) => ({ id: x.dataset.driveId, name: x.dataset.driveName, level: x.value }));
+    return { apps, notes, drive };
+  }
+
+  // «Диск ядра»: владелец отмечает файлы Google Drive, которые видит оператор. Сервер отдаёт только
+  // имя, вид, размер и дату — без владельцев файла, почты аккаунта и путей по Диску.
+  driveRow(f, level) {
+    const levels = (this.data.drive && this.data.drive.levels) || { view: "Просмотр", copy: "Просмотр и копия" };
+    return `<label class="tw-app-row"><span class="tw-app-ic">${KIND[f.kind] || "📄"}</span>
+      <span class="tw-app-name">${esc(f.name)} <small class="muted">${f.size_label ? esc(f.size_label) : ""}${f.modified ? ` · ${esc(f.modified.slice(0, 10))}` : ""}</small></span>
+      <select name="drive" data-drive-id="${esc(f.id)}" data-drive-name="${esc(f.name)}"><option value="">Не открыт</option>
+        ${Object.entries(levels).map(([k, l]) => `<option value="${k}" ${level === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+  }
+
+  async driveBox(on) {
+    const st = this.data.drive || {};
+    const grants = on || [];
+    if (!st.ready) {
+      const need = (st.missing || []).join(", ");
+      return `<p class="muted small">Диск не подключён${need ? `: нужны ${esc(need)}` : ""}. Как выпустить токен — <code>docs/drive.md</code>.</p>`;
+    }
+    let files = [], error = "";
+    try { files = (await this.api("/api/gdrive")).files || []; } catch (e) { error = e.message; }
+    const level = Object.fromEntries(grants.map((g) => [g.id, g.level]));
+    const rows = files.map((f) => this.driveRow(f, level[f.id]));
+    const extra = grants.filter((g) => !files.some((f) => f.id === g.id))
+      .map((g) => this.driveRow({ id: g.id, name: g.name, kind: "file" }, g.level));
+    const body = rows.length || extra.length ? `<div class="tw-apps">${rows.concat(extra).join("")}</div>`
+      : `<p class="muted small">${error ? esc(error) : "На Диске нет файлов" + (st.folder ? " в выбранной папке." : ".")}</p>`;
+    return `${body}<p class="muted small">Оператор увидит только отмеченное и без ваших данных: ни почты, ни владельцев файла, ни путей. «Копия» — ещё и сохранение заметкой в свою папку. Папки не выдаются: только файлы.</p>`;
   }
 
   linkBox(token) {
@@ -240,6 +274,7 @@ export class TeamWindow {
       <fieldset class="tw-perms"><legend>Общие проекты</legend>${this.projectBoxes(op.projects || [])}</fieldset>
       <fieldset class="tw-perms"><legend>Приложения</legend>${this.appRows(op.apps || [])}</fieldset>
       <fieldset class="tw-perms"><legend>Доверенные заметки</legend>${await this.notesBox(op.notes || [])}</fieldset>
+      <fieldset class="tw-perms"><legend>Диск ядра</legend>${await this.driveBox(op.drive || [])}</fieldset>
       <p class="muted small">Тег поручений: <code>#${esc(op.tag)}</code> — им можно отмечать задачи прямо в Obsidian. Личная папка: <code>${esc(op.folder || "")}</code>.</p>
       <div class="fw-form-acts"><button class="btn primary">Сохранить</button></div></form>
       <section class="tw-card"><h3>Устройства · ${devices.length}</h3>
@@ -357,7 +392,7 @@ export class TeamWindow {
         await this.api("/api/admin/password", { method: "POST", body: { password: v.password } });
         this.toast("Пароль владельца задан — теперь вход только по нему", "ok");
       } else if (f.dataset.form === "new") {
-        const r = await this.api("/api/admin/operators", { method: "POST", body: { name: v.name, note: v.note, perms: fd.getAll("perm"), projects: fd.getAll("project"), apps: this.collectAccess(f).apps } });
+        const r = await this.api("/api/admin/operators", { method: "POST", body: { name: v.name, note: v.note, perms: fd.getAll("perm"), projects: fd.getAll("project"), ...this.collectAccess(f) } });
         this.creating = false; this.sel = r.created.id; this.sub = "access";
         this.token = { op: r.created.id, value: r.token };
         this.toast(`Оператор «${r.created.name}» создан — отправьте ему ссылку`, "ok");
