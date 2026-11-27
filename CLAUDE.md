@@ -1,6 +1,9 @@
 # Atom — контекст для разработки
 
 Этот файл читают Claude Code и `@claude` в GitHub. При заметных изменениях — обновляйте.
+Короткий вход для любого агента и человека — [AGENTS.md](AGENTS.md) (контекст за пять минут и развёртывание
+среды одной командой); правила веток и PR — [CONTRIBUTING.md](CONTRIBUTING.md), схема потока —
+[docs/branches.md](docs/branches.md).
 
 ## Что это
 Личный ассистент владельца (@c4erepk0) — **Atom** (бывший Jarvis): голос + дашборд (тёплый графит с красным
@@ -197,6 +200,7 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 
 ## Команды
 ```bash
+bash scripts/bootstrap.sh                   # среда с нуля: .venv, зависимости, .env
 make dev / make test / make lint / make check / make run
 python -m pytest tests/test_commands.py -q   # один набор
 node --test tests/js/*.test.mjs              # ядро для iPhone
