@@ -1,8 +1,8 @@
 // Окно «Финансы»: обзор месяца и динамика, категории к среднему, регулярные платежи, активы с котировками, долги.
 // Данные — /api/finance, /api/finance/analytics, /api/finance/assets (на iPhone без сервера отвечает core/*.js).
 // Операции в одно касание: частые траты и неоплаченные регулярные платежи вносятся кнопкой.
-import { donut, esc, money, sparkline, trendBars } from "./fin-charts.js?v=27";
-import { countTo } from "./motion.js?v=27";
+import { donut, esc, money, sparkline, trendBars } from "./fin-charts.js?v=30";
+import { countTo } from "./motion.js?v=30";
 
 const TABS = [["overview", "Обзор"], ["categories", "Категории"], ["recurring", "Регулярные"], ["assets", "Активы"], ["debts", "Долги"]];
 const KIND_OPTIONS = [["акция", "Акции (Мосбиржа)"], ["фонд", "Фонд / БПИФ"], ["облигация", "Облигация"], ["крипто", "Крипта"],
@@ -150,7 +150,7 @@ export class FinanceWindow {
     const m = this.data.analytics?.matrix;
     if (!host || !m || !m.categories.length) return;
     try {
-      const { Finance3D } = await import("./fin3d.js?v=27");
+      const { Finance3D } = await import("./fin3d.js?v=30");
       if (!host.isConnected) return;
       this.f3d = new Finance3D(host, m, { currency: this.cur() });
     } catch {

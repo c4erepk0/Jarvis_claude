@@ -1,8 +1,8 @@
 // 3D-карта расходов: столбики «категория × месяц» (three.js). Вращать — мышью или пальцем, колёсико — масштаб,
 // наведение — сумма. Столбики вырастают при открытии. Данные — analytics.matrix, раскладка — barGrid (fin-charts.js).
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
-import { barGrid, money, monthShort } from "./fin-charts.js?v=27";
-import { easeOutCubic, reduced } from "./motion.js?v=27";
+import { barGrid, money, monthShort } from "./fin-charts.js?v=30";
+import { easeOutCubic, reduced } from "./motion.js?v=30";
 
 const COLORS = [0xff453a, 0x4cd990, 0xffb347, 0x8fa8ff, 0xd58cff, 0x5fd3e6];
 

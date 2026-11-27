@@ -6,7 +6,7 @@
 //
 // Анонимность обеспечивает сервер (jarvis/gdrive.py): сюда не приходят ни почта аккаунта, ни владельцы
 // файлов, ни пути по Диску — только id, имя, вид, размер и дата. Поэтому в интерфейсе и нет слова «Google».
-import { esc } from "./markdown.js?v=29";
+import { esc } from "./markdown.js?v=30";
 
 const KIND = { doc: "📄", sheet: "📊", slides: "🖼", text: "📝", file: "📎", folder: "📁" };
 const LEVEL = { view: "Просмотр", upload: "Загрузка", copy: "Копия" };
