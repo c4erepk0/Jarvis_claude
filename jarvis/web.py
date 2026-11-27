@@ -9,12 +9,12 @@ import logging
 import re
 import time
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from aiohttp import WSMsgType, web
 
 from .finance import guess_category
-from .gdrive import DriveError
+from .fileshare import LEVELS as FILE_LEVELS, safe_for_download
 from .operators import APP_LEVELS, BUILTIN_APPS, BUILTIN_INFO, OWNER_KEY, PERMS
 from .core import Jarvis
 from .gaze import save_record as save_gaze_record
@@ -396,22 +396,9 @@ def build_app(jarvis: Jarvis) -> web.Application:
         apps += [{"id": a["note"], "name": a["name"], "icon": a["icon"], "kind": a["kind"]}
                  for a in j.act_apps()["apps"]]
         return {"operators": ops, "perms": PERMS, "can_invite": auth.enabled, "apps": apps, "app_levels": APP_LEVELS,
-                "drive": j.drive.status(),
+                "exchange": {"levels": FILE_LEVELS, **j.share.usage()},
                 "projects": [{"name": p.name, "status": p.status} for p in j.projects.list()],
                 "owner_mode": jarvis.operators.owner_mode or ("code" if cfg.access_code else "")}
-
-    async def gdrive_get(request):
-        """Файлы Google Drive для панели «Команда». Только владелец; без сети, если Диск не подключён."""
-        owner_only(request)
-        out = {**j.drive.status(), "files": []}
-        if not out["ready"]:
-            return ok(out)
-        try:
-            out["files"] = await j.drive.list(request.query.get("q", ""), folder=request.query.get("folder", ""),
-                                              folders=True)
-        except DriveError as e:
-            out["error"] = str(e)
-        return ok(out)
 
     async def _upload_field(request) -> tuple[str, str, str, bytes]:
         """Поле file из формы загрузки: (имя, тип, папка, байты)."""
@@ -428,45 +415,47 @@ def build_app(jarvis: Jarvis) -> web.Application:
         mime = str(getattr(field, "content_type", "") or "application/octet-stream").split(";")[0]
         return name, mime, str(form.get("folder") or ""), content
 
-    async def drive_browse(request):
-        owner_only(request)
-        try:
-            return ok(await j.drive_browse(request.query.get("folder", ""), request.query.get("q", "")))
-        except DriveError as e:
-            return ok({**j.drive.status(), "folder": {"id": "", "name": "Диск"}, "files": [], "error": str(e)})
+    def file_response(request, data: bytes, mime: str, name: str) -> web.Response:
+        """Файл наружу: картинку можно показать (?inline=1), остальное — только скачать."""
+        inline = request.query.get("inline") == "1" and mime.startswith("image/")
+        disp = "inline" if inline else "attachment"
+        disposition = "{}; filename=\"{}\"; filename*=UTF-8''{}".format(
+            disp, safe_for_download(name), quote(name))
+        return web.Response(body=data, content_type=mime,
+                            headers={"Content-Disposition": disposition, "Cache-Control": "private, no-store"})
 
-    async def drive_mkdir(request):
+    async def exchange_browse(request):
+        owner_only(request)
+        return ok(j.exchange_browse(request.query.get("folder", ""), request.query.get("q", "")))
+
+    async def exchange_mkdir(request):
         owner_only(request)
         d = await body(request)
-        return ok(await j.drive_mkdir(str(d.get("name") or ""), str(d.get("parent") or "")))
+        return ok(await j.exchange_mkdir(str(d.get("name") or ""), str(d.get("parent") or "")))
 
-    async def drive_upload(request):
+    async def exchange_upload(request):
         owner_only(request)
         name, mime, folder, data = await _upload_field(request)
-        return ok(await j.drive_upload(name, data, mime, folder))
+        return ok(await j.exchange_upload(name, data, mime, folder))
 
-    async def drive_share(request):
+    async def exchange_delete(request):
+        owner_only(request)
+        d = await body(request)
+        return ok(await j.exchange_delete(str(d.get("id") or "")))
+
+    async def exchange_share(request):
         owner_only(request)
         d = await body(request)
         try:
-            return ok(await j.drive_share(str(d.get("op") or ""), d, str(d.get("level") or "")))
+            return ok(j.exchange_share(str(d.get("op") or ""), str(d.get("path") or ""),
+                                       str(d.get("name") or ""), str(d.get("level") or "")))
         except KeyError as e:
             raise ValueError(str(e).strip("'")) from None
 
-    async def drive_file(request):
+    async def exchange_raw(request):
         owner_only(request)
-        try:
-            return ok(await j.drive.content(request.match_info["id"]))
-        except DriveError as e:
-            raise ValueError(str(e)) from None
-
-    async def drive_raw(request):
-        owner_only(request)
-        try:
-            data, mime = await j.drive.raw(request.match_info["id"])
-        except DriveError as e:
-            raise ValueError(str(e)) from None
-        return web.Response(body=data, content_type=mime, headers={"Cache-Control": "private, max-age=60"})
+        data, mime, name = j.exchange_read(request.match_info["id"])
+        return file_response(request, data, mime, name)
 
     async def admin_ops(request):
         owner_only(request)
@@ -476,7 +465,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
         if not auth.enabled:
             raise ValueError("сначала задайте пароль владельца — без него оператор мог бы стать владельцем")
         op, token = jarvis.operators.create(str(d.get("name") or ""), d.get("perms"), str(d.get("note") or ""),
-                                            d.get("projects"), d.get("apps"), d.get("notes"), d.get("drive"))
+                                            d.get("projects"), d.get("apps"), d.get("notes"), d.get("files"))
         await j.log(f"Приглашён оператор {op['name']}")
         return ok({**ops_overview(), "created": op, "token": token})
 
@@ -501,7 +490,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
             else:
                 jarvis.operators.update(op_id, name=d.get("name"), perms=d.get("perms"), active=d.get("active"),
                                         note=d.get("note"), projects=d.get("projects"), apps=d.get("apps"),
-                                        notes=d.get("notes"), drive=d.get("drive"))
+                                        notes=d.get("notes"), files=d.get("files"))
         except KeyError as e:
             raise ValueError(str(e).strip("'")) from None
         await j.hub.emit("operators", {"id": op_id}, log_it=False)
@@ -594,44 +583,25 @@ def build_app(jarvis: Jarvis) -> web.Application:
         op = me(request)
         return ok({"projects": j.op_projects(op), "can_add": "tasks_assign" in op.get("perms", [])})  # только общие
 
-    async def op_drive(request):
+    async def op_exchange(request):
         op = me(request)
-        return ok({"files": j.op_drive(op), "ready": j.drive.ready, "can_write": j.drive.cfg.can_write})
+        return ok({"files": j.op_files(op)})
 
-    async def op_drive_list(request):
+    async def op_exchange_list(request):
         op = me(request)
-        try:
-            return ok(await j.op_drive_list(op, request.query.get("folder", "")))
-        except DriveError as e:
-            raise ValueError(str(e)) from None
+        return ok(j.op_exchange_browse(op, request.query.get("folder", "")))
 
-    async def op_drive_upload(request):
+    async def op_exchange_upload(request):
         op = me(request)
         name, mime, folder, data = await _upload_field(request)
         if not folder:
             raise ValueError("выберите папку для загрузки")
-        try:
-            return ok(await j.op_drive_upload(op, folder, name, data, mime))
-        except DriveError as e:
-            raise ValueError(str(e)) from None
+        return ok(await j.op_exchange_upload(op, folder, name, data, mime))
 
-    async def op_drive_raw(request):
+    async def op_exchange_raw(request):
         op = me(request)
-        try:
-            data, mime = await j.op_drive_raw(op, request.match_info["id"])
-        except DriveError as e:
-            raise ValueError(str(e)) from None
-        return web.Response(body=data, content_type=mime, headers={"Cache-Control": "private, max-age=60"})
-
-    async def op_drive_file(request):
-        """GET — текст открытого файла; POST {action: save} — копия в свою папку (если уровень «копия»)."""
-        op = me(request)
-        file_id = request.match_info["id"]
-        if request.method == "POST":
-            d = await body(request)
-            if str(d.get("action") or "") == "save":
-                return ok(await j.op_drive_save(op, file_id))
-        return ok(await j.op_drive_content(op, file_id))
+        data, mime, name = j.op_exchange_read(op, request.match_info["id"])
+        return file_response(request, data, mime, name)
 
     async def op_apps(request):
         return ok({"apps": j.op_apps(me(request))})
@@ -1034,13 +1004,12 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_post("/api/setup", setup)
     r.add_get("/api/invite", invite_info)
     r.add_post("/api/invite/accept", invite_accept)
-    r.add_get("/api/gdrive", gdrive_get)
-    r.add_get("/api/drive", drive_browse)
-    r.add_post("/api/drive/mkdir", drive_mkdir)
-    r.add_post("/api/drive/upload", drive_upload)
-    r.add_post("/api/drive/share", drive_share)
-    r.add_get("/api/drive/file/{id}", drive_file)
-    r.add_get("/api/drive/raw/{id}", drive_raw)
+    r.add_get("/api/exchange", exchange_browse)
+    r.add_post("/api/exchange/mkdir", exchange_mkdir)
+    r.add_post("/api/exchange/upload", exchange_upload)
+    r.add_post("/api/exchange/delete", exchange_delete)
+    r.add_post("/api/exchange/share", exchange_share)
+    r.add_get("/api/exchange/raw/{id:.+}", exchange_raw)
     r.add_route("*", "/api/admin/operators", admin_ops)
     r.add_post("/api/admin/operators/{id}", admin_op)
     r.add_post("/api/admin/password", admin_password)
@@ -1055,11 +1024,10 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/op/projects", op_projects)
     r.add_get("/api/op/notes", op_notes)
     r.add_get("/api/op/apps", op_apps)
-    r.add_get("/api/op/drive", op_drive)
-    r.add_get("/api/op/drive/list", op_drive_list)
-    r.add_post("/api/op/drive/upload", op_drive_upload)
-    r.add_get("/api/op/drive/raw/{id}", op_drive_raw)
-    r.add_route("*", "/api/op/drive/{id}", op_drive_file)
+    r.add_get("/api/op/exchange", op_exchange)
+    r.add_get("/api/op/exchange/list", op_exchange_list)
+    r.add_post("/api/op/exchange/upload", op_exchange_upload)
+    r.add_get("/api/op/exchange/raw/{id:.+}", op_exchange_raw)
     r.add_route("*", "/api/op/appdata", op_appdata)
     r.add_route("*", "/api/appdata", appdata)
     r.add_route("*", "/api/op/note", op_note)

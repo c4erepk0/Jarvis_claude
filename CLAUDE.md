@@ -100,19 +100,15 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `/api/admin/…`, окно «Команда» `static/team-admin.js` (вкладка «Доступ»: права, проекты, приложения, доверенные заметки); кабинет оператора — `static/operator-app.js`; без DOM —
   `static/team.js`. Только сервер (в JS-ядре для iPhone операторов нет намеренно). Тесты — `tests/test_operators.py`,
   `tests/js/team.test.mjs`.
-- **«Диск ядра»** — `jarvis/gdrive.py`: Google Drive только на чтение (refresh-токен, право `drive.readonly`).
-  Список файлов без папок, документы Google — экспорт в markdown, текстовые — как есть; наружу уходят только
-  `id/имя/вид/размер/дата` — ни владельцев файла, ни почты аккаунта, ни путей (белый список в `Drive._item`).
-  Владелец отмечает файлы оператору: «Команда» → «Доступ» → «Диск ядра» (`drive: [{id, name, level: view|copy}]`
-  в `operators.py`); оператор видит их вкладкой «Диск», «копия» кладёт заметку в `Команда/<Имя>/Диск/`.
-  **Приложение «Диск»** в каталоге (`static/drive.js`, `builtin:drive`, `server: true`): папки, загрузка
-  файлов и отметки «кому из операторов что открыто»; оператору выдаётся `builtin:drive` и папки с уровнем
-  `view`/`upload` (файлы — `view`/`copy`), поддерево выданной папки проверяется по родителям (`Drive.is_within`).
-  Запись — только при `GDRIVE_WRITE=1` и токене с правом `drive`: загрузка файлов (до 32 МБ) и создание папок,
-  удаления на Диске нет. API — `/api/drive[/mkdir|/upload|/share|/file|/raw]` (владелец), `/api/op/drive[/list|/upload|/raw|/{id}]`
-  (оператор), `GET /api/gdrive` — плоский список для «Команды»; окна `drive.js`, `team-admin.js`, `operator-app.js`.
-  Настройки — `GDRIVE_*` (`config.py`, `.env.example`), инструкция — `docs/drive.md`, тесты —
-  `tests/test_gdrive.py`, `tests/js/apps-catalog.test.mjs`. Только сервер: в JS-ядре для iPhone Диска нет.
+- **«Обмен файлами»** — `jarvis/fileshare.py`: папки на своём сервере (`data/exchange/`, вне хранилища Obsidian —
+  бинарники не синхронизируются). Приложение каталога `builtin:exchange` (`static/exchange.js`, `server: true`):
+  владелец создаёт папки, загружает и удаляет файлы, кнопкой «Доступ» выдаёт папки операторам; оператор видит
+  только выданные папки, скачивает и грузит туда, где уровень `upload`. Пути нормализуются и проверяются
+  (`FileShare.resolve` — без `..`, абсолютных путей и скрытых имён), запись атомарная, есть лимит файла
+  (`EXCHANGE_MAX_MB`) и квота (`EXCHANGE_QUOTA_MB`). API — `/api/exchange[/mkdir|/upload|/delete|/share|/raw/{id}]`
+  (владелец), `/api/op/exchange[/list|/upload|/raw/{id}]` (оператор); окна `exchange.js`, `team-admin.js`,
+  `operator-app.js`. Настройки — `EXCHANGE_*` (`config.py`, `.env.example`), инструкция — `docs/exchange.md`,
+  тесты — `tests/test_fileshare.py`, `tests/js/apps-catalog.test.mjs`. Только сервер: в JS-ядре для iPhone обмена нет.
 - **Встречи и поручения** — `jarvis/meetings.py` (+ `core/meetings.js`): обычные задачи Obsidian Tasks, встреча —
   тег `#встреча`, время `🕒 15:00`, место `📍 …`; поручение — тег `#оператор/<имя>`. Отметить «состоялась» — выполнить
   задачу. `GET /api/meetings`, `POST /api/admin/assign`, интент `meetings` («встречи на завтра»), панель «Встречи».

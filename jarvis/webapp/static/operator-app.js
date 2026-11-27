@@ -2,12 +2,12 @@
 // открыл), приложения из каталога (к которым дан доступ), личные заметки (папка Команда/<Имя>/) и доверенные
 // заметки владельца (читать или править), чат с владельцем, свои устройства (выйти на любом) и пароль.
 // Сервер пускает оператора только в /api/op/… и /api/sessions (web.py), события WebSocket приходят только его.
-import { esc, renderMarkdown } from "./markdown.js?v=30";
-import { chatDays, seen } from "./team.js?v=30";
+import { esc, renderMarkdown } from "./markdown.js?v=31";
+import { chatDays, seen } from "./team.js?v=31";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "");
 const STATUS = { idea: "идея", active: "в работе", paused: "на паузе", done: "завершён" };
-const TABS = [["tasks", "Задачи"], ["meet", "Встречи"], ["proj", "Проекты"], ["apps", "Приложения"], ["drive", "Диск"], ["notes", "Заметки"], ["chat", "Чат"], ["me", "Устройства"]];
+const TABS = [["tasks", "Задачи"], ["meet", "Встречи"], ["proj", "Проекты"], ["apps", "Приложения"], ["exchange", "Обмен"], ["notes", "Заметки"], ["chat", "Чат"], ["me", "Устройства"]];
 const KIND = { doc: "📄", sheet: "📊", slides: "🖼", text: "📝", file: "📎", folder: "📁" };
 const LEVEL = { use: "открывать", manage: "управлять" };
 
@@ -117,10 +117,10 @@ export class OperatorApp {
   }
 
   async openApp(a) {
-    if (a.kind === "builtin" && a.id === "builtin:drive") { await this.driveApp(); return; }
+    if (a.kind === "builtin" && a.id === "builtin:exchange") { await this.exchangeApp(); return; }
     if (a.kind === "builtin" && a.id === "builtin:map") {
       if (!this.map) {
-        const { MapWindow } = await import("./map.js?v=30");
+        const { MapWindow } = await import("./map.js?v=31");
         const store = { get: (k, d) => { try { const v = localStorage.getItem(`atom.op.${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
           set: (k, v) => { try { localStorage.setItem(`atom.op.${k}`, JSON.stringify(v)); } catch { /* приватный режим */ } } };
         this.map = new MapWindow(document.getElementById("mw"), { api: this.api, toast: this.toast, store, places: false,
@@ -130,52 +130,38 @@ export class OperatorApp {
       return;
     }
     if (!this.viewer) {
-      const { AppViewer } = await import("./app-viewer.js?v=30");
+      const { AppViewer } = await import("./app-viewer.js?v=31");
       this.viewer = new AppViewer(document.getElementById("av"), { api: this.api, toast: this.toast, storeApi: "/api/op/appdata" });
     }
     this.viewer.open(a);
   }
 
   // ---------- личные заметки ----------
-  // ---------- «Диск ядра»: только то, что открыл владелец, и без его данных ----------
-  async tab_drive() {
-    const r = await this.api("/api/op/drive");
+  // ---------- «Обмен файлами»: только папки, которые открыл владелец ----------
+  async tab_exchange() {
+    const r = await this.api("/api/op/exchange");
     if (!r.files.length) {
-      return `<div class="tw-work single"><section class="tw-card"><h3>Диск ядра</h3>
-        <p class="empty">${r.ready ? "Владелец пока не открыл вам файлы с Диска." : "Диск не подключён на сервере."}</p></section></div>`;
+      return `<div class="tw-work single"><section class="tw-card"><h3>Обмен файлами</h3>
+        <p class="empty">Владелец пока не открыл вам папки для обмена файлами.</p></section></div>`;
     }
-    return `<div class="tw-work single"><section class="tw-card"><h3>Диск ядра · ${r.files.length}</h3>
-      <p class="muted small">Только то, что открыл владелец: чьи это файлы и где они лежат, не показывается.</p>
-      <ul class="tw-notes">${r.files.map((f) => `<li><span class="tw-note-path">${KIND[f.kind] || "📄"} ${esc(f.name)}
+    return `<div class="tw-work single"><section class="tw-card"><h3>Обмен файлами · ${r.files.length}</h3>
+      <p class="muted small">Только папки, которые открыл владелец. Грузить можно туда, где разрешено.</p>
+      <ul class="tw-notes">${r.files.map((f) => `<li><span class="tw-note-path">${KIND[f.kind] || "📁"} ${esc(f.name)}
         <small class="muted">${esc(f.level_label || "")}</small></span>
-        ${f.kind === "folder"
-          ? `<button class="btn ghost" data-drive-folder="${esc(f.id)}">Открыть папку</button>`
-          : `<button class="btn ghost" data-drive-open="${esc(f.id)}">Открыть</button>`}</li>`).join("")}</ul>
-      <div class="mw-acts"><button class="btn primary" data-act="drive-app">Открыть приложение «Диск»</button></div>
-      <div data-el="drive-text"></div></section></div>`;
+        <button class="btn ghost" data-exchange-folder="${esc(f.path)}">Открыть папку</button></li>`).join("")}</ul>
+      <div class="mw-acts"><button class="btn primary" data-act="exchange-app">Открыть приложение «Обмен»</button></div>
+    </section></div>`;
   }
 
-  /** Приложение «Диск»: выданные папки и загрузка туда, где владелец разрешил. */
-  async driveApp(folder = "") {
-    if (!this.drive) {
-      const { DriveWindow } = await import("./drive.js?v=30");
-      this.drive = new DriveWindow(document.getElementById("dw"), { api: this.api, toast: this.toast, mode: "operator" });
+  /** Приложение «Обмен файлами»: выданные папки, скачивание и загрузка туда, где разрешено. */
+  async exchangeApp(folder = "") {
+    if (!this.exchange) {
+      const { ExchangeWindow } = await import("./exchange.js?v=31");
+      this.exchange = new ExchangeWindow(document.getElementById("xw"),
+        { api: this.api, toast: this.toast, mode: "operator" });
     }
     document.body.classList.add("fw-on");
-    await this.drive.show({ folder });
-  }
-
-  async openDrive(id) {
-    const box = this.el("drive-text");
-    if (!box) return;
-    box.innerHTML = `<p class="muted">Загружаю…</p>`;
-    try {
-      const f = await this.api(`/api/op/drive/${encodeURIComponent(id)}`);
-      box.innerHTML = `<section class="tw-card"><h3>${esc(f.name)}</h3>
-        <div class="op-note-body">${renderMarkdown(f.text)}</div>
-        ${f.can_save ? `<div class="mw-acts"><button class="btn ghost" data-drive-save="${esc(f.id)}">Сохранить копию к себе</button></div>` : ""}
-        <p class="muted small">Источник: Диск ядра. ${f.can_save ? "" : "Владелец открыл файл только для просмотра."}</p></section>`;
-    } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+    await this.exchange.show({ folder });
   }
 
   async tab_notes() {
@@ -267,19 +253,12 @@ export class OperatorApp {
     if (appOpen) { this.openApp(this.apps[+appOpen.dataset.appOpen]).catch((err) => this.toast(err.message, "error")); return; }
     const appNote = t.closest("[data-app-note]");
     if (appNote) { this.tab = "notes"; this.openNote(appNote.dataset.appNote, true).catch((err) => this.toast(err.message, "error")); return; }
-    const driveFolder = t.closest("[data-drive-folder]");
-    if (driveFolder) { this.driveApp(driveFolder.dataset.driveFolder).catch((err) => this.toast(err.message, "error")); return; }
-    if (t.closest('[data-act="drive-app"]')) { this.driveApp().catch((err) => this.toast(err.message, "error")); return; }
-    const driveOpen = t.closest("[data-drive-open]");
-    if (driveOpen) { this.openDrive(driveOpen.dataset.driveOpen).catch((err) => this.toast(err.message, "error")); return; }
-    const driveSave = t.closest("[data-drive-save]");
-    if (driveSave) {
-      try {
-        await this.api(`/api/op/drive/${encodeURIComponent(driveSave.dataset.driveSave)}`, { method: "POST", body: { action: "save" } });
-        this.toast("Копия сохранена в вашу папку «Диск»", "ok");
-      } catch (err) { this.toast(err.message, "error"); }
+    const exchangeFolder = t.closest("[data-exchange-folder]");
+    if (exchangeFolder) {
+      this.exchangeApp(exchangeFolder.dataset.exchangeFolder).catch((err) => this.toast(err.message, "error"));
       return;
     }
+    if (t.closest('[data-act="exchange-app"]')) { this.exchangeApp().catch((err) => this.toast(err.message, "error")); return; }
     const rev = t.closest("[data-revoke]");
     if (rev) { await this.call(() => this.api("/api/sessions", { method: "POST", body: { action: "revoke", sid: rev.dataset.revoke } }), "Устройство отключено"); return; }
     const b = t.closest("[data-act]");

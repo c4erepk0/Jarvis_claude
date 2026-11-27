@@ -28,8 +28,7 @@ from .tasks import TaskBook as _TaskBook
 from .places import Places
 from .assets import Portfolio, Quotes
 from .finance import Ledger, analytics
-from .gdrive import LEVELS as DRIVE_LEVELS, LEVELS_BY_KIND as DRIVE_LEVELS_BY_KIND
-from .gdrive import Drive, DriveConfig, render_note, safe_name
+from .fileshare import LEVELS as FILE_LEVELS, FileShare, ShareError
 from .github import GitHub, GitHubError
 from .hub import Hub
 from .memory import Memory
@@ -86,7 +85,7 @@ def _kopecks(value: Any) -> int:
 
 class Jarvis:
     def __init__(self, cfg: Config, *, github: GitHub | None = None, briefing: Briefing | None = None,
-                 llm: Any = None, quotes: Quotes | None = None, drive: Drive | None = None):
+                 llm: Any = None, quotes: Quotes | None = None, share: FileShare | None = None):
         self.cfg = cfg
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self.vault = Vault(cfg.vault_path)
@@ -103,11 +102,7 @@ class Jarvis:
         self.quotes = quotes or Quotes()
         self.places = Places(self.vault, f"{cfg.jarvis_dir}/Places.md")
         self.operators = Operators(cfg.data_dir, self.vault, f"{cfg.jarvis_dir}/Chat")
-        self.drive = drive or Drive(DriveConfig(enabled=cfg.gdrive_enabled, client_id=cfg.gdrive_client_id,
-                                                client_secret=cfg.gdrive_client_secret,
-                                                refresh_token=cfg.gdrive_refresh_token,
-                                                folder_id=cfg.gdrive_folder_id, max_mb=cfg.gdrive_max_mb,
-                                                write=cfg.gdrive_write))
+        self.share = share or FileShare(cfg.data_dir / "exchange", cfg.exchange_max_mb, cfg.exchange_quota_mb)
         self.voice = Voice(cfg.tts_engine, cfg.tts_voice, cfg.tts_rate, cfg.tts_pitch, cfg.data_dir / "tts",
                            cfg.piper_bin, cfg.piper_model)
         self.reminders = Reminders(self.vault, f"{cfg.jarvis_dir}/Reminders.md", ru.now(cfg.timezone).tzinfo)
@@ -504,123 +499,120 @@ class Jarvis:
                             "folder": rel.rsplit("/", 1)[0] if "/" in rel else "", "from": n["path"]}
         return sorted(out.values(), key=lambda x: (x["folder"], x["title"].lower()))
 
-    # ---------- «Диск ядра»: владелец, папки и загрузки ----------
+    # ---------- «Обмен файлами»: папки на сервере Atom ----------
     @staticmethod
-    def op_drive(op: dict) -> list[dict]:
-        """Открытые оператору корни: id, имя, вид, уровень. Ни владельцев, ни путей, ни аккаунта."""
-        return [{"id": g["id"], "name": g["name"], "kind": g.get("kind", "file"), "level": g["level"],
-                 "level_label": DRIVE_LEVELS.get(g["level"], "")} for g in op.get("drive", [])]
+    def op_files(op: dict) -> list[dict]:
+        """Выданные оператору папки: путь, имя и уровень. Ничего лишнего о владельце здесь нет."""
+        return [{"path": g["path"], "name": g["name"], "level": g["level"],
+                 "level_label": FILE_LEVELS.get(g["level"], "")} for g in op.get("files", [])]
 
     @staticmethod
-    def _drive_roots(op: dict) -> list[dict]:
-        return [g for g in op.get("drive", []) if g.get("kind") == "folder"]
-
-    async def op_drive_level(self, op: dict, file_id: str) -> str | None:
-        """Уровень доступа к файлу или папке: прямой подарок или поддерево выданной папки.
-
-        Папка выдаётся как корень — её содержимое доступно; глубже проверка идёт по родителям (`is_within`),
-        поэтому «подарил папку» не значит «подарил весь Диск».
-        """
-        for g in op.get("drive", []):
-            if g["id"] == file_id:
-                return g["level"]
+    def op_files_level(op: dict, rel: str) -> str | None:
+        """Уровень доступа к папке: выдача на неё саму или на одну из родительских."""
         best = None
-        for g in self._drive_roots(op):
-            if g["level"] not in ("view", "upload"):
-                continue
-            if await self.drive.is_within(file_id, [g["id"]]):
+        for g in op.get("files", []):
+            path = g["path"]
+            if rel == path or rel.startswith(path + "/"):
                 if g["level"] == "upload":
                     return "upload"
                 best = "view"
         return best
 
-    async def _drive_require(self, op: dict, file_id: str, need: tuple[str, ...]) -> str:
-        level = await self.op_drive_level(op, file_id)
+    def _files_require(self, op: dict, rel: str, need: tuple[str, ...]) -> str:
+        level = self.op_files_level(op, rel)
         if not level:
-            raise PermissionError("этот файл вам не открыт")
+            raise PermissionError("эта папка вам не открыта")
         if level not in need:
-            raise PermissionError("этот файл открыт только для просмотра")
+            raise PermissionError("здесь можно только смотреть и скачивать")
         return level
 
-    async def op_drive_list(self, op: dict, folder: str = "") -> dict:
-        """Содержимое папки для оператора: без папки — только выданные корни, дальше — внутри них."""
+    def op_exchange_browse(self, op: dict, folder: str = "") -> dict:
+        """Корень — только выданные папки; дальше — внутри них (и подпапок)."""
+        try:
+            return self._op_exchange_browse(op, folder)
+        except ShareError as e:
+            raise PermissionError(str(e)) from None
+
+    def _op_exchange_browse(self, op: dict, folder: str = "") -> dict:
         if not folder:
-            return {"folder": {"id": "", "name": "Диск ядра"}, "files": self.op_drive(op),
-                    "can_upload": False, "ready": self.drive.ready, "can_write": self.drive.cfg.can_write}
-        level = await self._drive_require(op, folder, ("view", "upload"))
-        meta = await self.drive.meta(folder)
-        items = await self.drive.list(folder=folder, folders=True)
-        return {"folder": {"id": folder, "name": meta.get("name") or "Папка"}, "files": items,
-                "can_upload": level == "upload" and self.drive.cfg.can_write,
-                "ready": self.drive.ready, "can_write": self.drive.cfg.can_write}
+            items = []
+            for g in op.get("files", []):
+                try:
+                    path = self.share.resolve(g["path"])
+                except ValueError:
+                    continue
+                if not path.is_dir():
+                    continue
+                item = self.share.entry(path)
+                item.update({"level": g["level"], "level_label": FILE_LEVELS.get(g["level"], "")})
+                items.append(item)
+            return {"folder": {"id": "", "name": "Обмен файлами"}, "files": items, "can_upload": False,
+                    **self.share.usage()}
+        rel = self.share.rel(folder)
+        level = self._files_require(op, rel, ("view", "upload"))
+        return {"folder": {"id": rel, "name": rel.rsplit("/", 1)[-1]}, "files": self.share.list(rel),
+                "can_upload": level == "upload", "level": level, **self.share.usage()}
 
-    async def op_drive_content(self, op: dict, file_id: str) -> dict:
-        """Текст открытого файла. Права проверяются до запроса к Google: чужой id не дойдёт до Диска."""
-        level = await self._drive_require(op, file_id, ("view", "upload", "copy"))
-        data = await self.drive.content(file_id)
-        return {"id": data["id"], "name": data["name"], "text": data["text"], "level": level,
-                "can_save": level == "copy"}
+    def op_exchange_read(self, op: dict, item_id: str) -> tuple[bytes, str, str]:
+        try:
+            rel = self.share.rel(item_id)
+        except ShareError as e:
+            raise PermissionError(str(e)) from None
+        self._files_require(op, rel, ("view", "upload"))
+        return self.share.read(rel)
 
-    async def op_drive_save(self, op: dict, file_id: str) -> dict:
-        """Копия файла в личную папку оператора — только если владелец дал уровень «копия»."""
-        await self._drive_require(op, file_id, ("copy",))
-        data = await self.drive.content(file_id)
-        folder = f"{self.operators.folder(op)}/Диск"
-        name = safe_name(data["name"])
-        path = f"{folder}/{name}.md"
-        n = 2
-        while self.vault.exists(path):
-            path = f"{folder}/{name} ({n}).md"
-            n += 1
-        self.vault.write(path, render_note(data["name"], data["text"], self.today().isoformat()))
-        await self.log(f"{op['name']}: копия с Диска ядра — {name}")
-        await self.changed("notes")
-        return {"path": path, "notes": self.op_notes(op)}
-
-    async def op_drive_upload(self, op: dict, folder: str, name: str, data: bytes, mime: str) -> dict:
-        """Оператор грузит файл в папку, где владелец разрешил загрузку (уровень «upload»)."""
-        await self._drive_require(op, folder, ("upload",))
-        item = await self.drive.upload(name, data, mime, parent=folder)
-        await self.log(f"{op['name']}: загрузил(а) на Диск — {item['name']}")
+    async def op_exchange_upload(self, op: dict, folder: str, name: str, data: bytes, mime: str) -> dict:
+        try:
+            rel = self.share.rel(folder)
+        except ShareError as e:
+            raise PermissionError(str(e)) from None
+        self._files_require(op, rel, ("upload",))
+        item = self.share.save(name, data, mime, rel)
+        await self.log(f"{op['name']}: загрузил(а) файл «{item['name']}»")
         return {"file": item}
 
-    async def op_drive_raw(self, op: dict, file_id: str) -> tuple[bytes, str]:
-        await self._drive_require(op, file_id, ("view", "upload", "copy"))
-        return await self.drive.raw(file_id)
+    # ---------- «Обмен файлами»: владелец ----------
+    def exchange_browse(self, folder: str = "", query: str = "") -> dict:
+        rel = self.share.rel(folder, allow_root=True)
+        items = self.share.list(rel)
+        word = (query or "").strip().lower()
+        if word:
+            items = [i for i in items if word in i["name"].lower()]
+        return {"folder": {"id": rel, "name": rel.rsplit("/", 1)[-1] if rel else "Обмен файлами"},
+                "files": items, **self.share.usage()}
 
-    # ---------- «Диск ядра»: владелец ----------
-    async def drive_browse(self, folder: str = "", query: str = "") -> dict:
-        meta = await self.drive.meta(folder) if folder else None
-        items = await self.drive.list(query=query, folder=folder, folders=True)
-        return {"folder": {"id": folder, "name": (meta or {}).get("name") or "Диск"},
-                "files": items, **self.drive.status()}
-
-    async def drive_mkdir(self, name: str, parent: str = "") -> dict:
-        item = await self.drive.create_folder(name, parent)
-        await self.log(f"Диск: создана папка «{item['name']}»")
+    async def exchange_mkdir(self, name: str, parent: str = "") -> dict:
+        item = self.share.mkdir(name, parent)
+        await self.log(f"Обмен файлами: создана папка «{item['name']}»", journal=False)
         return {"folder": item}
 
-    async def drive_upload(self, name: str, data: bytes, mime: str, parent: str = "") -> dict:
-        item = await self.drive.upload(name, data, mime, parent=parent)
-        await self.log(f"Диск: загружен файл «{item['name']}»")
+    async def exchange_upload(self, name: str, data: bytes, mime: str, parent: str = "") -> dict:
+        item = self.share.save(name, data, mime, parent)
+        await self.log(f"Обмен файлами: загружен «{item['name']}»", journal=False)
         return {"file": item}
 
-    async def drive_share(self, op_id: str, item: dict, level: str) -> dict:
-        """Выдать доступ оператору или изменить его. level="" — убрать.
+    def exchange_read(self, item_id: str) -> tuple[bytes, str, str]:
+        return self.share.read(item_id)
 
-        Папка: view (смотреть) / upload (смотреть и грузить); файл: view / copy (забрать копию).
-        """
+    async def exchange_delete(self, item_id: str) -> dict:
+        result = self.share.delete(item_id)
+        await self.log(f"Обмен файлами: удалено «{item_id}»", journal=False)
+        return result
+
+    def exchange_share(self, op_id: str, path: str, name: str, level: str) -> dict:
+        """Выдать папку оператору или изменить уровень. level="" — убрать."""
         op = self.operators.get(op_id)
         if not op:
             raise KeyError("нет такого оператора")
-        item_id, kind = str(item.get("id") or ""), ("folder" if item.get("kind") == "folder" else "file")
-        grants = [g for g in op.get("drive", []) if g["id"] != item_id]
+        rel = self.share.rel(path)
+        grants = [g for g in op.get("files", []) if g["path"] != rel]
         if level:
-            if level not in DRIVE_LEVELS_BY_KIND[kind]:
-                raise ValueError("такой уровень доступа не подходит для этого вида")
-            grants.append({"id": item_id, "name": item.get("name") or "Диск", "kind": kind, "level": level})
-        self.operators.update(op_id, drive=grants)
-        return {"operators": [self.operators.public(self.operators.get(op_id))], "drive": self.drive.status()}
+            folder = self.share.resolve(rel)
+            if not folder.is_dir():
+                raise ValueError("выдавать можно только папку")
+            grants.append({"path": rel, "name": (name or rel.rsplit("/", 1)[-1])[:200], "level": level})
+        self.operators.update(op_id, files=grants)
+        return {"operators": [self.operators.public(self.operators.get(op_id))], "levels": FILE_LEVELS}
 
     def _project_tasks(self, project) -> list:
         folder = self.projects.folder_of(project)

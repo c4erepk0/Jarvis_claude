@@ -1,13 +1,11 @@
 // Окно «Команда» — раздел владельца (корня): операторы (пригласить по ссылке, права, отключить, удалить),
 // чат с каждым, поручения (задачи и встречи с тегом #оператор/<имя>) и все встречи — отметить «выполнено/состоялась».
 // Данные — /api/admin/…, /api/meetings, /api/tasks (сервер; на iPhone без сервера операторов нет).
-import { esc } from "./markdown.js?v=30";
-import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=30";
-import { devicesList } from "./operator-app.js?v=30";
+import { esc } from "./markdown.js?v=31";
+import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=31";
+import { devicesList } from "./operator-app.js?v=31";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "без даты");
-// значки файлов «Диска ядра» (gdrive.py): вид приходит с сервера, личности владельца в нём нет
-const KIND = { doc: "📄", sheet: "📊", slides: "🖼", text: "📝", file: "📎", folder: "📁" };
 
 export class TeamWindow {
   constructor(root, { api, toast, store, today, standalone = false }) {
@@ -103,7 +101,9 @@ export class TeamWindow {
       <fieldset class="tw-perms"><legend>Права</legend>${this.permBoxes([])}</fieldset>
       <fieldset class="tw-perms"><legend>Общие проекты</legend>${this.projectBoxes([])}</fieldset>
       <fieldset class="tw-perms"><legend>Приложения</legend>${this.appRows([])}</fieldset>
-      <fieldset class="tw-perms"><legend>Диск ядра</legend>${await this.driveBox([])}</fieldset>
+      <fieldset class="tw-perms"><legend>Обмен файлами</legend>
+        <p class="muted small">Папки выдаются в приложении «Обмен файлами» (каталог → Обмен). Создайте оператора,
+          затем откройте папку и нажмите «Доступ».</p></fieldset>
       <div class="fw-form-acts"><button class="btn primary">Создать и получить ссылку</button>
       <button type="button" class="btn ghost" data-act="cancel-new">Отмена</button></div></form>`;
   }
@@ -159,41 +159,25 @@ export class TeamWindow {
     const apps = [...f.querySelectorAll("select[name=app]")].filter((x) => x.value).map((x) => ({ id: x.dataset.appId, level: x.value }));
     const edit = new Set([...f.querySelectorAll("input[name=note-edit]:checked")].map((x) => x.value));
     const notes = [...f.querySelectorAll("[data-note-row]")].map((li) => ({ path: li.dataset.noteRow, edit: edit.has(li.dataset.noteRow) }));
-    // «Диск ядра»: имя едет рядом с id, чтобы панель знала, что выдано, даже когда Диск недоступен
-    const drive = [...f.querySelectorAll("select[name=drive]")].filter((x) => x.value)
-      .map((x) => ({ id: x.dataset.driveId, name: x.dataset.driveName, level: x.value }));
-    return { apps, notes, drive };
+    // «Обмен файлами»: путь и имя папки — чтобы панель знала, что выдано
+    const files = [...f.querySelectorAll("select[name=file-level]")]
+      .map((x) => ({ path: x.dataset.filePath, name: x.dataset.fileName, level: x.value }));
+    return { apps, notes, files };
   }
 
-  // «Диск ядра»: владелец отмечает файлы Google Drive, которые видит оператор. Сервер отдаёт только
-  // имя, вид, размер и дату — без владельцев файла, почты аккаунта и путей по Диску.
-  driveRow(f, level) {
-    const st = this.data.drive || {};
-    const levels = (st.levels_by_kind && st.levels_by_kind[f.kind === "folder" ? "folder" : "file"])
-      || st.levels || { view: "Просмотр", copy: "Просмотр и копия" };
-    return `<label class="tw-app-row"><span class="tw-app-ic">${KIND[f.kind] || "📄"}</span>
-      <span class="tw-app-name">${esc(f.name)} <small class="muted">${f.size_label ? esc(f.size_label) : ""}${f.modified ? ` · ${esc(f.modified.slice(0, 10))}` : ""}</small></span>
-      <select name="drive" data-drive-id="${esc(f.id)}" data-drive-name="${esc(f.name)}"><option value="">Не открыт</option>
-        ${Object.entries(levels).map(([k, l]) => `<option value="${k}" ${level === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
-  }
-
-  async driveBox(on) {
-    const st = this.data.drive || {};
-    const grants = on || [];
-    if (!st.ready) {
-      const need = (st.missing || []).join(", ");
-      return `<p class="muted small">Диск не подключён${need ? `: нужны ${esc(need)}` : ""}. Как выпустить токен — <code>docs/drive.md</code>.</p>`;
-    }
-    let files = [], error = "";
-    try { files = (await this.api("/api/gdrive")).files || []; } catch (e) { error = e.message; }
-    const level = Object.fromEntries(grants.map((g) => [g.id, g.level]));
-    const rows = files.map((f) => this.driveRow(f, level[f.id]));
-    const extra = grants.filter((g) => !files.some((f) => f.id === g.id))
-      .map((g) => this.driveRow({ id: g.id, name: g.name, kind: g.kind || "file" }, g.level));
-    const body = rows.length || extra.length ? `<div class="tw-apps">${rows.concat(extra).join("")}</div>`
-      : `<p class="muted small">${error ? esc(error) : "На Диске нет файлов" + (st.folder ? " в выбранной папке." : ".")}</p>`;
-    return `${body}<p class="muted small">Оператор увидит только отмеченное и без ваших данных: ни почты, ни владельцев файла, ни путей.
-      Папка открывает своё содержимое; «Загрузка» — ещё и класть в неё файлы. «Копия» у файла — заметка в личную папку оператора.</p>`;
+  // «Обмен файлами»: что уже открыто оператору. Выдаётся в приложении — там видно папки.
+  filesBox(on) {
+    const levels = (this.data.exchange && this.data.exchange.levels)
+      || { view: "Просмотр", upload: "Просмотр и загрузка" };
+    const rows = (on || []).map((g) => `<li data-file-row="${esc(g.path)}">
+      <span class="tw-note-path">📁 ${esc(g.name || g.path)} <small class="muted">${esc(g.path)}</small></span>
+      <select name="file-level" data-file-path="${esc(g.path)}" data-file-name="${esc(g.name || g.path)}">
+        ${Object.entries(levels).map(([k, l]) => `<option value="${k}" ${g.level === k ? "selected" : ""}>${esc(l)}</option>`).join("")}
+      </select>
+      <button type="button" class="h-btn" data-act="file-del" aria-label="Убрать">✕</button></li>`).join("");
+    return `<ul class="tw-notes" data-el="files">${rows || `<li class="muted small">Пока ничего не открыто.</li>`}</ul>
+      <p class="muted small">Выдаются папки — в приложении «Обмен файлами»: откройте папку и нажмите «Доступ».
+        Здесь видно, что открыто; уровень можно поменять, «✕» — закрыть доступ.</p>`;
   }
 
   linkBox(token) {
@@ -277,7 +261,7 @@ export class TeamWindow {
       <fieldset class="tw-perms"><legend>Общие проекты</legend>${this.projectBoxes(op.projects || [])}</fieldset>
       <fieldset class="tw-perms"><legend>Приложения</legend>${this.appRows(op.apps || [])}</fieldset>
       <fieldset class="tw-perms"><legend>Доверенные заметки</legend>${await this.notesBox(op.notes || [])}</fieldset>
-      <fieldset class="tw-perms"><legend>Диск ядра</legend>${await this.driveBox(op.drive || [])}</fieldset>
+      <fieldset class="tw-perms"><legend>Обмен файлами</legend>${this.filesBox(op.files || [])}</fieldset>
       <p class="muted small">Тег поручений: <code>#${esc(op.tag)}</code> — им можно отмечать задачи прямо в Obsidian. Личная папка: <code>${esc(op.folder || "")}</code>.</p>
       <div class="fw-form-acts"><button class="btn primary">Сохранить</button></div></form>
       <section class="tw-card"><h3>Устройства · ${devices.length}</h3>
@@ -351,6 +335,13 @@ export class TeamWindow {
     if (!b) return;
     const act = b.dataset.act, id = this.sel;
     if (act === "note-del") { b.closest("[data-note-row]").remove(); return; }
+    if (act === "file-del") {
+      const row = b.closest("[data-file-row]");
+      const sel = row.querySelector("select");
+      sel.value = "";                       // пустой уровень = убрать доступ при сохранении
+      row.remove();
+      return;
+    }
     if (act === "note-add") {
       const inp = this.el("note-add"), path = inp.value.trim().replace(/^\/+|\/+$/g, "");
       if (!path) return;
