@@ -265,11 +265,16 @@ Journal/2026-11-09.md      — ежедневная заметка: журнал
 ## Разработка
 
 ```bash
-make dev      # .venv + зависимости
-make test     # pytest: память, команды, мозг (фейковый Claude), веб, проекты (фейковый GitHub)
-make check    # lint + test + audit — то же, что CI
-make run
+bash scripts/bootstrap.sh   # .venv + зависимости + .env + проверка среды — одной командой
+make run                    # запустить Atom
+make test                   # pytest: память, команды, мозг (фейковый Claude), веб, проекты (фейковый GitHub)
+make check                  # lint + test + audit — то же, что CI
 ```
+
+Ветки и PR — [CONTRIBUTING.md](CONTRIBUTING.md) и [docs/branches.md](docs/branches.md): работа всегда в
+ветке `feat/…`, `fix/…`, `docs/…` и через PR в `main`. Для агента или нового человека есть
+[AGENTS.md](AGENTS.md) — контекст за пять минут и развёртывание среды на любой машине.
+
 Стек: Python 3.11+, aiohttp, Anthropic SDK, edge-tts, psutil; фронтенд — ES-модули без сборки,
 Three.js и MediaPipe с CDN только для голограммы. Структура — в [CLAUDE.md](CLAUDE.md).
 

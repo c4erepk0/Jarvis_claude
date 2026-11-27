@@ -2,9 +2,10 @@
 PY ?= .venv/bin/python
 SH_FILES := start.sh start.command scripts/vps.sh
 
-.PHONY: help dev test lint audit check run livesync-config
+.PHONY: help bootstrap dev test lint audit check run livesync-config
 
 help:
+	@echo "make bootstrap — всё для работы: .venv, зависимости, .env, проверка (scripts/bootstrap.sh)"
 	@echo "make dev    — создать .venv и поставить зависимости для разработки"
 	@echo "make test   — все тесты: Python (pytest) и ядро для iPhone (node --test)"
 	@echo "make lint   — flake8 + shellcheck"
@@ -15,6 +16,9 @@ help:
 
 .venv/bin/python:
 	python3 -m venv .venv
+
+bootstrap:
+	bash scripts/bootstrap.sh
 
 dev: .venv/bin/python
 	$(PY) -m pip install -q --upgrade pip
