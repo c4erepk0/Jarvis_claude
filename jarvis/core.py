@@ -23,12 +23,13 @@ from .config import Config
 from .apps import catalog, set_in_catalog
 from .appdata import AppData
 from .meetings import OP_TAG, for_operator, meeting_text, meetings
-from .operators import BUILTIN_APPS, TEAM_DIR, Operators
+from .operators import BUILTIN_APPS, BUILTIN_INFO, TEAM_DIR, Operators
 from .tasks import TaskBook as _TaskBook
 from .places import Places
 from .assets import Portfolio, Quotes
 from .finance import Ledger, analytics
-from .gdrive import LEVELS as DRIVE_LEVELS, Drive, DriveConfig, render_note, safe_name
+from .gdrive import LEVELS as DRIVE_LEVELS, LEVELS_BY_KIND as DRIVE_LEVELS_BY_KIND
+from .gdrive import Drive, DriveConfig, render_note, safe_name
 from .github import GitHub, GitHubError
 from .hub import Hub
 from .memory import Memory
@@ -105,7 +106,8 @@ class Jarvis:
         self.drive = drive or Drive(DriveConfig(enabled=cfg.gdrive_enabled, client_id=cfg.gdrive_client_id,
                                                 client_secret=cfg.gdrive_client_secret,
                                                 refresh_token=cfg.gdrive_refresh_token,
-                                                folder_id=cfg.gdrive_folder_id, max_mb=cfg.gdrive_max_mb))
+                                                folder_id=cfg.gdrive_folder_id, max_mb=cfg.gdrive_max_mb,
+                                                write=cfg.gdrive_write))
         self.voice = Voice(cfg.tts_engine, cfg.tts_voice, cfg.tts_rate, cfg.tts_pitch, cfg.data_dir / "tts",
                            cfg.piper_bin, cfg.piper_model)
         self.reminders = Reminders(self.vault, f"{cfg.jarvis_dir}/Reminders.md", ru.now(cfg.timezone).tzinfo)
@@ -446,8 +448,9 @@ class Jarvis:
         levels = {a["id"]: a["level"] for a in op.get("apps", [])}
         if not levels:
             return []
-        out = [{"id": k, "name": BUILTIN_APPS[k], "kind": "builtin", "level": levels[k], "icon": "🗺",
-                "description": "Поиск мест, маршруты и навигация", "url": "", "repo": "", "note": ""}
+        out = [{"id": k, "name": BUILTIN_APPS[k], "kind": "builtin", "level": levels[k],
+                "icon": BUILTIN_INFO.get(k, {}).get("icon", "▣"),
+                "description": BUILTIN_INFO.get(k, {}).get("description", ""), "url": "", "repo": "", "note": ""}
                for k in BUILTIN_APPS if k in levels]
         for a in catalog(self.vault, self.projects)["apps"]:
             if a["note"] in levels:
@@ -501,32 +504,66 @@ class Jarvis:
                             "folder": rel.rsplit("/", 1)[0] if "/" in rel else "", "from": n["path"]}
         return sorted(out.values(), key=lambda x: (x["folder"], x["title"].lower()))
 
-    # ---------- «Диск ядра»: что владелец открыл оператору ----------
+    # ---------- «Диск ядра»: владелец, папки и загрузки ----------
     @staticmethod
     def op_drive(op: dict) -> list[dict]:
-        """Открытые оператору файлы: только id, имя и уровень. Ни владельцев, ни путей, ни аккаунта."""
-        return [{"id": g["id"], "name": g["name"], "level": g["level"],
+        """Открытые оператору корни: id, имя, вид, уровень. Ни владельцев, ни путей, ни аккаунта."""
+        return [{"id": g["id"], "name": g["name"], "kind": g.get("kind", "file"), "level": g["level"],
                  "level_label": DRIVE_LEVELS.get(g["level"], "")} for g in op.get("drive", [])]
 
     @staticmethod
-    def _drive_grant(op: dict, file_id: str) -> dict:
-        grant = next((g for g in op.get("drive", []) if g["id"] == file_id), None)
-        if not grant:
+    def _drive_roots(op: dict) -> list[dict]:
+        return [g for g in op.get("drive", []) if g.get("kind") == "folder"]
+
+    async def op_drive_level(self, op: dict, file_id: str) -> str | None:
+        """Уровень доступа к файлу или папке: прямой подарок или поддерево выданной папки.
+
+        Папка выдаётся как корень — её содержимое доступно; глубже проверка идёт по родителям (`is_within`),
+        поэтому «подарил папку» не значит «подарил весь Диск».
+        """
+        for g in op.get("drive", []):
+            if g["id"] == file_id:
+                return g["level"]
+        best = None
+        for g in self._drive_roots(op):
+            if g["level"] not in ("view", "upload"):
+                continue
+            if await self.drive.is_within(file_id, [g["id"]]):
+                if g["level"] == "upload":
+                    return "upload"
+                best = "view"
+        return best
+
+    async def _drive_require(self, op: dict, file_id: str, need: tuple[str, ...]) -> str:
+        level = await self.op_drive_level(op, file_id)
+        if not level:
             raise PermissionError("этот файл вам не открыт")
-        return grant
+        if level not in need:
+            raise PermissionError("этот файл открыт только для просмотра")
+        return level
+
+    async def op_drive_list(self, op: dict, folder: str = "") -> dict:
+        """Содержимое папки для оператора: без папки — только выданные корни, дальше — внутри них."""
+        if not folder:
+            return {"folder": {"id": "", "name": "Диск ядра"}, "files": self.op_drive(op),
+                    "can_upload": False, "ready": self.drive.ready, "can_write": self.drive.cfg.can_write}
+        level = await self._drive_require(op, folder, ("view", "upload"))
+        meta = await self.drive.meta(folder)
+        items = await self.drive.list(folder=folder, folders=True)
+        return {"folder": {"id": folder, "name": meta.get("name") or "Папка"}, "files": items,
+                "can_upload": level == "upload" and self.drive.cfg.can_write,
+                "ready": self.drive.ready, "can_write": self.drive.cfg.can_write}
 
     async def op_drive_content(self, op: dict, file_id: str) -> dict:
         """Текст открытого файла. Права проверяются до запроса к Google: чужой id не дойдёт до Диска."""
-        grant = self._drive_grant(op, file_id)
+        level = await self._drive_require(op, file_id, ("view", "upload", "copy"))
         data = await self.drive.content(file_id)
-        return {"id": data["id"], "name": data["name"], "text": data["text"], "level": grant["level"],
-                "can_save": grant["level"] == "copy"}
+        return {"id": data["id"], "name": data["name"], "text": data["text"], "level": level,
+                "can_save": level == "copy"}
 
     async def op_drive_save(self, op: dict, file_id: str) -> dict:
         """Копия файла в личную папку оператора — только если владелец дал уровень «копия»."""
-        grant = self._drive_grant(op, file_id)
-        if grant["level"] != "copy":
-            raise PermissionError("этот файл открыт только для просмотра")
+        await self._drive_require(op, file_id, ("copy",))
         data = await self.drive.content(file_id)
         folder = f"{self.operators.folder(op)}/Диск"
         name = safe_name(data["name"])
@@ -539,6 +576,51 @@ class Jarvis:
         await self.log(f"{op['name']}: копия с Диска ядра — {name}")
         await self.changed("notes")
         return {"path": path, "notes": self.op_notes(op)}
+
+    async def op_drive_upload(self, op: dict, folder: str, name: str, data: bytes, mime: str) -> dict:
+        """Оператор грузит файл в папку, где владелец разрешил загрузку (уровень «upload»)."""
+        await self._drive_require(op, folder, ("upload",))
+        item = await self.drive.upload(name, data, mime, parent=folder)
+        await self.log(f"{op['name']}: загрузил(а) на Диск — {item['name']}")
+        return {"file": item}
+
+    async def op_drive_raw(self, op: dict, file_id: str) -> tuple[bytes, str]:
+        await self._drive_require(op, file_id, ("view", "upload", "copy"))
+        return await self.drive.raw(file_id)
+
+    # ---------- «Диск ядра»: владелец ----------
+    async def drive_browse(self, folder: str = "", query: str = "") -> dict:
+        meta = await self.drive.meta(folder) if folder else None
+        items = await self.drive.list(query=query, folder=folder, folders=True)
+        return {"folder": {"id": folder, "name": (meta or {}).get("name") or "Диск"},
+                "files": items, **self.drive.status()}
+
+    async def drive_mkdir(self, name: str, parent: str = "") -> dict:
+        item = await self.drive.create_folder(name, parent)
+        await self.log(f"Диск: создана папка «{item['name']}»")
+        return {"folder": item}
+
+    async def drive_upload(self, name: str, data: bytes, mime: str, parent: str = "") -> dict:
+        item = await self.drive.upload(name, data, mime, parent=parent)
+        await self.log(f"Диск: загружен файл «{item['name']}»")
+        return {"file": item}
+
+    async def drive_share(self, op_id: str, item: dict, level: str) -> dict:
+        """Выдать доступ оператору или изменить его. level="" — убрать.
+
+        Папка: view (смотреть) / upload (смотреть и грузить); файл: view / copy (забрать копию).
+        """
+        op = self.operators.get(op_id)
+        if not op:
+            raise KeyError("нет такого оператора")
+        item_id, kind = str(item.get("id") or ""), ("folder" if item.get("kind") == "folder" else "file")
+        grants = [g for g in op.get("drive", []) if g["id"] != item_id]
+        if level:
+            if level not in DRIVE_LEVELS_BY_KIND[kind]:
+                raise ValueError("такой уровень доступа не подходит для этого вида")
+            grants.append({"id": item_id, "name": item.get("name") or "Диск", "kind": kind, "level": level})
+        self.operators.update(op_id, drive=grants)
+        return {"operators": [self.operators.public(self.operators.get(op_id))], "drive": self.drive.status()}
 
     def _project_tasks(self, project) -> list:
         folder = self.projects.folder_of(project)

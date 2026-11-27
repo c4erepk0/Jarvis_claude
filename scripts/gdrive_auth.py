@@ -6,9 +6,11 @@
 кладите его только в .env.
 
     GDRIVE_CLIENT_ID=... GDRIVE_CLIENT_SECRET=... python3 scripts/gdrive_auth.py
-    python3 scripts/gdrive_auth.py --write      # вписать токен в .env рядом
+    python3 scripts/gdrive_auth.py --write          # вписать токен в .env рядом
+    python3 scripts/gdrive_auth.py --can-upload     # право drive: загрузка файлов и папки
 
-Право одно — drive.readonly: читать файлы, ничего не менять и не удалять.
+По умолчанию право одно — drive.readonly: только читать. С --can-upload выдаётся drive, иначе Atom
+не сможет загружать файлы в чужие папки (анонимность при этом прежняя: сервер отдаёт только id/имя/вид).
 """
 from __future__ import annotations
 
@@ -28,7 +30,8 @@ from pathlib import Path
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
-SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+SCOPE_READ = "https://www.googleapis.com/auth/drive.readonly"
+SCOPE_FULL = "https://www.googleapis.com/auth/drive"
 ROOT = Path(__file__).resolve().parent.parent
 STATE = secrets.token_urlsafe(16)
 
@@ -90,6 +93,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="refresh-токен Google Drive для Atom")
     ap.add_argument("--port", type=int, default=8767)
     ap.add_argument("--write", action="store_true", help="вписать токен в .env")
+    ap.add_argument("--can-upload", action="store_true", help="право drive: загрузка файлов и создание папок")
     args = ap.parse_args()
 
     client_id = (os.getenv("GDRIVE_CLIENT_ID") or "").strip()
@@ -101,7 +105,8 @@ def main() -> int:
     redirect = f"http://127.0.0.1:{args.port}/"
     url = AUTH_URL + "?" + urllib.parse.urlencode({
         "client_id": client_id, "redirect_uri": redirect, "response_type": "code",
-        "scope": SCOPE, "access_type": "offline", "prompt": "consent", "state": STATE})
+        "scope": SCOPE_FULL if args.can_upload else SCOPE_READ, "access_type": "offline",
+        "prompt": "consent", "state": STATE})
     print("Откройте ссылку и разрешите доступ только на чтение:\n\n" + url + "\n")
     try:
         webbrowser.open(url)

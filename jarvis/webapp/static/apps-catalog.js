@@ -6,6 +6,7 @@
 export const BUILTIN = [
   { id: "globe", name: "Глобус", icon: "🌐", description: "Новости мира на глобусе в прямом эфире, прогнозы по рынкам и тактика", server: true },
   { id: "map", name: "Карта", icon: "🗺", description: "Места, маршруты и навигация от того места, где вы" },
+  { id: "drive", name: "Диск", icon: "☁", description: "Google Drive: папки, загрузка файлов и доступ операторам", server: true },
   { id: "finance", name: "Финансы", icon: "₽", description: "Доходы и расходы, аналитика, активы и долги" },
   { id: "files", name: "Хранилище", icon: "▤", description: "Заметки и проекты Obsidian: папки, теги, корзина" },
   { id: "graph", name: "Граф памяти", icon: "◈", description: "Связи заметок в 3D, жесты и взгляд" },

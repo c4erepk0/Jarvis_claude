@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .gdrive import ID_RE as DRIVE_ID_RE, LEVELS as DRIVE_LEVELS
+from .gdrive import ID_RE as DRIVE_ID_RE, LEVELS_BY_KIND as DRIVE_LEVELS_BY_KIND
 from .vault import Vault
 
 PERMS = {
@@ -46,7 +46,9 @@ PERMS = {
 # доступ к приложению из каталога: use — открывать; manage — ещё и править его заметку, а у приложения-проекта
 # видеть и отмечать задачи проекта (как общий проект)
 APP_LEVELS = {"use": "Открывать", "manage": "Управлять"}
-BUILTIN_APPS = {"builtin:map": "Карта"}          # встроенные приложения Atom, которые можно открыть оператору
+BUILTIN_APPS = {"builtin:map": "Карта", "builtin:drive": "Диск"}   # встроенные приложения для оператора
+BUILTIN_INFO = {"builtin:map": {"icon": "🗺", "description": "Поиск мест, маршруты и навигация"},
+                "builtin:drive": {"icon": "☁", "description": "Google Drive: папки, загрузка файлов, доступ"}}
 MAX_SHARED = 100
 INVITE_DAYS = 7
 OWNER = "Владелец"
@@ -306,10 +308,11 @@ class Operators:
 
     @staticmethod
     def _drive(items: Any) -> list[dict]:
-        """Файлы «Диска ядра»: [{id, name, level}] — только существующие уровни и правдоподобные id.
+        """Что открыто оператору на Диске: [{id, name, kind, level}].
 
-        Имя хранится рядом с id, чтобы панель показывала, что выдано, даже когда Диск недоступен.
-        Ничего о владельце аккаунта здесь нет и быть не может: наружу уходят только эти три поля.
+        kind: `folder` — доступно поддерево (уровни view/upload), `file` — один файл (view/copy).
+        Старые выдачи без kind считаются файлами. Имя хранится рядом с id, чтобы панель показывала,
+        что выдано, даже когда Диск недоступен. Ничего о владельце аккаунта здесь нет: только эти поля.
         """
         out: dict[str, dict] = {}
         for it in items or []:
@@ -318,11 +321,13 @@ class Operators:
             if not isinstance(it, dict):
                 continue
             fid = str(it.get("id") or "").strip()
+            kind = "folder" if str(it.get("kind") or "file") == "folder" else "file"
             level = str(it.get("level") or "view")
             name = re.sub(r"[\\/\n\r\t]+", " ", str(it.get("name") or "")).strip()[:200]
-            if not DRIVE_ID_RE.match(fid) or level not in DRIVE_LEVELS:
+            if not DRIVE_ID_RE.match(fid) or level not in DRIVE_LEVELS_BY_KIND[kind]:
                 continue
-            out[fid] = {"id": fid, "name": name or "Файл Диска", "level": level}
+            out[fid] = {"id": fid, "name": name or ("Папка Диска" if kind == "folder" else "Файл Диска"),
+                        "kind": kind, "level": level}
         return list(out.values())[:MAX_SHARED]
 
     def create(self, name: str, perms: list[str] | None = None, note: str = "",

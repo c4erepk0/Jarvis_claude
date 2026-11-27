@@ -123,6 +123,7 @@ class Config:
     gdrive_refresh_token: str = ""
     gdrive_folder_id: str = ""      # пусто — весь Диск аккаунта; иначе только эта папка
     gdrive_max_mb: int = 4          # больше — не открываем в заметке
+    gdrive_write: bool = False      # загрузка и создание папок (нужен scope drive)
     # --- диагностика ---
     cpu_alert: int = 90
     ram_alert: int = 90
@@ -275,6 +276,7 @@ def load_config() -> Config:
         gdrive_refresh_token=_str("GDRIVE_REFRESH_TOKEN"),
         gdrive_folder_id=_str("GDRIVE_FOLDER_ID"),
         gdrive_max_mb=max(1, min(20, _int("GDRIVE_MAX_MB", 4))),
+        gdrive_write=_bool("GDRIVE_WRITE", False),
         cpu_alert=_int("DIAG_CPU_ALERT", 90),
         ram_alert=_int("DIAG_RAM_ALERT", 90),
         disk_alert=_int("DIAG_DISK_ALERT", 90),

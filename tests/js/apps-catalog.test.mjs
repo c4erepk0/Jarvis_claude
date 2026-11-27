@@ -38,3 +38,8 @@ test("встраивать — только https; значок — эмодзи
   assert.equal(appIcon(CENNIKI), "🏷");
   assert.equal(appIcon({ name: "студия" }), "С");
 });
+
+test("«Диск» — приложение каталога и только с сервером", () => {
+  assert.ok(BUILTIN.some((b) => b.id === "drive"));
+  assert.ok(!launcherItems({ standalone: true }).builtin.some((b) => b.id === "drive"));
+});
