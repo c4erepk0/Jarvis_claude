@@ -9,12 +9,13 @@ import logging
 import re
 import time
 from pathlib import Path
+from urllib.parse import unquote
 
 from aiohttp import WSMsgType, web
 
 from .finance import guess_category
 from .gdrive import DriveError
-from .operators import APP_LEVELS, BUILTIN_APPS, OWNER_KEY, PERMS
+from .operators import APP_LEVELS, BUILTIN_APPS, BUILTIN_INFO, OWNER_KEY, PERMS
 from .core import Jarvis
 from .gaze import save_record as save_gaze_record
 from .updater import UpdateError
@@ -29,6 +30,7 @@ PUBLIC = {"/api/login", "/api/session", "/healthz", "/api/setup", "/api/invite",
 # оператору открыт только его раздел /api/op/… и служебное (свои устройства — /api/sessions)
 OPERATOR_PATHS = {"/api/session", "/api/logout", "/ws", "/api/sessions"}
 MAX_IMAGE = 8 * 2**20
+MAX_UPLOAD = 32 * 2**20          # загрузка на Диск: фото, короткое видео, документы
 # карта (map.js): подложки OpenFreeMap / CARTO / Esri, поиск Photon и Nominatim, маршруты OSRM, «Рядом» — Overpass
 MAP_HOSTS = ("https://tiles.openfreemap.org https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com "
              "https://server.arcgisonline.com https://photon.komoot.io https://nominatim.openstreetmap.org "
@@ -175,7 +177,7 @@ def build_app(jarvis: Jarvis) -> web.Application:
         resp.headers.setdefault("Referrer-Policy", "no-referrer")
         return resp
 
-    app = web.Application(middlewares=[security], client_max_size=MAX_IMAGE + 2**20)
+    app = web.Application(middlewares=[security], client_max_size=MAX_UPLOAD + 2**20)
     app[JARVIS_KEY] = jarvis
     j = jarvis
 
@@ -385,7 +387,8 @@ def build_app(jarvis: Jarvis) -> web.Application:
         ops = jarvis.operators.list()
         for op in ops:
             op["unread"] = jarvis.operators.unread(op["id"], "owner")
-        apps = [{"id": k, "name": v, "icon": "🗺", "kind": "builtin"} for k, v in BUILTIN_APPS.items()]
+        apps = [{"id": k, "name": v, "icon": BUILTIN_INFO.get(k, {}).get("icon", "▣"), "kind": "builtin"}
+                for k, v in BUILTIN_APPS.items()]
         apps += [{"id": a["note"], "name": a["name"], "icon": a["icon"], "kind": a["kind"]}
                  for a in j.act_apps()["apps"]]
         return {"operators": ops, "perms": PERMS, "can_invite": auth.enabled, "apps": apps, "app_levels": APP_LEVELS,
@@ -400,10 +403,66 @@ def build_app(jarvis: Jarvis) -> web.Application:
         if not out["ready"]:
             return ok(out)
         try:
-            out["files"] = await j.drive.list(request.query.get("q", ""), folder=request.query.get("folder", ""))
+            out["files"] = await j.drive.list(request.query.get("q", ""), folder=request.query.get("folder", ""),
+                                              folders=True)
         except DriveError as e:
             out["error"] = str(e)
         return ok(out)
+
+    async def _upload_field(request) -> tuple[str, str, str, bytes]:
+        """Поле file из формы загрузки: (имя, тип, папка, байты)."""
+        form = await request.post()
+        field = form.get("file")
+        if field is None or not hasattr(field, "file"):
+            raise ValueError("нужен файл в поле file")
+        content = field.file.read()
+        if not content:
+            raise ValueError("файл пустой")
+        if len(content) > MAX_UPLOAD:
+            raise ValueError(f"файл больше {MAX_UPLOAD // 2**20} МБ")
+        name = unquote(str(getattr(field, "filename", "") or "файл"))[:200]   # aiohttp клиент шлёт name в %XX
+        mime = str(getattr(field, "content_type", "") or "application/octet-stream").split(";")[0]
+        return name, mime, str(form.get("folder") or ""), content
+
+    async def drive_browse(request):
+        owner_only(request)
+        try:
+            return ok(await j.drive_browse(request.query.get("folder", ""), request.query.get("q", "")))
+        except DriveError as e:
+            return ok({**j.drive.status(), "folder": {"id": "", "name": "Диск"}, "files": [], "error": str(e)})
+
+    async def drive_mkdir(request):
+        owner_only(request)
+        d = await body(request)
+        return ok(await j.drive_mkdir(str(d.get("name") or ""), str(d.get("parent") or "")))
+
+    async def drive_upload(request):
+        owner_only(request)
+        name, mime, folder, data = await _upload_field(request)
+        return ok(await j.drive_upload(name, data, mime, folder))
+
+    async def drive_share(request):
+        owner_only(request)
+        d = await body(request)
+        try:
+            return ok(await j.drive_share(str(d.get("op") or ""), d, str(d.get("level") or "")))
+        except KeyError as e:
+            raise ValueError(str(e).strip("'")) from None
+
+    async def drive_file(request):
+        owner_only(request)
+        try:
+            return ok(await j.drive.content(request.match_info["id"]))
+        except DriveError as e:
+            raise ValueError(str(e)) from None
+
+    async def drive_raw(request):
+        owner_only(request)
+        try:
+            data, mime = await j.drive.raw(request.match_info["id"])
+        except DriveError as e:
+            raise ValueError(str(e)) from None
+        return web.Response(body=data, content_type=mime, headers={"Cache-Control": "private, max-age=60"})
 
     async def admin_ops(request):
         owner_only(request)
@@ -533,7 +592,32 @@ def build_app(jarvis: Jarvis) -> web.Application:
 
     async def op_drive(request):
         op = me(request)
-        return ok({"files": j.op_drive(op), "ready": j.drive.ready})
+        return ok({"files": j.op_drive(op), "ready": j.drive.ready, "can_write": j.drive.cfg.can_write})
+
+    async def op_drive_list(request):
+        op = me(request)
+        try:
+            return ok(await j.op_drive_list(op, request.query.get("folder", "")))
+        except DriveError as e:
+            raise ValueError(str(e)) from None
+
+    async def op_drive_upload(request):
+        op = me(request)
+        name, mime, folder, data = await _upload_field(request)
+        if not folder:
+            raise ValueError("выберите папку для загрузки")
+        try:
+            return ok(await j.op_drive_upload(op, folder, name, data, mime))
+        except DriveError as e:
+            raise ValueError(str(e)) from None
+
+    async def op_drive_raw(request):
+        op = me(request)
+        try:
+            data, mime = await j.op_drive_raw(op, request.match_info["id"])
+        except DriveError as e:
+            raise ValueError(str(e)) from None
+        return web.Response(body=data, content_type=mime, headers={"Cache-Control": "private, max-age=60"})
 
     async def op_drive_file(request):
         """GET — текст открытого файла; POST {action: save} — копия в свою папку (если уровень «копия»)."""
@@ -947,6 +1031,12 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/invite", invite_info)
     r.add_post("/api/invite/accept", invite_accept)
     r.add_get("/api/gdrive", gdrive_get)
+    r.add_get("/api/drive", drive_browse)
+    r.add_post("/api/drive/mkdir", drive_mkdir)
+    r.add_post("/api/drive/upload", drive_upload)
+    r.add_post("/api/drive/share", drive_share)
+    r.add_get("/api/drive/file/{id}", drive_file)
+    r.add_get("/api/drive/raw/{id}", drive_raw)
     r.add_route("*", "/api/admin/operators", admin_ops)
     r.add_post("/api/admin/operators/{id}", admin_op)
     r.add_post("/api/admin/password", admin_password)
@@ -962,6 +1052,9 @@ def build_app(jarvis: Jarvis) -> web.Application:
     r.add_get("/api/op/notes", op_notes)
     r.add_get("/api/op/apps", op_apps)
     r.add_get("/api/op/drive", op_drive)
+    r.add_get("/api/op/drive/list", op_drive_list)
+    r.add_post("/api/op/drive/upload", op_drive_upload)
+    r.add_get("/api/op/drive/raw/{id}", op_drive_raw)
     r.add_route("*", "/api/op/drive/{id}", op_drive_file)
     r.add_route("*", "/api/op/appdata", op_appdata)
     r.add_route("*", "/api/appdata", appdata)

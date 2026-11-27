@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import secrets
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -33,6 +34,7 @@ import aiohttp
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 FILES_URL = "https://www.googleapis.com/drive/v3/files"
+UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 DOC_MIME = "application/vnd.google-apps.document"
@@ -40,7 +42,9 @@ SHEET_MIME = "application/vnd.google-apps.spreadsheet"
 SLIDES_MIME = "application/vnd.google-apps.presentation"
 
 # Уровни доступа оператора к файлу Диска: смотреть и (по желанию) сохранить копию в свою папку.
-LEVELS = {"view": "Просмотр", "copy": "Просмотр и копия к себе"}
+LEVELS = {"view": "Просмотр", "upload": "Просмотр и загрузка", "copy": "Просмотр и копия к себе"}
+# что можно выдавать: папку — смотреть или ещё и загружать в неё; файл — смотреть или забрать копию
+LEVELS_BY_KIND = {"folder": ("view", "upload"), "file": ("view", "copy")}
 
 KINDS = {DOC_MIME: "doc", SHEET_MIME: "sheet", SLIDES_MIME: "slides", FOLDER_MIME: "folder"}
 KIND_LABELS = {"doc": "Документ", "sheet": "Таблица", "slides": "Презентация", "folder": "Папка", "text": "Текст",
@@ -67,10 +71,15 @@ class DriveConfig:
     refresh_token: str = ""
     folder_id: str = ""
     max_mb: int = 4
+    write: bool = False              # загрузка и создание папок; нужен токен с правом drive
 
     @property
     def ready(self) -> bool:
         return bool(self.enabled and self.client_id and self.client_secret and self.refresh_token)
+
+    @property
+    def can_write(self) -> bool:
+        return bool(self.ready and self.write)
 
 
 async def _aiohttp_transport(method: str, url: str, params: dict | None, data: dict | None,
@@ -125,6 +134,7 @@ class Drive:
         self._token: str = ""
         self._expires: float = 0.0
         self._lock = asyncio.Lock()
+        self._parents_cache: dict[str, list[str]] = {}
 
     # ---------- состояние ----------
     @property
@@ -137,8 +147,14 @@ class Drive:
                                   ("GDRIVE_CLIENT_SECRET", self.cfg.client_secret),
                                   ("GDRIVE_REFRESH_TOKEN", self.cfg.refresh_token)) if not v]
         return {"enabled": self.cfg.enabled, "ready": self.ready, "missing": missing,
-                "folder": bool(self.cfg.folder_id), "max_mb": self.cfg.max_mb,
-                "levels": LEVELS, "kinds": KIND_LABELS}
+                "folder": bool(self.cfg.folder_id), "max_mb": self.cfg.max_mb, "can_write": self.cfg.can_write,
+                "levels": LEVELS, "levels_by_kind": LEVELS_BY_KIND, "kinds": KIND_LABELS}
+
+    def _need_write(self) -> None:
+        self._need()
+        if not self.cfg.write:
+            raise DriveError("Диск подключён только для чтения: включите GDRIVE_WRITE=1 и выпустите токен "
+                             "с правом drive (docs/drive.md)")
 
     def _need(self) -> None:
         if not self.cfg.ready:
@@ -170,18 +186,24 @@ class Drive:
             return token
 
     async def _request(self, method: str, url: str, params: dict | None = None, data: dict | None = None,
-                       *, auth: bool = False, accept: str = "application/json") -> tuple[int, bytes, str]:
+                       *, auth: bool = False, accept: str = "application/json",
+                       raw: bytes | None = None, content_type: str = "") -> tuple[int, bytes, str]:
         headers = {"Accept": accept}
         if data is not None:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
+        if raw is not None and content_type:
+            headers["Content-Type"] = content_type
         if auth:
             headers["Authorization"] = f"Bearer {await self._access_token()}"
+        body = raw if raw is not None else data
         if self._transport is not None:
-            return await self._transport(method, url, params, data, headers)
-        return await _aiohttp_transport(method, url, params, data, headers, self.timeout)
+            return await self._transport(method, url, params, body, headers)
+        return await _aiohttp_transport(method, url, params, body, headers, self.timeout)
 
-    async def _json(self, method: str, url: str, params: dict | None = None, data: dict | None = None) -> dict:
-        status, body, _ = await self._request(method, url, params, data, auth=True)
+    async def _json(self, method: str, url: str, params: dict | None = None, data: dict | None = None,
+                    *, raw: bytes | None = None, content_type: str = "") -> dict:
+        status, body, _ = await self._request(method, url, params, data, auth=True, raw=raw,
+                                              content_type=content_type)
         if status != 200:
             raise self._error(status, body, "Диск не ответил")
         try:
@@ -219,24 +241,31 @@ class Drive:
                 "modified": str(f.get("modifiedTime") or "")[:19]}
 
     @staticmethod
-    def _query(text: str = "") -> str:
-        parts = ["trashed = false", f"mimeType != '{FOLDER_MIME}'"]      # папки не выдаём
+    def _query(text: str = "", folders: bool = False) -> str:
+        parts = ["trashed = false"]
+        if not folders:
+            parts.append(f"mimeType != '{FOLDER_MIME}'")                # папки не выдаём
         word = re.sub(r"['\\]+", " ", (text or "").strip())[:80]
         if word:
             parts.append(f"name contains '{word}'")
         return " and ".join(parts)
 
-    async def list(self, query: str = "", folder: str = "", limit: int = MAX_FILES) -> list[dict]:
-        """Файлы (без папок), только безопасные поля. `folder` — папка вместо GDRIVE_FOLDER_ID."""
+    async def list(self, query: str = "", folder: str = "", limit: int = MAX_FILES,
+                   folders: bool = False) -> list[dict]:
+        """Содержимое папки — только безопасные поля. `folder` — папка вместо GDRIVE_FOLDER_ID.
+
+        `folders=True` — вместе с вложенными папками (приложение «Диск»); по умолчанию только файлы
+        (так выдаются права: папку целиком выдать нельзя, только отметить папку и загружать в неё).
+        """
         self._need()
-        q = self._query(query)
+        q = self._query(query, folders)
         folder_id = (folder or self.cfg.folder_id).strip()
         if folder_id:
             if not ID_RE.match(folder_id):
                 raise DriveError("идентификатор папки Диска выглядит неверно")
             q += f" and '{folder_id}' in parents"
         data = await self._json("GET", FILES_URL, {
-            "q": q, "pageSize": str(max(1, min(limit, MAX_FILES))), "orderBy": "modifiedTime desc",
+            "q": q, "pageSize": str(max(1, min(limit, MAX_FILES))), "orderBy": "folder,name",
             "fields": "files(id,name,mimeType,size,modifiedTime)", "supportsAllDrives": "true",
             "includeItemsFromAllDrives": "true"})
         return [self._item(f) for f in data.get("files", []) if isinstance(f, dict)]
@@ -271,3 +300,105 @@ class Drive:
         if len(body) > cap:
             raise DriveError(f"файл больше {self.cfg.max_mb} МБ — откройте его на Диске")
         return body.decode("utf-8", errors="replace")
+
+    # ---------- папки, загрузка, проверка вложенности ----------
+    async def meta(self, file_id: str) -> dict:
+        """Служебные поля для проверки доступа: id, имя, тип и родители. Наружу не отдаётся."""
+        file_id = (file_id or "").strip()
+        if not ID_RE.match(file_id):
+            raise DriveError("идентификатор выглядит неверно")
+        return await self._json("GET", f"{FILES_URL}/{file_id}",
+                                {"fields": "id,name,mimeType,size,parents", "supportsAllDrives": "true"})
+
+    async def parents(self, file_id: str, _cache: dict | None = None) -> list[str]:
+        cache = _cache if _cache is not None else self._parents_cache
+        if file_id in cache:
+            return cache[file_id]
+        parents = [p for p in (await self.meta(file_id)).get("parents") or [] if isinstance(p, str)]
+        cache[file_id] = parents
+        return parents
+
+    async def is_within(self, file_id: str, roots: list[str], depth: int = 8) -> bool:
+        """Файл/папка лежит внутри одной из корневых папок (или совпадает с ней).
+
+        Оператору выдаётся папка — значит, доступно её поддерево. Проверка идёт вверх по родителям
+        с кэшем на запрос: имена и пути наружу не уходят, решается только «можно / нельзя».
+        """
+        roots_set = {r for r in roots if r}
+        if not roots_set:
+            return False
+        cache: dict[str, list[str]] = {}
+        level = [file_id]
+        seen: set[str] = set()
+        for _ in range(depth + 1):
+            nxt: list[str] = []
+            for fid in level:
+                if fid in roots_set:
+                    return True
+                if fid in seen:
+                    continue
+                seen.add(fid)
+                nxt.extend(await self.parents(fid, cache))
+            if not nxt:
+                return False
+            level = nxt
+        return False
+
+    async def create_folder(self, name: str, parent: str = "") -> dict:
+        self._need_write()
+        name = (name or "").strip()[:120]
+        if not name:
+            raise DriveError("название папки пустое")
+        meta: dict = {"name": name, "mimeType": FOLDER_MIME}
+        if parent:
+            if not ID_RE.match(parent):
+                raise DriveError("идентификатор папки выглядит неверно")
+            meta["parents"] = [parent]
+        data = await self._json("POST", FILES_URL, {"supportsAllDrives": "true", "fields": "id,name,mimeType"},
+                                raw=json.dumps(meta, ensure_ascii=False).encode("utf-8"),
+                                content_type="application/json; charset=UTF-8")
+        return self._item(data)
+
+    async def upload(self, name: str, data: bytes, mime: str = "application/octet-stream",
+                     parent: str = "") -> dict:
+        """Загрузить файл в папку (multipart: метаданные + содержимое одним запросом)."""
+        self._need_write()
+        if not data:
+            raise DriveError("файл пустой")
+        name = (name or "").strip()[:200]
+        if not name:
+            raise DriveError("у файла нет имени")
+        if parent and not ID_RE.match(parent):
+            raise DriveError("идентификатор папки выглядит неверно")
+        boundary = "atom" + secrets.token_hex(8)
+        meta: dict = {"name": name}
+        if parent:
+            meta["parents"] = [parent]
+        head = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"
+                f"{json.dumps(meta, ensure_ascii=False)}\r\n"
+                f"--{boundary}\r\nContent-Type: {mime or 'application/octet-stream'}\r\n\r\n").encode("utf-8")
+        body = head + data + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        params = {"uploadType": "multipart", "supportsAllDrives": "true",
+                  "fields": "id,name,mimeType,size"}
+        item = await self._json("POST", UPLOAD_URL, params, raw=body,
+                                content_type=f"multipart/related; boundary={boundary}")
+        return self._item(item)
+
+    async def raw(self, file_id: str, cap: int = 8 * 1024 * 1024) -> tuple[bytes, str]:
+        """Содержимое картинки для показа в приложении: только image/*, с ограничением размера."""
+        self._need()
+        file_id = (file_id or "").strip()
+        if not ID_RE.match(file_id):
+            raise DriveError("идентификатор файла выглядит неверно")
+        meta = await self.meta(file_id)
+        mime = str(meta.get("mimeType") or "")
+        if not mime.startswith("image/"):
+            raise DriveError("показать можно только картинку — остальное откройте на Диске")
+        status, body, _ = await self._request("GET", f"{FILES_URL}/{file_id}",
+                                              {"alt": "media", "supportsAllDrives": "true"}, auth=True,
+                                              accept="*/*")
+        if status != 200:
+            raise self._error(status, body, "не удалось прочитать файл")
+        if len(body) > cap:
+            raise DriveError("картинка больше 8 МБ — откройте её на Диске")
+        return body, mime

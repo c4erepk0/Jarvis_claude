@@ -105,9 +105,14 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   `id/имя/вид/размер/дата` — ни владельцев файла, ни почты аккаунта, ни путей (белый список в `Drive._item`).
   Владелец отмечает файлы оператору: «Команда» → «Доступ» → «Диск ядра» (`drive: [{id, name, level: view|copy}]`
   в `operators.py`); оператор видит их вкладкой «Диск», «копия» кладёт заметку в `Команда/<Имя>/Диск/`.
-  API — `GET /api/gdrive` (владелец), `GET/POST /api/op/drive[/{id}]` (оператор); окна `team-admin.js`,
-  `operator-app.js`. Настройки — `GDRIVE_*` (`config.py`, `.env.example`), инструкция — `docs/drive.md`,
-  тест — `tests/test_gdrive.py`. Только сервер: в JS-ядре для iPhone Диска нет.
+  **Приложение «Диск»** в каталоге (`static/drive.js`, `builtin:drive`, `server: true`): папки, загрузка
+  файлов и отметки «кому из операторов что открыто»; оператору выдаётся `builtin:drive` и папки с уровнем
+  `view`/`upload` (файлы — `view`/`copy`), поддерево выданной папки проверяется по родителям (`Drive.is_within`).
+  Запись — только при `GDRIVE_WRITE=1` и токене с правом `drive`: загрузка файлов (до 32 МБ) и создание папок,
+  удаления на Диске нет. API — `/api/drive[/mkdir|/upload|/share|/file|/raw]` (владелец), `/api/op/drive[/list|/upload|/raw|/{id}]`
+  (оператор), `GET /api/gdrive` — плоский список для «Команды»; окна `drive.js`, `team-admin.js`, `operator-app.js`.
+  Настройки — `GDRIVE_*` (`config.py`, `.env.example`), инструкция — `docs/drive.md`, тесты —
+  `tests/test_gdrive.py`, `tests/js/apps-catalog.test.mjs`. Только сервер: в JS-ядре для iPhone Диска нет.
 - **Встречи и поручения** — `jarvis/meetings.py` (+ `core/meetings.js`): обычные задачи Obsidian Tasks, встреча —
   тег `#встреча`, время `🕒 15:00`, место `📍 …`; поручение — тег `#оператор/<имя>`. Отметить «состоялась» — выполнить
   задачу. `GET /api/meetings`, `POST /api/admin/assign`, интент `meetings` («встречи на завтра»), панель «Встречи».

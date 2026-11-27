@@ -168,7 +168,9 @@ export class TeamWindow {
   // «Диск ядра»: владелец отмечает файлы Google Drive, которые видит оператор. Сервер отдаёт только
   // имя, вид, размер и дату — без владельцев файла, почты аккаунта и путей по Диску.
   driveRow(f, level) {
-    const levels = (this.data.drive && this.data.drive.levels) || { view: "Просмотр", copy: "Просмотр и копия" };
+    const st = this.data.drive || {};
+    const levels = (st.levels_by_kind && st.levels_by_kind[f.kind === "folder" ? "folder" : "file"])
+      || st.levels || { view: "Просмотр", copy: "Просмотр и копия" };
     return `<label class="tw-app-row"><span class="tw-app-ic">${KIND[f.kind] || "📄"}</span>
       <span class="tw-app-name">${esc(f.name)} <small class="muted">${f.size_label ? esc(f.size_label) : ""}${f.modified ? ` · ${esc(f.modified.slice(0, 10))}` : ""}</small></span>
       <select name="drive" data-drive-id="${esc(f.id)}" data-drive-name="${esc(f.name)}"><option value="">Не открыт</option>
@@ -187,10 +189,11 @@ export class TeamWindow {
     const level = Object.fromEntries(grants.map((g) => [g.id, g.level]));
     const rows = files.map((f) => this.driveRow(f, level[f.id]));
     const extra = grants.filter((g) => !files.some((f) => f.id === g.id))
-      .map((g) => this.driveRow({ id: g.id, name: g.name, kind: "file" }, g.level));
+      .map((g) => this.driveRow({ id: g.id, name: g.name, kind: g.kind || "file" }, g.level));
     const body = rows.length || extra.length ? `<div class="tw-apps">${rows.concat(extra).join("")}</div>`
       : `<p class="muted small">${error ? esc(error) : "На Диске нет файлов" + (st.folder ? " в выбранной папке." : ".")}</p>`;
-    return `${body}<p class="muted small">Оператор увидит только отмеченное и без ваших данных: ни почты, ни владельцев файла, ни путей. «Копия» — ещё и сохранение заметкой в свою папку. Папки не выдаются: только файлы.</p>`;
+    return `${body}<p class="muted small">Оператор увидит только отмеченное и без ваших данных: ни почты, ни владельцев файла, ни путей.
+      Папка открывает своё содержимое; «Загрузка» — ещё и класть в неё файлы. «Копия» у файла — заметка в личную папку оператора.</p>`;
   }
 
   linkBox(token) {

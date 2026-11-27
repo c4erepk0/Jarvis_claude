@@ -117,6 +117,7 @@ export class OperatorApp {
   }
 
   async openApp(a) {
+    if (a.kind === "builtin" && a.id === "builtin:drive") { await this.driveApp(); return; }
     if (a.kind === "builtin" && a.id === "builtin:map") {
       if (!this.map) {
         const { MapWindow } = await import("./map.js?v=27");
@@ -145,9 +146,23 @@ export class OperatorApp {
     }
     return `<div class="tw-work single"><section class="tw-card"><h3>Диск ядра · ${r.files.length}</h3>
       <p class="muted small">Только то, что открыл владелец: чьи это файлы и где они лежат, не показывается.</p>
-      <ul class="tw-notes">${r.files.map((f) => `<li><span class="tw-note-path">${KIND[f.kind] || "📄"} ${esc(f.name)}</span>
-        <button class="btn ghost" data-drive-open="${esc(f.id)}">Открыть</button></li>`).join("")}</ul>
+      <ul class="tw-notes">${r.files.map((f) => `<li><span class="tw-note-path">${KIND[f.kind] || "📄"} ${esc(f.name)}
+        <small class="muted">${esc(f.level_label || "")}</small></span>
+        ${f.kind === "folder"
+          ? `<button class="btn ghost" data-drive-folder="${esc(f.id)}">Открыть папку</button>`
+          : `<button class="btn ghost" data-drive-open="${esc(f.id)}">Открыть</button>`}</li>`).join("")}</ul>
+      <div class="mw-acts"><button class="btn primary" data-act="drive-app">Открыть приложение «Диск»</button></div>
       <div data-el="drive-text"></div></section></div>`;
+  }
+
+  /** Приложение «Диск»: выданные папки и загрузка туда, где владелец разрешил. */
+  async driveApp(folder = "") {
+    if (!this.drive) {
+      const { DriveWindow } = await import("./drive.js?v=29");
+      this.drive = new DriveWindow(document.getElementById("dw"), { api: this.api, toast: this.toast, mode: "operator" });
+    }
+    document.body.classList.add("fw-on");
+    await this.drive.show({ folder });
   }
 
   async openDrive(id) {
@@ -252,6 +267,9 @@ export class OperatorApp {
     if (appOpen) { this.openApp(this.apps[+appOpen.dataset.appOpen]).catch((err) => this.toast(err.message, "error")); return; }
     const appNote = t.closest("[data-app-note]");
     if (appNote) { this.tab = "notes"; this.openNote(appNote.dataset.appNote, true).catch((err) => this.toast(err.message, "error")); return; }
+    const driveFolder = t.closest("[data-drive-folder]");
+    if (driveFolder) { this.driveApp(driveFolder.dataset.driveFolder).catch((err) => this.toast(err.message, "error")); return; }
+    if (t.closest('[data-act="drive-app"]')) { this.driveApp().catch((err) => this.toast(err.message, "error")); return; }
     const driveOpen = t.closest("[data-drive-open]");
     if (driveOpen) { this.openDrive(driveOpen.dataset.driveOpen).catch((err) => this.toast(err.message, "error")); return; }
     const driveSave = t.closest("[data-drive-save]");
