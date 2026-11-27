@@ -28,6 +28,7 @@ from .tasks import TaskBook as _TaskBook
 from .places import Places
 from .assets import Portfolio, Quotes
 from .finance import Ledger, analytics
+from .gdrive import LEVELS as DRIVE_LEVELS, Drive, DriveConfig, render_note, safe_name
 from .github import GitHub, GitHubError
 from .hub import Hub
 from .memory import Memory
@@ -84,7 +85,7 @@ def _kopecks(value: Any) -> int:
 
 class Jarvis:
     def __init__(self, cfg: Config, *, github: GitHub | None = None, briefing: Briefing | None = None,
-                 llm: Any = None, quotes: Quotes | None = None):
+                 llm: Any = None, quotes: Quotes | None = None, drive: Drive | None = None):
         self.cfg = cfg
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self.vault = Vault(cfg.vault_path)
@@ -101,6 +102,10 @@ class Jarvis:
         self.quotes = quotes or Quotes()
         self.places = Places(self.vault, f"{cfg.jarvis_dir}/Places.md")
         self.operators = Operators(cfg.data_dir, self.vault, f"{cfg.jarvis_dir}/Chat")
+        self.drive = drive or Drive(DriveConfig(enabled=cfg.gdrive_enabled, client_id=cfg.gdrive_client_id,
+                                                client_secret=cfg.gdrive_client_secret,
+                                                refresh_token=cfg.gdrive_refresh_token,
+                                                folder_id=cfg.gdrive_folder_id, max_mb=cfg.gdrive_max_mb))
         self.voice = Voice(cfg.tts_engine, cfg.tts_voice, cfg.tts_rate, cfg.tts_pitch, cfg.data_dir / "tts",
                            cfg.piper_bin, cfg.piper_model)
         self.reminders = Reminders(self.vault, f"{cfg.jarvis_dir}/Reminders.md", ru.now(cfg.timezone).tzinfo)
@@ -495,6 +500,45 @@ class Jarvis:
                 out[rel] = {"path": rel, "title": self.vault.title_of(rel), "edit": edit, "mtime": int(st.st_mtime),
                             "folder": rel.rsplit("/", 1)[0] if "/" in rel else "", "from": n["path"]}
         return sorted(out.values(), key=lambda x: (x["folder"], x["title"].lower()))
+
+    # ---------- «Диск ядра»: что владелец открыл оператору ----------
+    @staticmethod
+    def op_drive(op: dict) -> list[dict]:
+        """Открытые оператору файлы: только id, имя и уровень. Ни владельцев, ни путей, ни аккаунта."""
+        return [{"id": g["id"], "name": g["name"], "level": g["level"],
+                 "level_label": DRIVE_LEVELS.get(g["level"], "")} for g in op.get("drive", [])]
+
+    @staticmethod
+    def _drive_grant(op: dict, file_id: str) -> dict:
+        grant = next((g for g in op.get("drive", []) if g["id"] == file_id), None)
+        if not grant:
+            raise PermissionError("этот файл вам не открыт")
+        return grant
+
+    async def op_drive_content(self, op: dict, file_id: str) -> dict:
+        """Текст открытого файла. Права проверяются до запроса к Google: чужой id не дойдёт до Диска."""
+        grant = self._drive_grant(op, file_id)
+        data = await self.drive.content(file_id)
+        return {"id": data["id"], "name": data["name"], "text": data["text"], "level": grant["level"],
+                "can_save": grant["level"] == "copy"}
+
+    async def op_drive_save(self, op: dict, file_id: str) -> dict:
+        """Копия файла в личную папку оператора — только если владелец дал уровень «копия»."""
+        grant = self._drive_grant(op, file_id)
+        if grant["level"] != "copy":
+            raise PermissionError("этот файл открыт только для просмотра")
+        data = await self.drive.content(file_id)
+        folder = f"{self.operators.folder(op)}/Диск"
+        name = safe_name(data["name"])
+        path = f"{folder}/{name}.md"
+        n = 2
+        while self.vault.exists(path):
+            path = f"{folder}/{name} ({n}).md"
+            n += 1
+        self.vault.write(path, render_note(data["name"], data["text"], self.today().isoformat()))
+        await self.log(f"{op['name']}: копия с Диска ядра — {name}")
+        await self.changed("notes")
+        return {"path": path, "notes": self.op_notes(op)}
 
     def _project_tasks(self, project) -> list:
         folder = self.projects.folder_of(project)

@@ -42,12 +42,12 @@ def make_config(tmp: Path, **kw) -> Config:
     return Config(**base)
 
 
-def make_jarvis(tmp: Path, *, seed: bool = True, github: GitHub | None = None, llm=None, **kw) -> Jarvis:
+def make_jarvis(tmp: Path, *, seed: bool = True, github: GitHub | None = None, llm=None, drive=None, **kw) -> Jarvis:
     cfg = make_config(tmp, **kw)
     if seed:
         shutil.copytree(ROOT / "vault-template", cfg.vault_path, dirs_exist_ok=True)
     return Jarvis(cfg, github=github or GitHub("", base_url="http://127.0.0.1:9"), briefing=FakeBriefing(), llm=llm,
-                  quotes=Quotes(_offline))
+                  quotes=Quotes(_offline), drive=drive)
 
 
 @pytest.fixture
