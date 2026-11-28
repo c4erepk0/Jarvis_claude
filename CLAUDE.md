@@ -47,8 +47,9 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/apps.py` — каталог приложений: проекты с `catalog: true` и заметки `type: app` (`url`, `icon`, `repo`);
   `GET/POST /api/apps`, JS — `core/apps.js`. **MK·II: карта, финансы, хранилище, граф, команда и настройки — встроенные
   приложения каталога**, не панели главной: окно `static/apps-window.js` (#aw, кнопка ⊞ и вкладка «Приложения» нижней
-  навигации), список и поиск без DOM — `static/apps-catalog.js` (`BUILTIN`, `launcherItems`; тест —
-  `tests/js/apps-catalog.test.mjs`), своё https-приложение открывается внутри Atom — `static/app-viewer.js` (#av,
+  навигации), список и поиск без DOM — `static/apps-catalog.js` (`BUILTIN`, `GROUPS`, `launcherItems`,
+  `groupedBuiltin`; тест — `tests/js/apps-catalog.test.mjs`); встроенные сгруппированы по делу — «Дела», «Люди»,
+  «Анализ», «Система», а не по истории появления. Своё https-приложение открывается внутри Atom — `static/app-viewer.js` (#av,
   iframe; CSP `frame-src https:`, для разработки — http://localhost). На главной — три колонки: задачи, ядро, проекты.
   **Мост с приложением** — `static/app-bridge.js` (postMessage, протокол `atom-app/1`, принимается только от окна
   приложения и с его origin; тест — `tests/js/app-bridge.test.mjs`): `download` — готовый файл, Atom показывает своё
@@ -133,6 +134,12 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   списки в «Настройках» (`settings.CHOICES`). «Металл» из фильма — Web Audio в дашборде, по умолчанию выключен.
   Инструкция — `docs/voice.md`, тест — `tests/test_voice.py`.
 - `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
+- `static/windows.js` — **менеджер окон**: `register(id, {load})` → `open(id, arg)` → одно окно на экране,
+  `dismiss()` для Esc; окно, отказавшееся закрыться (несохранённая правка в «Хранилище»), отменяет переход.
+  Новые экраны регистрируются здесь, а не открываются вручную (`tests/js/windows.test.mjs`).
+- `static/util.js` — один `esc()` на всё приложение, `todayISO()` (ISO `ГГГГ-ММ-ДД` из Date и из `S.now`),
+  `fmtDay()` для человека; `static/geom.js` — `dist2d` для жестов и взгляда (`tests/js/util.test.mjs`).
+  Карта дел и точек входа — [docs/processes.md](docs/processes.md).
 - `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`. Ядро — сфера из частиц
   (`static/particle-sphere.js`, three.js с CDN; точки и «настроения» — `static/sphere-points.js`, тест —
   `tests/js/sphere-points.test.mjs`); `reactor.js` (класс `Reactor` — имя прежнее) рисует дуги показателей и, если WebGL

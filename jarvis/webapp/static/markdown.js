@@ -4,7 +4,9 @@
 // блоки кода, **жирный**, *курсив*, ~~зачёркнутый~~, ==выделение==, `код`, [[ссылки|псевдоним]], #теги,
 // [текст](https://…) — только http(s) и mailto.
 
-export const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+import { esc } from "./util.js?v=33";
+
+export { esc };
 
 const SAFE_URL = /^(https?:\/\/|mailto:)/i;
 

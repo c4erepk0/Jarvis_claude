@@ -88,11 +88,11 @@ make help           # все команды
 
 ```
 jarvis/                  сервер: core.py — действия, web.py — API, brain/llm — модели
-  webapp/static/          фронтенд без сборки; core/ — порт ядра для iPhone
+  webapp/static/          фронтенд без сборки; windows.js — окна; core/ — порт ядра для iPhone
   vault.py notes.py       хранилище и заметки; tasks.py finance.py — форматы
   operators.py            операторы, права, приглашения
   fileshare.py            обмен файлами с операторами (см. docs/exchange.md)
-docs/                    iphone, hosting, sync, brain, branches, exchange
+docs/                    iphone, hosting, sync, brain, branches, exchange, processes
 vault-template/          стартовое хранилище (генерируется в static/vault-template.json)
 tests/                   pytest; tests/js — node --test
 scripts/                 bootstrap, vps, gaze_eval, build_template, livesync_config
@@ -106,7 +106,7 @@ scripts/                 bootstrap, vps, gaze_eval, build_template, livesync_con
 | Новая голосовая команда | `jarvis/intents.py` (+ `core/intents.js`), тест в `tests/test_commands.py` |
 | Новое действие Atom | `act_*` в `jarvis/core.py`, маршрут в `jarvis/web.py`, тест |
 | Новая настройка | `jarvis/config.py` → `.env.example` → README |
-| Новый экран / окно | `webapp/static/<окно>.js` + `app.js` + `app.css` + `?v=N` |
+| Новый экран / окно | `webapp/static/<окно>.js` + `register` в `webapp/static/windows.js` + `app.css` + `?v=N` |
 | Работа с внешним сервисом | отдельный модуль `jarvis/<сервис>.py` с внедряемым транспортом, чтобы тесты шли без сети |
 | Права оператора | `jarvis/operators.py` (валидация) + `core.py` (доступ) + `web.py` (API) + `team-admin.js` (панель) |
 
@@ -121,3 +121,5 @@ scripts/                 bootstrap, vps, gaze_eval, build_template, livesync_con
   не выдержать нагрузки и упасть вместе с ходом работы. Проверяйте точечно — `pytest tests/test_fileshare.py -q` —
   а полный набор оставьте CI: он и есть арбитр.
 - **`git rebase` в этой истории не используется**: ветка подтягивает `main` через `merge`.
+- **Окна не открывайте вручную.** Только `wins.open(id)` из `static/windows.js`: иначе Esc и «одно окно на
+  экране» снова разойдутся по файлам.

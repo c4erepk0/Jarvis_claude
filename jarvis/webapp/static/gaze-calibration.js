@@ -5,9 +5,9 @@
 //   привязка — 3 точки, ~6 с, при каждом включении взгляда: убирает сдвиг новой сессии (свет, поза), модель та же.
 // Все записывают «сырые» кадры (точки глаз и лица, без фото) в хранилище (Jarvis/Gaze/sessions) — для анализа:
 // scripts/gaze_eval.mjs. Логика точек — Calibration в gaze.js, сам взгляд считает голограмма (hologram.js: trackGaze).
-import { Calibration, MAGNET_LEVELS } from "./gaze.js?v=32";
+import { Calibration, MAGNET_LEVELS } from "./gaze.js?v=33";
+import { esc } from "./util.js?v=33";
 
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 /** Как назвать точность калибровки. */
 export function qualityLabel(errorPx) {

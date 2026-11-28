@@ -4,13 +4,13 @@
 // новости с явным прогнозом, который влияет на рынок; от них дуги тянутся к рынкам (нефть — Лондон, ставки —
 // Вашингтон…). Справа — лента, тактика (давление на рынки, ваши позиции, идеи) и котировки-ориентиры.
 // Данные — /api/news (jarvis/news.py), разбор — /api/news/brief (мозг Atom). Геометрия без DOM — globe-geo.js.
-import { esc, renderMarkdown } from "./markdown.js?v=32";
+import { esc, renderMarkdown } from "./markdown.js?v=33";
+import { reduced } from "./motion.js?v=33";
 import { FILTERS, MARKER_COLORS, ago, arc, arrow, centerOn, matches, mergeItems, pick, pressureClass, project,
-  shortestTurn, spherePoints, toVec, rotate } from "./globe-geo.js?v=32";
+  shortestTurn, spherePoints, toVec, rotate } from "./globe-geo.js?v=33";
 
 const POINTS = 16000;
 const TABS = [["feed", "Лента"], ["tactics", "Тактика"], ["markets", "Рынки"]];
-const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const rub = (k) => (k === null || k === undefined ? "—" : (k / 100).toLocaleString("ru-RU", { maximumFractionDigits: k >= 1e6 ? 0 : 2 }));
 const pct = (v) => (v === null || v === undefined ? "" : `${v > 0 ? "+" : ""}${v.toFixed(2)}%`);
 

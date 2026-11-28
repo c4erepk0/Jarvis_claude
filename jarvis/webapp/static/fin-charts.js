@@ -1,6 +1,8 @@
 // Графики финансов без библиотек и без DOM — строки SVG (тест — tests/js/fin-charts.test.mjs).
 // Цвета — через CSS-классы (.fc-*), поэтому графики следуют теме дашборда.
-export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+import { esc } from "./util.js?v=33";
+
+export { esc };
 const SYM = { RUB: "₽", USD: "$", EUR: "€" };
 export function money(k, cur = "RUB", { signed = false, short = false } = {}) {
   const sign = k < 0 ? "−" : signed && k > 0 ? "+" : "";

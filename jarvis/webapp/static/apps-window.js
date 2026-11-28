@@ -1,8 +1,8 @@
 // Окно «Приложения» — каталог: встроенные приложения Atom (карта, финансы, хранилище, граф, команда, настройки и
 // диагностика) и свои программы из каталога (/api/apps). Открывается кнопкой в нижней навигации и в шапке.
 // Логика без DOM — apps-catalog.js; своё приложение со ссылкой открывается внутри Atom (app-viewer.js).
-import { esc } from "./markdown.js?v=32";
-import { appIcon, launcherItems } from "./apps-catalog.js?v=32";
+import { esc } from "./markdown.js?v=33";
+import { appIcon, groupedBuiltin, launcherItems } from "./apps-catalog.js?v=33";
 
 export class AppsWindow {
   /** launch(id) — открыть встроенное; openApp(app) — своё по ссылке; openPage(app) — страница проекта / заметка. */
@@ -55,12 +55,16 @@ export class AppsWindow {
 
   render() {
     const { builtin, own } = launcherItems({ apps: this.data.apps, standalone: this.standalone, query: this.query });
+    const groups = groupedBuiltin(builtin);
     this.el("meta").textContent = this.data.apps.length ? `${this.data.apps.length} своих` : "";
     this.el("body").innerHTML = `
-      <section><h3 class="aw-h">Atom</h3><div class="aw-grid">${builtin.map((a) => this.tile(a, false)).join("") || `<p class="empty">Ничего не нашлось.</p>`}</div></section>
+      <p class="aw-lead">Остальные дела Atom. Задачи и проекты — на своих вкладках, голос — на «Главной».</p>
+      ${groups.map((g) => `<section><h3 class="aw-h">${g.title}</h3>
+        <div class="aw-grid">${g.items.map((a) => this.tile(a, false)).join("")}</div></section>`).join("")
+        || (this.query ? `<p class="empty">Среди приложений Atom ничего не нашлось.</p>` : "")}
       <section><h3 class="aw-h">Мои приложения <button class="btn ghost" data-act="add">＋ Добавить</button></h3>
         <div class="aw-grid">${own.map((a) => this.tile(a, true)).join("")
-          || `<p class="empty">${this.query ? "Ничего не нашлось." : "Здесь будут ваши программы. «＋ Добавить» — проект в каталог, или заметка с <code>type: app</code> и <code>url:</code>."}</p>`}</div></section>
+          || `<p class="empty">${this.query ? "Среди своих приложений ничего не нашлось." : "Здесь будут ваши программы. «＋ Добавить» — проект в каталог, или заметка с <code>type: app</code> и <code>url:</code>."}</p>`}</div></section>
       <div class="aw-add hidden" data-el="add"></div>`;
   }
 

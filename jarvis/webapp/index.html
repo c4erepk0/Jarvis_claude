@@ -9,12 +9,12 @@
 <meta name="apple-mobile-web-app-title" content="ATOM">
 <title>A.T.O.M.</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="static/icon.svg?v=32" type="image/svg+xml">
-<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=32">
+<link rel="icon" href="static/icon.svg?v=33" type="image/svg+xml">
+<link rel="apple-touch-icon" href="static/apple-touch-icon.png?v=33">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="static/app.css?v=32">
+<link rel="stylesheet" href="static/app.css?v=33">
 </head>
 <body>
 <!-- загрузка -->
@@ -54,12 +54,8 @@
   <div class="clock"><div id="clock-time">--:--</div><div id="clock-date" class="muted">—</div></div>
   <div class="weather" id="weather"><span class="muted">—</span></div>
   <div class="top-acts">
-    <button class="top-btn team-btn" id="btn-team" title="Команда: операторы, права, чат, встречи" aria-label="Команда">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 20c0-3.3 3.1-6 7-6s7 2.7 7 6v1H2v-1Zm16 1v-1c0-1.9-.7-3.6-1.9-4.9 3 .3 5.9 2.3 5.9 4.9v1h-4Z"/></svg><em class="tw-badge hidden" id="team-badge"></em></button>
-    <button class="top-btn" id="btn-apps" title="Приложения: карта, финансы, хранилище и ваши программы" aria-label="Приложения">
+    <button class="top-btn apps-btn" id="btn-apps" title="Приложения: всё, что не на главной" aria-label="Приложения">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/></svg></button>
-    <button class="top-btn" id="btn-settings" title="Настройки и диагностика" aria-label="Настройки и диагностика">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.3 2.5h4l.4-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4-2.1-1.6ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z" transform="translate(-1 0)"/></svg></button>
   </div>
 </header>
 
@@ -78,7 +74,7 @@
       </form>
     </article>
     <article class="panel" id="p-meet">
-      <div class="panel-h">Встречи <span class="h-meta" id="meet-meta"></span><button class="h-btn" id="meet-open" title="Все встречи и команда">⤢</button></div>
+      <div class="panel-h">Встречи <span class="h-meta" id="meet-meta"></span><button class="h-btn meet-btn" id="meet-open" title="Все встречи и команда" aria-label="Все встречи и команда">⤢<em class="tw-badge hidden" id="team-badge"></em></button></div>
       <ul class="tasks" id="meet-list"></ul>
     </article>
     <article class="panel" id="p-protocols">
@@ -198,6 +194,6 @@
   <canvas id="holo-hands" class="holo-hands hidden"></canvas>
 </div>
 
-<script type="module" src="static/app.js?v=32"></script>
+<script type="module" src="static/app.js?v=33"></script>
 </body>
 </html>

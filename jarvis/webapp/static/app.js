@@ -1,15 +1,16 @@
 // A.T.O.M. — дашборд. Без сборки и фреймворков: модули ES.
 // Два режима: с сервером (REST + WebSocket к Python) и «только iPhone» — ядро работает прямо в Safari
 // (core/*.js), память — GitHub-репозиторий с хранилищем Obsidian. Интерфейс один и тот же.
-import { Reactor } from "./reactor.js?v=32";
-import { Voice } from "./voice.js?v=32";
-import { stagger } from "./motion.js?v=32";
-import { BrainPicker } from "./brain-picker.js?v=32";
+import { Reactor } from "./reactor.js?v=33";
+import { Voice } from "./voice.js?v=33";
+import { stagger } from "./motion.js?v=33";
+import { BrainPicker } from "./brain-picker.js?v=33";
+import { WindowManager } from "./windows.js?v=33";
+import { esc, fmtDay, todayISO } from "./util.js?v=33";
 
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const CLIENT = Math.random().toString(36).slice(2, 10);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const store = {
   get(k, d) { try { const v = localStorage.getItem(`jarvis.${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(`jarvis.${k}`, JSON.stringify(v)); } catch { /* приватный режим */ } },
@@ -56,7 +57,7 @@ async function boot() {
   const server = await fetch("api/session", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   if (!server || server.standalone) {
     // сервера нет (GitHub Pages / с экрана «Домой») — Atom работает прямо на телефоне
-    SA = await import("./standalone.js?v=32");
+    SA = await import("./standalone.js?v=33");
     document.body.classList.add("standalone");
     if (!SA.hasSettings()) { hideBoot(); openSettings(true); return; }
     try {
@@ -91,13 +92,13 @@ async function boot() {
 // ---------- первый запуск, приглашение, кабинет оператора ----------
 async function startOperator() {
   document.querySelector("header.top")?.classList.add("hidden");
-  const { OperatorApp } = await import("./operator-app.js?v=32");
+  const { OperatorApp } = await import("./operator-app.js?v=33");
   try { await new OperatorApp($("#opapp"), { api, toast }).start(); }
   catch (e) { toast(`Кабинет оператора: ${e.message}`, "error"); }
 }
 
 async function acceptInvite(text, password = "", password2 = null) {
-  const { inviteToken } = await import("./team.js?v=32");
+  const { inviteToken } = await import("./team.js?v=33");
   const token = inviteToken(text);
   if (!token) throw new Error("Вставьте ссылку-приглашение целиком или код из неё");
   if (password2 !== null && password !== password2) throw new Error("Пароли не совпадают");
@@ -177,7 +178,7 @@ async function showGate(mode, token = "") {
   });
   $("#gate-op").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const { inviteToken } = await import("./team.js?v=32");
+    const { inviteToken } = await import("./team.js?v=33");
     const t = inviteToken(e.target.link.value);
     if (!t) { $("#gate-op-err").textContent = "Вставьте ссылку-приглашение целиком или код из неё"; return; }
     showGate("invite", t);                         // дальше — задать пароль
@@ -287,18 +288,20 @@ function handleEvent(e) {
         break;
       case "open_note": openNote(d.path); break;
       case "open_files": openFiles(); break;
-      case "open_map": openMap(d); break;
+      case "open_map": openWindow("map", d); break;
       case "open_globe": openGlobe(); break;
-      case "appdata": av?.onAppData(d); break;
-      case "news":
-        gw?.onNews(d);
-        if (!gw?.isOpen) for (const it of (d.items || []).filter((i) => i.economic).slice(0, 2)) addLog({ type: "log", ts: e.ts, data: { text: `🌐 Прогноз: ${it.title}` } });
+      case "appdata": wins.get("viewer")?.onAppData(d); break;
+      case "news": {
+        const globe = wins.get("globe");
+        globe?.onNews(d);
+        if (!globe?.isOpen) for (const it of (d.items || []).filter((i) => i.economic).slice(0, 2)) addLog({ type: "log", ts: e.ts, data: { text: `🌐 Прогноз: ${it.title}` } });
         break;
+      }
       case "chat":
         if (d.message?.from === "operator") { toast(`${d.name}: ${d.message.text.slice(0, 140)}`, "info"); loadTeamBadge(); }
-        tw?.onEvent("chat", d);
+        wins.get("team")?.onEvent("chat", d);
         break;
-      case "operators": tw?.onEvent("operators", d); loadTeamBadge(); break;
+      case "operators": wins.get("team")?.onEvent("operators", d); loadTeamBadge(); break;
       case "open_project": openFiles({ kind: "project", name: d.name }); break;
       case "open_synthesis": openFiles({ kind: "synthesis", name: null }); break;
       case "vault":
@@ -408,7 +411,7 @@ function chip(sel, cls, flash = false) {
 let brainPicker = null;
 function renderChips() {
   if (!brainPicker && $("#btn-brain")) {
-    brainPicker = new BrainPicker($("#btn-brain"), { api, toast, onSettings: () => openSystem(),
+    brainPicker = new BrainPicker($("#btn-brain"), { api, toast, onSettings: () => openWindow("system"),
       onChange: () => refreshSoon("brain") });
   }
   brainPicker?.render(S);
@@ -488,70 +491,67 @@ $("#mem-form").addEventListener("submit", async (e) => {
 $("#facts").addEventListener("click", (e) => { const li = e.target.closest(".hit"); if (li) openNote(li.dataset.path); });
 
 // финансы — приложение из каталога (окно finance.js): при новых операциях открытое окно обновляется
+// ---------- окна: один менеджер на всё приложение ----------
+// Раньше каждый экран повторял «загрузить модуль → создать → показать → закрыть», а Esc знал про каждое окно
+// отдельно. Теперь окна регистрируются здесь, создаются лениво и на экране всегда одно.
+const wins = new WindowManager();
+const openWindow = (id, arg) => wins.open(id, arg).catch((err) => { toast(err.message, "error"); return null; });
+
+wins.register("finance", { load: async () => new (await import("./finance.js?v=33")).FinanceWindow($("#fw"),
+  { api, toast, store, openNote, today: () => todayISO(S?.now) }) });
+wins.register("map", { load: async () => new (await import("./map.js?v=33")).MapWindow($("#mw"),
+  { api, toast, store, speak: (t) => { if (!voice.muted) voice.say(t); } }) });
+wins.register("exchange", { load: async () => new (await import("./exchange.js?v=33")).ExchangeWindow($("#xw"),
+  { api, toast, mode: "owner" }) });
+wins.register("team", { load: async () => new (await import("./team-admin.js?v=33")).TeamWindow($("#ow"),
+  { api, toast, store, today: () => todayISO(S?.now), standalone: Boolean(local) }) });
+wins.register("apps", { load: async () => {
+  const { AppsWindow } = await import("./apps-window.js?v=33");
+  const w = new AppsWindow($("#aw"), { api, toast, standalone: Boolean(local), launch: launchApp,
+    openApp: (app) => openWindow("viewer", app),
+    openPage: (a) => (a.kind === "project" ? openFiles({ kind: "project", name: a.name }) : openNote(a.note)) });
+  new MutationObserver(() => markTab()).observe($("#aw"), { attributes: true, attributeFilter: ["class"] });
+  return w;
+} });
+wins.register("viewer", { load: async () => new (await import("./app-viewer.js?v=33")).AppViewer($("#av"),
+  { api, toast }) });
+wins.register("globe", { load: async () => new (await import("./globe.js?v=33")).GlobeWindow($("#gw"),
+  { api, toast, store }) });
+wins.register("system", { load: async () => new (await import("./system.js?v=33")).SystemWindow($("#sysw"),
+  { api, toast, store, standalone: Boolean(local), device: () => api("/api/diagnostics"),
+    settings: () => openSettings(false) }) });
+wins.register("files", { load: () => fileManager() });
+
+/** Открыть своё окно по id каталога. Особые случаи — только там, где нужен другой режим или проверка. */
+function openTeam(opts) {
+  return openWindow("team", opts).then((w) => { if (w) loadTeamBadge(); return w; });
+}
+function openFiles(view) { return openWindow("files", view); }
+function openExchange() {
+  if (local) { toast("«Обмен файлами» работает с сервером Atom: файлы лежат на нём", "warn"); return null; }
+  return openWindow("exchange");
+}
+function openGlobe() {
+  if (local) { toast("«Глобус» работает с сервером Atom: из браузера ленты новостей недоступны", "warn"); return null; }
+  return openWindow("globe");
+}
+
+// финансы — приложение из каталога (окно finance.js): при новых операциях открытое окно обновляется
 let finTimer = null;
 function renderFinance() {
-  if (!fw?.isOpen) return;
+  const win = wins.get("finance");
+  if (!win?.isOpen) return;
   clearTimeout(finTimer);
-  finTimer = setTimeout(() => fw.reload({ quotes: false }).catch(() => {}), 300);
+  finTimer = setTimeout(() => win.reload({ quotes: false }).catch(() => {}), 300);
 }
 
-// ---------- окно «Финансы» (finance.js) ----------
-let fw = null;
-async function openFinance(tab = null) {
-  try {
-    if (!fw) {
-      const { FinanceWindow } = await import("./finance.js?v=32");
-      fw = new FinanceWindow($("#fw"), { api, toast, store, openNote, today: () => S.now.slice(0, 10) });
-    }
-    await fw.show(tab);
-  } catch (err) { toast(err.message, "error"); }
-}
-
-// ---------- карта и навигация (map.js) ----------
-let mw = null;
-async function openMap(args = {}) {
-  try {
-    if (!mw) {
-      const { MapWindow } = await import("./map.js?v=32");
-      mw = new MapWindow($("#mw"), { api, toast, store, speak: (t) => { if (!voice.muted) voice.say(t); } });
-    }
-    await mw.show(args || {});
-  } catch (err) { toast(`Карта: ${err.message}`, "error"); }
-}
-
-// ---------- приложение «Обмен файлами»: папки на сервере, загрузка, доступ операторам (exchange.js) ----------
-let xw = null;
-async function openExchange() {
-  if (local) { toast("«Обмен файлами» работает с сервером Atom: файлы лежат на нём", "warn"); return; }
-  try {
-    if (!xw) {
-      const { ExchangeWindow } = await import("./exchange.js?v=32");
-      xw = new ExchangeWindow($("#xw"), { api, toast, mode: "owner" });
-    }
-    await xw.show();
-  } catch (err) { toast(`Обмен файлами: ${err.message}`, "error"); }
-}
-
-// ---------- команда: операторы, чат, встречи (team-admin.js) ----------
-let tw = null;
-async function openTeam(opts = {}) {
-  try {
-    if (!tw) {
-      const { TeamWindow } = await import("./team-admin.js?v=32");
-      tw = new TeamWindow($("#ow"), { api, toast, store, today: () => S.now.slice(0, 10), standalone: Boolean(local) });
-    }
-    await tw.show(opts);
-    loadTeamBadge();
-  } catch (err) { toast(err.message, "error"); }
-}
-$("#btn-team").addEventListener("click", () => openTeam());
 $("#meet-open").addEventListener("click", () => openTeam({ tab: "meet" }));
 async function loadTeamBadge() {
   if (local) return;
   try {
     const r = await api("/api/admin/operators");
     const n = r.operators.reduce((s, o) => s + (o.unread || 0), 0);
-    $("#team-badge").textContent = n; $("#team-badge").classList.toggle("hidden", !n);
+    $("#team-badge").textContent = n || ""; $("#team-badge").classList.toggle("hidden", !n);
   } catch { /* старый сервер */ }
 }
 
@@ -559,11 +559,11 @@ async function loadTeamBadge() {
 async function loadMeetings() {
   let m;
   try { m = await api("/api/meetings"); } catch { return; }
-  const today = S.now.slice(0, 10);
+  const today = todayISO(S.now);
   $("#meet-meta").textContent = m.today ? `${m.today} СЕГОДНЯ` : m.upcoming.length ? `${m.upcoming.length} ВПЕРЕДИ` : "";
   $("#meet-list").innerHTML = m.upcoming.slice(0, 6).map((x) => `<li class="task meet" data-id="${esc(x.id)}">
     <button class="check" aria-label="Состоялась"></button>
-    <div class="t-text"><b>${esc(x.title)}</b><small class="muted">${x.due ? esc(new Date(`${x.due}T00:00`).toLocaleDateString("ru-RU", { day: "numeric", month: "short" })) : ""}${x.time ? ` · ${esc(x.time)}` : ""}${x.place ? ` · 📍 ${esc(x.place)}` : ""}</small></div>
+    <div class="t-text"><b>${esc(x.title)}</b><small class="muted">${x.due ? esc(fmtDay(x.due)) : ""}${x.time ? ` · ${esc(x.time)}` : ""}${x.place ? ` · 📍 ${esc(x.place)}` : ""}</small></div>
     <div class="t-meta ${x.due && x.due < today ? "over" : x.due === today ? "today" : ""}">${x.due === today ? "СЕГОДНЯ" : ""}</div></li>`).join("")
     || `<li class="empty">Встреч не назначено. «⤢» — назначить, или задача с тегом #встреча.</li>`;
 }
@@ -575,58 +575,16 @@ $("#meet-list").addEventListener("click", async (e) => {
   catch (err) { li.classList.remove("done"); toast(err.message, "error"); }
 });
 
-// ---------- каталог приложений (apps-window.js): встроенные приложения и свои программы ----------
-let aw = null, av = null;
-async function openApps() {
-  try {
-    if (!aw) {
-      const { AppsWindow } = await import("./apps-window.js?v=32");
-      aw = new AppsWindow($("#aw"), { api, toast, standalone: Boolean(local), launch: launchApp, openApp: openAppView,
-        openPage: (a) => (a.kind === "project" ? openFiles({ kind: "project", name: a.name }) : openNote(a.note)) });
-      new MutationObserver(() => markTab()).observe($("#aw"), { attributes: true, attributeFilter: ["class"] });
-    }
-    await aw.show();
-  } catch (err) { toast(err.message, "error"); }
-}
-function loadApps() { if (aw?.isOpen) aw.reload(); }
-async function openAppView(app) {
-  try {
-    if (!av) { const { AppViewer } = await import("./app-viewer.js?v=32"); av = new AppViewer($("#av"), { api, toast }); }
-    av.open(app);
-  } catch (err) { toast(err.message, "error"); }
-}
-/** Встроенное приложение из каталога. */
+// каталог приложений: встроенные приложения (apps-catalog.js) и свои программы
+function loadApps() { const win = wins.get("apps"); if (win?.isOpen) win.reload(); }
+/** Встроенное приложение из каталога: graph — голограмма, остальные — окно с тем же id. */
 function launchApp(id) {
-  ({ globe: () => openGlobe(), map: () => openMap(), exchange: () => openExchange(), finance: () => openFinance(),
-    files: () => openFiles(), graph: () => openHolo(), team: () => openTeam(), system: () => openSystem() })[id]?.();
+  if (id === "graph") return openHolo();
+  if (id === "exchange") return openExchange();
+  if (id === "globe") return openGlobe();
+  return openWindow(id);
 }
-$("#btn-apps").addEventListener("click", () => openApps());
-
-// ---------- приложение «Глобус»: новости в прямом эфире, прогнозы по рынкам, тактика (globe.js) ----------
-let gw = null;
-async function openGlobe() {
-  if (local) { toast("«Глобус» работает с сервером Atom: из браузера ленты новостей недоступны", "warn"); return; }
-  try {
-    if (!gw) {
-      const { GlobeWindow } = await import("./globe.js?v=32");
-      gw = new GlobeWindow($("#gw"), { api, toast, store });
-    }
-    await gw.show();
-  } catch (err) { toast(err.message, "error"); }
-}
-
-// ---------- приложение «Настройки и диагностика» (system.js) ----------
-let sysw = null;
-async function openSystem(tab = null) {
-  try {
-    if (!sysw) {
-      const { SystemWindow } = await import("./system.js?v=32");
-      sysw = new SystemWindow($("#sysw"), { api, toast, store, standalone: Boolean(local),
-        device: () => api("/api/diagnostics"), settings: () => openSettings(false) });
-    }
-    await sysw.show(tab);
-  } catch (err) { toast(err.message, "error"); }
-}
+$("#btn-apps").addEventListener("click", () => openWindow("apps"));
 
 function ciBadge(ci) {
   if (!ci) return `<span class="badge">CI —</span>`;
@@ -934,23 +892,21 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     if (!$("#modal").classList.contains("hidden")) closeModal();
-    else if (av?.isOpen) av.close();
-    else if (gw?.isOpen) gw.escape();
-    else if (mw?.isOpen) mw.escape();
-    else if (sysw?.isOpen) sysw.close();
-    else if (tw?.isOpen) tw.close();
-    else if (fw?.isOpen) fw.close();
-    else if (!$("#holo").classList.contains("hidden")) { if (notes?.isOpen && notes.mode === "view") notes.close(); }
-    else if (fm?.isOpen) fm.escape();
-    else if (aw?.isOpen) aw.close();
+    else if (!wins.dismiss() && !$("#holo").classList.contains("hidden")) {
+      if (notes?.isOpen && notes.mode === "view") notes.close();
+    }
   }
 });
 
 // вкладки на телефоне: главная, задачи, проекты и приложения (карта, финансы, файлы — в каталоге приложений)
 let curTab = "core";
 function markTab() {
-  const on = aw?.isOpen ? "apps" : curTab;
-  $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === on));
+  const on = wins.isOpen("apps") ? "apps" : curTab;
+  $$("#tabs button").forEach((b) => {
+    const active = b.dataset.tab === on;
+    b.classList.toggle("on", active);
+    if (active) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
 }
 function setTab(tab) {
   const map = { core: ".col-center", missions: ".col-left", projects: ".col-right" };
@@ -961,8 +917,8 @@ function setTab(tab) {
 }
 $("#tabs").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
-  if (b.dataset.tab === "apps") { openApps(); return; }
-  if (aw?.isOpen) aw.close();
+  if (b.dataset.tab === "apps") { openWindow("apps"); return; }
+  wins.close("apps");
   setTab(b.dataset.tab);
   scrollTo({ top: 0, behavior: "smooth" });
 });
@@ -980,19 +936,16 @@ tick(); setInterval(tick, 1000);
 let fm = null;
 async function fileManager() {
   if (fm) return fm;
-  const { FileManager } = await import("./files.js?v=32");
+  const { FileManager } = await import("./files.js?v=33");
   fm = new FileManager($("#fm"), {
     api, toast, store,
     projects: () => (S ? S.projects : []),
     openHolo: (path) => openNote(path),
     delegate: (name) => delegateForm(name),
     dictate: voice.supported ? () => voice.dictate() : null,
-    today: () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; },
+    today: todayISO,
   });
   return fm;
-}
-async function openFiles(view = null) {
-  try { await (await fileManager()).show(view); } catch (err) { toast(err.message, "error"); }
 }
 
 // ---------- голограмма ----------
@@ -1013,7 +966,7 @@ async function openHolo() {
   const wasHidden = el.classList.contains("hidden");
   el.classList.remove("hidden");
   if (!holo) {
-    const { Hologram } = await import("./hologram.js?v=32");
+    const { Hologram } = await import("./hologram.js?v=33");
     holo = new Hologram(el, {
       onOpen: openNote,
       onStatus: (s) => { $("#holo-stats").textContent = s; },
@@ -1036,11 +989,11 @@ function panelInset() {
 
 async function notePanel() {
   if (notes) return notes;
-  const { NotePanel } = await import("./note-panel.js?v=32");
+  const { NotePanel } = await import("./note-panel.js?v=33");
   notes = new NotePanel($("#holo"), {
     api, toast,
     resolve: (name) => holoTitles.get(String(name).toLowerCase()) || holoTitles.get(String(name).split("/").pop().toLowerCase()) || null,
-    today: () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; },
+    today: todayISO,
     onShow: (path) => { holo?.setInset(panelInset()); holo?.highlight(path); holo?.focus(path); },
     onClose: () => { holo?.highlight(null); holo?.setInset({}); },
     onCreated: () => loadGraph(),
@@ -1077,7 +1030,7 @@ async function startCamera() {
 async function openTutorial({ from = null } = {}) {
   if (!holo) return;
   try {
-    const { GestureTutorial } = await import("./gesture-tutorial.js?v=32");
+    const { GestureTutorial } = await import("./gesture-tutorial.js?v=33");
     tutorial ??= new GestureTutorial({
       root: $("#holo"), holo, startCamera,
       say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1128,7 +1081,7 @@ function flushGazeClicks() {
   if (!gazeClicks.length) return;
   const clicks = gazeClicks;
   gazeClicks = [];
-  import("./gaze.js?v=32").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
+  import("./gaze.js?v=33").then(({ BLEND_KEYS, RAW_LANDMARKS }) => gazeRecord({
     kind: "jarvis-gaze-usage", version: 1, created: new Date().toISOString(),
     screen: { w: innerWidth, h: innerHeight }, landmarks: RAW_LANDMARKS, blend: BLEND_KEYS, clicks,
   })).catch(() => { gazeClicks = clicks.concat(gazeClicks).slice(-200); });   // нет связи — попробуем позже
@@ -1149,7 +1102,7 @@ function eyesOff() {
   $("#holo").classList.remove("eyes");
 }
 async function calibrateEyes({ mode = null } = {}) {
-  const { GazeCalibration } = await import("./gaze-calibration.js?v=32");
+  const { GazeCalibration } = await import("./gaze-calibration.js?v=33");
   gazeCal ??= new GazeCalibration({
     root: $("#holo"), holo,
     say: (text) => { if (!voice.muted) voice.say(text); },
@@ -1162,7 +1115,7 @@ async function calibrateEyes({ mode = null } = {}) {
 }
 async function eyesOn() {
   const saved = savedGaze();
-  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=32");
+  const { AdaptiveGaze, DEFAULT_MAGNET } = await import("./gaze.js?v=33");
   await holo.startGaze($("#holo-video"), $("#holo-hands"), {
     ...(saved ? { model: AdaptiveGaze.fromJSON(saved.adaptive), errorPx: saved.errorPx } : {}),
     magnet: store.get("gaze_magnet", DEFAULT_MAGNET),
@@ -1186,7 +1139,6 @@ addEventListener("orientationchange", () => {
   if (holo?.gaze?.model) toast("Экран повернули — откалибруйте взгляд заново: кнопка ◎.", "warn");   // привязки тут мало
 });
 
-$("#btn-settings").addEventListener("click", () => openSystem());
 
 // PWA
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
