@@ -351,7 +351,29 @@ class DeepSeek(OpenAIChat):
         return {"Authorization": f"Bearer {key}", "Accept": "application/json"}
 
 
-PROVIDERS: dict[str, type[ChatLLM]] = {"gigachat": GigaChat, "yandex": YandexGPT, "deepseek": DeepSeek}
+class CustomChat(OpenAIChat):
+    """Своя OpenAI-совместимая модель: OpenRouter, прокси, Ollama, LM Studio (LLM_URL · LLM_KEY · LLM_MODEL)."""
+    name, title = "custom", "Своя модель"
+
+    @property
+    def model(self) -> str:
+        return self.chosen or self.cfg.custom_model
+
+    @property
+    def url(self) -> str:
+        return self.cfg.custom_url
+
+    def headers(self) -> dict:
+        out = {"Authorization": f"Bearer {self.cfg.custom_key.strip()}", "Accept": "application/json"}
+        if "openrouter.ai" in self.url:
+            out["HTTP-Referer"] = "https://github.com/c4erepk0/Jarvis_claude"
+            out["X-Title"] = "Atom"
+        return out
+
+
+PROVIDERS: dict[str, type[ChatLLM]] = {
+    "gigachat": GigaChat, "yandex": YandexGPT, "deepseek": DeepSeek, "custom": CustomChat,
+}
 
 
 def make_chat(cfg: "Config", backend: str, model: str = "") -> ChatLLM:

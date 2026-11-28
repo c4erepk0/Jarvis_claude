@@ -24,7 +24,9 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
 - `jarvis/core.py` — класс `Jarvis`: все действия `act_*`, очередь подтверждений, `handle()` — главный вход.
 - `jarvis/intents.py` — локальный разбор русских команд; `jarvis/ru.py` — даты, суммы, склонения.
 - `jarvis/brain.py` — Claude: инструменты, append-only история, `fallbacks="default"`, отказ (`refusal`).
-- `jarvis/llm.py` — тот же мозг на GigaChat / YandexGPT / DeepSeek (`JARVIS_LLM`; незнакомое имя не роняет запуск): перевод формата функций, OAuth GigaChat,
+- `jarvis/llm.py` — тот же мозг на GigaChat / YandexGPT / DeepSeek / **своя OpenAI-совместимая модель**
+  (`JARVIS_LLM`; незнакомое имя не роняет запуск; `LLM_URL` · `LLM_KEY` · `LLM_MODEL` — OpenRouter, прокси,
+  Ollama): перевод формата функций, OAuth GigaChat,
   сертификат Минцифры (`jarvis/certs/`) — только для запросов GigaChat. Тест — `tests/test_llm.py`, инструкция —
   `docs/brain.md`. В JS-ядро для iPhone не перенесено намеренно: из браузера к этим API не обратиться.
 - `jarvis/models.py` — **выбор модели**: каталог по провайдерам, список подключённых (`Config.llm_ready`), подписи;
@@ -125,7 +127,11 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   проекта, поля (`set_frontmatter_field` — правит одну строку frontmatter), страница проекта (`overview`: задачи по тегу,
   в заметке и папке `Projects/<Проект>/`, прогресс, заметки, журнал). Заметки в папке проекта — не проекты.
 - `jarvis/web.py` — REST + WebSocket + вход; `jarvis/hub.py` — шина событий; `jarvis/watchers.py` — фоновые датчики.
-- `jarvis/voice.py` (TTS), `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
+- `jarvis/voice.py` — TTS: `yandex` (SpeechKit: лучший русский, эмоция `TTS_STYLE`, скорость из `TTS_RATE`),
+  `openai` (gpt-4o-mini-tts и совместимые прокси — манера задаётся инструкцией), `eleven` (multilingual v2),
+  `edge` (бесплатно, по умолчанию), `piper` (локально), `browser`. Нужны `TTS_KEY`/`TTS_MODEL`/`TTS_URL`,
+  у Yandex — `YANDEX_FOLDER_ID`; сравнение и настройка — `docs/voice.md`, тест — `tests/test_voice.py`.
+- `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
 - `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`. Ядро — сфера из частиц
   (`static/particle-sphere.js`, three.js с CDN; точки и «настроения» — `static/sphere-points.js`, тест —
   `tests/js/sphere-points.test.mjs`); `reactor.js` (класс `Reactor` — имя прежнее) рисует дуги показателей и, если WebGL

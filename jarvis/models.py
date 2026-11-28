@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .config import Config
 
-TITLES = {"claude": "Claude", "gigachat": "GigaChat", "yandex": "YandexGPT", "deepseek": "DeepSeek"}
+TITLES = {"claude": "Claude", "gigachat": "GigaChat", "yandex": "YandexGPT", "deepseek": "DeepSeek",
+          "custom": "Своя модель"}
 
 # провайдер → [(модель, коротко, пояснение)]
 CATALOG: dict[str, list[tuple[str, str, str]]] = {
@@ -37,6 +38,7 @@ CATALOG: dict[str, list[tuple[str, str, str]]] = {
         ("deepseek-chat", "Chat", "быстрая, по умолчанию"),
         ("deepseek-reasoner", "Reasoner", "думает дольше"),
     ],
+    "custom": [],          # модель задаётся в настройках: OpenRouter, прокси, Ollama
 }
 
 
@@ -52,7 +54,7 @@ def claude_web_search(model: str) -> bool:
 
 def default_model(cfg: "Config", backend: str) -> str:
     return {"claude": cfg.model, "gigachat": cfg.gigachat_model, "yandex": cfg.yandex_model,
-            "deepseek": cfg.deepseek_model}.get(backend, "")
+            "deepseek": cfg.deepseek_model, "custom": cfg.custom_model}.get(backend, "")
 
 
 def label(backend: str, model: str) -> str:
