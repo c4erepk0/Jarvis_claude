@@ -57,6 +57,7 @@ KNOWN: dict[str, tuple[str, str, bool]] = {
     "TTS_ENGINE": ("Откуда голос", "Голос", False),
     "TTS_VOICE": ("Голос", "Голос", False),
     "TTS_RATE": ("Скорость речи", "Голос", False),
+    "TTS_PITCH": ("Высота голоса", "Голос", False),
 }
 # выпадающие списки вместо свободного ввода: имя настройки → [(значение, подпись)]
 CHOICES: dict[str, list[tuple[str, str]]] = {
@@ -65,6 +66,7 @@ CHOICES: dict[str, list[tuple[str, str]]] = {
                    ("piper", "Piper — локально, своя модель")],
     "TTS_VOICE": [(value, label) for value, label in VOICES],
     "TTS_RATE": [("+0%", "Обычная"), ("-6%", "Чуть медленнее"), ("+6%", "Чуть быстрее")],
+    "TTS_PITCH": [("+0Hz", "Обычная"), ("-4Hz", "Чуть ниже"), ("+4Hz", "Чуть выше")],
 }
 
 # свои токены не могут подменить то, от чего зависит запуск и безопасность
