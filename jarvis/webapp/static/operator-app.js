@@ -2,8 +2,8 @@
 // открыл), приложения из каталога (к которым дан доступ), личные заметки (папка Команда/<Имя>/) и доверенные
 // заметки владельца (читать или править), чат с владельцем, свои устройства (выйти на любом) и пароль.
 // Сервер пускает оператора только в /api/op/… и /api/sessions (web.py), события WebSocket приходят только его.
-import { esc, renderMarkdown } from "./markdown.js?v=31";
-import { chatDays, seen } from "./team.js?v=31";
+import { esc, renderMarkdown } from "./markdown.js?v=32";
+import { chatDays, seen } from "./team.js?v=32";
 
 const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "");
 const STATUS = { idea: "идея", active: "в работе", paused: "на паузе", done: "завершён" };
@@ -120,7 +120,7 @@ export class OperatorApp {
     if (a.kind === "builtin" && a.id === "builtin:exchange") { await this.exchangeApp(); return; }
     if (a.kind === "builtin" && a.id === "builtin:map") {
       if (!this.map) {
-        const { MapWindow } = await import("./map.js?v=31");
+        const { MapWindow } = await import("./map.js?v=32");
         const store = { get: (k, d) => { try { const v = localStorage.getItem(`atom.op.${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
           set: (k, v) => { try { localStorage.setItem(`atom.op.${k}`, JSON.stringify(v)); } catch { /* приватный режим */ } } };
         this.map = new MapWindow(document.getElementById("mw"), { api: this.api, toast: this.toast, store, places: false,
@@ -130,7 +130,7 @@ export class OperatorApp {
       return;
     }
     if (!this.viewer) {
-      const { AppViewer } = await import("./app-viewer.js?v=31");
+      const { AppViewer } = await import("./app-viewer.js?v=32");
       this.viewer = new AppViewer(document.getElementById("av"), { api: this.api, toast: this.toast, storeApi: "/api/op/appdata" });
     }
     this.viewer.open(a);
@@ -156,7 +156,7 @@ export class OperatorApp {
   /** Приложение «Обмен файлами»: выданные папки, скачивание и загрузка туда, где разрешено. */
   async exchangeApp(folder = "") {
     if (!this.exchange) {
-      const { ExchangeWindow } = await import("./exchange.js?v=31");
+      const { ExchangeWindow } = await import("./exchange.js?v=32");
       this.exchange = new ExchangeWindow(document.getElementById("xw"),
         { api: this.api, toast: this.toast, mode: "operator" });
     }

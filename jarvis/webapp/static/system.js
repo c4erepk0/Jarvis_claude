@@ -2,7 +2,7 @@
 // ключи и токены (Telegram, Claude, GitHub… и свои), SSH-серверы, версия и обновления с GitHub (вручную —
 // с подтверждения, или автоматически раз в N часов), перезапуск. Данные — /api/system/… (только владелец).
 // В режиме «только iPhone» сервера нет — показываются диагностика устройства и настройки телефона (standalone.js).
-import { esc } from "./markdown.js?v=31";
+import { esc } from "./markdown.js?v=32";
 
 const TABS = [["diag", "Диагностика"], ["keys", "Ключи и токены"], ["ssh", "SSH-серверы"], ["update", "Обновления"]];
 const when = (iso) => (iso ? new Date(iso).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
@@ -119,7 +119,8 @@ export class SystemWindow {
     for (const k of s.known) (groups[k.group] ||= []).push(k);
     const row = (k) => `<form class="sys-key" data-form="known" data-name="${esc(k.name)}">
       <label><span>${esc(k.label)} <code>${esc(k.name)}</code></span>
-        <input name="value" ${k.secret ? `type="password" autocomplete="off" placeholder="${k.set ? `задан: ${esc(k.preview)}` : "не задан"}"` : `value="${esc(k.value || "")}" placeholder="не задано"`}></label>
+        ${k.choices ? `<select name="value">${k.choices.map((c) => `<option value="${esc(c.value)}" ${c.value === k.value ? "selected" : ""}>${esc(c.label)}</option>`).join("")}${k.value && !k.choices.some((c) => c.value === k.value) ? `<option value="${esc(k.value)}" selected>${esc(k.value)} — своё</option>` : ""}</select>`
+          : `<input name="value" ${k.secret ? `type="password" autocomplete="off" placeholder="${k.set ? `задан: ${esc(k.preview)}` : "не задан"}"` : `value="${esc(k.value || "")}" placeholder="не задано"`}>`}</label>
       <span class="sys-src">${k.source === "ui" ? "из настроек" : k.source === "env" ? "из .env" : ""}</span>
       <button class="btn ghost">Сохранить</button>${k.source === "ui" ? `<button type="button" class="h-btn" data-clear="${esc(k.name)}" title="Убрать значение из настроек (останется .env)" aria-label="Сбросить">↺</button>` : ""}</form>`;
     return `<div class="fw-grid">${Object.entries(groups).map(([g, list]) => `<section class="fw-card"><h3>${esc(g)}</h3>${list.map(row).join("")}</section>`).join("")}

@@ -94,14 +94,10 @@ class Config:
     custom_key: str = ""
     custom_model: str = ""
     # --- голос ---
-    tts_engine: str = "edge"        # edge | piper | browser | yandex | openai | eleven
+    tts_engine: str = "edge"        # edge | piper | browser — только бесплатные, без ключей
     tts_voice: str = "ru-RU-DmitryNeural"
-    tts_rate: str = "-4%"
-    tts_pitch: str = "-8Hz"
-    tts_model: str = ""             # модель TTS: gpt-4o-mini-tts | eleven_multilingual_v2
-    tts_key: str = ""               # ключ TTS; пусто — берём ключ провайдера из окружения
-    tts_url: str = ""               # OpenAI-совместимый TTS endpoint (прокси/агрегатор)
-    tts_style: str = ""             # манера: инструкция для OpenAI, эмоция для Yandex
+    tts_rate: str = "+0%"           # нейтрально: замедление звучит роботом
+    tts_pitch: str = "+0Hz"
     piper_bin: str = "piper"
     piper_model: str = ""
     wake_word: str = "атом"
@@ -257,12 +253,8 @@ def load_config() -> Config:
         custom_model=_str("LLM_MODEL"),
         tts_engine=_str("TTS_ENGINE", "edge").lower(),
         tts_voice=_str("TTS_VOICE", "ru-RU-DmitryNeural"),
-        tts_rate=_str("TTS_RATE", "-4%"),
-        tts_pitch=_str("TTS_PITCH", "-8Hz"),
-        tts_model=_str("TTS_MODEL"),
-        tts_key=_str("TTS_KEY"),
-        tts_url=_str("TTS_URL"),
-        tts_style=_str("TTS_STYLE"),
+        tts_rate=_str("TTS_RATE", "+0%"),
+        tts_pitch=_str("TTS_PITCH", "+0Hz"),
         piper_bin=_str("PIPER_BIN", "piper"),
         piper_model=_str("PIPER_MODEL"),
         wake_word=_str("WAKE_WORD", "атом").lower(),
@@ -290,6 +282,6 @@ def load_config() -> Config:
     )
     if cfg.effort not in ("low", "medium", "high", "xhigh", "max"):
         raise RuntimeError("JARVIS_EFFORT: допустимо low | medium | high | xhigh | max")
-    if cfg.tts_engine not in ("edge", "piper", "browser", "yandex", "openai", "eleven"):
-        raise RuntimeError("TTS_ENGINE: допустимо edge | piper | browser | yandex | openai | eleven")
+    if cfg.tts_engine not in ("edge", "piper", "browser"):
+        raise RuntimeError("TTS_ENGINE: допустимо edge | piper | browser")
     return cfg

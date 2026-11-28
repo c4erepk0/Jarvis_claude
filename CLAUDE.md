@@ -127,10 +127,11 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   проекта, поля (`set_frontmatter_field` — правит одну строку frontmatter), страница проекта (`overview`: задачи по тегу,
   в заметке и папке `Projects/<Проект>/`, прогресс, заметки, журнал). Заметки в папке проекта — не проекты.
 - `jarvis/web.py` — REST + WebSocket + вход; `jarvis/hub.py` — шина событий; `jarvis/watchers.py` — фоновые датчики.
-- `jarvis/voice.py` — TTS: `yandex` (SpeechKit: лучший русский, эмоция `TTS_STYLE`, скорость из `TTS_RATE`),
-  `openai` (gpt-4o-mini-tts и совместимые прокси — манера задаётся инструкцией), `eleven` (multilingual v2),
-  `edge` (бесплатно, по умолчанию), `piper` (локально), `browser`. Нужны `TTS_KEY`/`TTS_MODEL`/`TTS_URL`,
-  у Yandex — `YANDEX_FOLDER_ID`; сравнение и настройка — `docs/voice.md`, тест — `tests/test_voice.py`.
+- `jarvis/voice.py` — TTS только на бесплатных движках: `edge` (нейроголоса Microsoft, по умолчанию),
+  `piper` (локально), `browser` (голос телефона). Голоса — `VOICES` (Дмитрий, Светлана), по умолчанию
+  нейтральные скорость и высота; текст режется по концу предложения. Список голосов и движок — выпадающие
+  списки в «Настройках» (`settings.CHOICES`). «Металл» из фильма — Web Audio в дашборде, по умолчанию выключен.
+  Инструкция — `docs/voice.md`, тест — `tests/test_voice.py`.
 - `jarvis/telegram.py`, `jarvis/briefing.py` (погода, курсы), `jarvis/diagnostics.py`.
 - `jarvis/webapp/` — `index.html`, `static/{app,reactor,voice,hologram}.js`, `app.css`, `sw.js`. Ядро — сфера из частиц
   (`static/particle-sphere.js`, three.js с CDN; точки и «настроения» — `static/sphere-points.js`, тест —

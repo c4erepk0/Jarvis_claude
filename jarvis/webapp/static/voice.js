@@ -14,7 +14,7 @@ export class Voice {
     this.wakeMode = false;
     this.armed = false;        // слово-активатор услышано, ждём команду
     this.speaking = false;
-    this.fx = true;
+    this.fx = false;          // «металл» из фильма — по желанию, по умолчанию чистый голос
     this.muted = false;
     this.rec = null;
     this.ctx = null;
@@ -148,7 +148,7 @@ export class Voice {
       // на iPhone мужской русский голос — «Yuri» (Настройки → Универсальный доступ → Устный контент → Голоса)
       u.voice = all.find((v) => v.name === this.preferredVoice && v.lang.startsWith(u.lang.slice(0, 2)))
         || voices.find((v) => /yuri|юрий|dmitr|daniel|male|муж/i.test(v.name)) || voices[0] || null;
-      u.rate = 0.97; u.pitch = 0.8;
+      u.rate = 1.0; u.pitch = 1.0;
       let fake = 0;
       const iv = setInterval(() => { fake = (fake + 0.37) % 1; this.onLevel(0.25 + Math.abs(Math.sin(fake * 6)) * 0.4); }, 90);
       u.onend = u.onerror = () => { clearInterval(iv); resolve(); };
