@@ -104,8 +104,7 @@ class Jarvis:
         self.operators = Operators(cfg.data_dir, self.vault, f"{cfg.jarvis_dir}/Chat")
         self.share = share or FileShare(cfg.data_dir / "exchange", cfg.exchange_max_mb, cfg.exchange_quota_mb)
         self.voice = Voice(cfg.tts_engine, cfg.tts_voice, cfg.tts_rate, cfg.tts_pitch, cfg.data_dir / "tts",
-                           cfg.piper_bin, cfg.piper_model, model=cfg.tts_model, api_key=cfg.tts_key,
-                           url=cfg.tts_url, style=cfg.tts_style, folder_id=cfg.yandex_folder_id)
+                           cfg.piper_bin, cfg.piper_model)
         self.reminders = Reminders(self.vault, f"{cfg.jarvis_dir}/Reminders.md", ru.now(cfg.timezone).tzinfo)
         self.briefing = briefing or Briefing(cfg.latitude, cfg.longitude, cfg.city, cfg.timezone)
         self.hub = Hub()

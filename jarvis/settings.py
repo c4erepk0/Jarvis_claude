@@ -23,6 +23,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .voice import VOICES
+
 # имя переменной → (подпись, раздел, секрет?)
 KNOWN: dict[str, tuple[str, str, bool]] = {
     "ANTHROPIC_API_KEY": ("Ключ Claude API", "Мозг", True),
@@ -52,14 +54,21 @@ KNOWN: dict[str, tuple[str, str, bool]] = {
     "NEWS_FEEDS": ("Свои ленты RSS через запятую (пусто — встроенные)", "Новости", False),
     "NEWS_INTERVAL": ("Опрашивать ленты раз в … минут", "Новости", False),
     "NEWS_ALERTS": ("Оповещать о сильных прогнозах по вашим активам (1/0)", "Новости", False),
-    "TTS_VOICE": ("Голос: имя (edge) / id (ElevenLabs) / голос SpeechKit (filipp, alena…)", "Голос", False),
-    "TTS_ENGINE": ("Синтез речи (yandex · openai · eleven · edge · piper · browser)", "Голос", False),
-    "TTS_MODEL": ("Голос: модель (gpt-4o-mini-tts · eleven_multilingual_v2)", "Голос", False),
-    "TTS_KEY": ("Голос: ключ синтеза", "Голос", True),
-    "TTS_URL": ("Голос: адрес API (пусто — по провайдеру)", "Голос", False),
-    "TTS_STYLE": ("Голос: манера («спокойно, тепло») или эмоция good", "Голос", False),
-    "TTS_RATE": ("Голос: скорость (-4%)", "Голос", False),
+    "TTS_ENGINE": ("Откуда голос", "Голос", False),
+    "TTS_VOICE": ("Голос", "Голос", False),
+    "TTS_RATE": ("Скорость речи", "Голос", False),
+    "TTS_PITCH": ("Высота голоса", "Голос", False),
 }
+# выпадающие списки вместо свободного ввода: имя настройки → [(значение, подпись)]
+CHOICES: dict[str, list[tuple[str, str]]] = {
+    "TTS_ENGINE": [("edge", "Нейроголос Microsoft — бесплатно, нужен интернет"),
+                   ("browser", "Голос телефона — бесплатно, без интернета"),
+                   ("piper", "Piper — локально, своя модель")],
+    "TTS_VOICE": [(value, label) for value, label in VOICES],
+    "TTS_RATE": [("+0%", "Обычная"), ("-6%", "Чуть медленнее"), ("+6%", "Чуть быстрее")],
+    "TTS_PITCH": [("+0Hz", "Обычная"), ("-4Hz", "Чуть ниже"), ("+4Hz", "Чуть выше")],
+}
+
 # свои токены не могут подменить то, от чего зависит запуск и безопасность
 BLOCKED = re.compile(r"^(PATH|HOME|USER|SHELL|PWD|LANG|LC_\w*|TZ|LD_\w*|DYLD_\w*|PYTHON\w*|VIRTUAL_ENV|SSL_\w*|"
                      r"REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE|HTTPS?_PROXY|NO_PROXY|JARVIS_(HOST|PORT|DATA_DIR|SECRET|"
@@ -157,6 +166,8 @@ class Settings:
             cur = ui if ui is not None else os.getenv(name, "")
             item = {"name": name, "label": label, "group": group, "secret": secret, "set": bool(cur),
                     "source": "ui" if ui is not None else ("env" if cur else "")}
+            if name in CHOICES:
+                item["choices"] = [{"value": v, "label": text} for v, text in CHOICES[name]]
             item["value" if not secret else "preview"] = cur if not secret else mask(cur)
             known.append(item)
         custom = [{"name": c["name"], "note": c.get("note", ""), "preview": mask(c.get("value", "")),
