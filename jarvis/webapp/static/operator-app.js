@@ -2,10 +2,10 @@
 // открыл), приложения из каталога (к которым дан доступ), личные заметки (папка Команда/<Имя>/) и доверенные
 // заметки владельца (читать или править), чат с владельцем, свои устройства (выйти на любом) и пароль.
 // Сервер пускает оператора только в /api/op/… и /api/sessions (web.py), события WebSocket приходят только его.
-import { esc, renderMarkdown } from "./markdown.js?v=32";
-import { chatDays, seen } from "./team.js?v=32";
+import { esc, renderMarkdown } from "./markdown.js?v=33";
+import { fmtDay } from "./util.js?v=33";
+import { chatDays, seen } from "./team.js?v=33";
 
-const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "");
 const STATUS = { idea: "идея", active: "в работе", paused: "на паузе", done: "завершён" };
 const TABS = [["tasks", "Задачи"], ["meet", "Встречи"], ["proj", "Проекты"], ["apps", "Приложения"], ["exchange", "Обмен"], ["notes", "Заметки"], ["chat", "Чат"], ["me", "Устройства"]];
 const KIND = { doc: "📄", sheet: "📊", slides: "🖼", text: "📝", file: "📎", folder: "📁" };
@@ -60,7 +60,7 @@ export class OperatorApp {
     const done = t.status === "done", today = this.me.today;
     return `<li class="task ${done ? "done" : ""} prio-${t.priority}" data-id="${esc(t.id)}">
       <button class="check" data-check="${done ? "todo" : "done"}" aria-label="${done ? "Вернуть" : "Выполнено"}"></button>
-      <div class="t-text">${esc(t.text)}</div>${t.due ? `<div class="t-meta ${t.due < today && !done ? "over" : t.due === today ? "today" : ""}">${esc(fmtDate(t.due))}</div>` : ""}</li>`;
+      <div class="t-text">${esc(t.text)}</div>${t.due ? `<div class="t-meta ${t.due < today && !done ? "over" : t.due === today ? "today" : ""}">${esc(fmtDay(t.due))}</div>` : ""}</li>`;
   }
 
   async tab_tasks() {
@@ -83,7 +83,7 @@ export class OperatorApp {
     const m = await this.api("/api/op/meetings");
     const row = (x) => `<li class="task meet ${x.status === "done" ? "done" : ""}" data-id="${esc(x.id)}">
       <button class="check" data-check="${x.status === "done" ? "todo" : "done"}" aria-label="${x.status === "done" ? "Вернуть" : "Состоялась"}"></button>
-      <div class="t-text"><b>${esc(x.title)}</b><small class="muted">${esc(fmtDate(x.due))}${x.time ? ` · ${esc(x.time)}` : ""}${x.place ? ` · 📍 ${esc(x.place)}` : ""}</small></div></li>`;
+      <div class="t-text"><b>${esc(x.title)}</b><small class="muted">${esc(fmtDay(x.due))}${x.time ? ` · ${esc(x.time)}` : ""}${x.place ? ` · 📍 ${esc(x.place)}` : ""}</small></div></li>`;
     return `<section class="panel op-narrow"><div class="panel-h">Встречи <span class="h-meta">${m.today ? `${m.today} сегодня` : ""}</span></div>
       <ul class="tasks">${m.upcoming.map(row).join("") || `<li class="empty">Встреч не назначено.</li>`}</ul>
       ${m.done.length ? `<div class="fm-group">Состоялись</div><ul class="tasks">${m.done.map(row).join("")}</ul>` : ""}</section>`;
@@ -120,7 +120,7 @@ export class OperatorApp {
     if (a.kind === "builtin" && a.id === "builtin:exchange") { await this.exchangeApp(); return; }
     if (a.kind === "builtin" && a.id === "builtin:map") {
       if (!this.map) {
-        const { MapWindow } = await import("./map.js?v=32");
+        const { MapWindow } = await import("./map.js?v=33");
         const store = { get: (k, d) => { try { const v = localStorage.getItem(`atom.op.${k}`); return v === null ? d : JSON.parse(v); } catch { return d; } },
           set: (k, v) => { try { localStorage.setItem(`atom.op.${k}`, JSON.stringify(v)); } catch { /* приватный режим */ } } };
         this.map = new MapWindow(document.getElementById("mw"), { api: this.api, toast: this.toast, store, places: false,
@@ -130,7 +130,7 @@ export class OperatorApp {
       return;
     }
     if (!this.viewer) {
-      const { AppViewer } = await import("./app-viewer.js?v=32");
+      const { AppViewer } = await import("./app-viewer.js?v=33");
       this.viewer = new AppViewer(document.getElementById("av"), { api: this.api, toast: this.toast, storeApi: "/api/op/appdata" });
     }
     this.viewer.open(a);
@@ -156,7 +156,7 @@ export class OperatorApp {
   /** Приложение «Обмен файлами»: выданные папки, скачивание и загрузка туда, где разрешено. */
   async exchangeApp(folder = "") {
     if (!this.exchange) {
-      const { ExchangeWindow } = await import("./exchange.js?v=32");
+      const { ExchangeWindow } = await import("./exchange.js?v=33");
       this.exchange = new ExchangeWindow(document.getElementById("xw"),
         { api: this.api, toast: this.toast, mode: "operator" });
     }

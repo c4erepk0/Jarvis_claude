@@ -6,9 +6,10 @@
 //  «Рядом» — кафе, аптеки, метро… (Overpass), сохранённые места (Jarvis/Places.md через /api/places),
 //  слои «Карта / Тёмная / Спутник», 3D-здания и наклон, линейка, «поделиться».
 // Логика без DOM — geo.js (тест — tests/js/geo.test.mjs).
+import { esc } from "./util.js?v=33";
 import { HERE_VIEW, NEARBY, PROFILES, WORLD, arrival, bearing, coordsText, distance, formatDistance, formatDuration,
   lineLength, overpassQuery, parseCoords, parseNominatim, parseOverpass, parsePhoton, parseRoute, progress,
-  routeUrl, shareLink, spoken } from "./geo.js?v=32";
+  routeUrl, shareLink, spoken } from "./geo.js?v=33";
 
 const ML_VER = "4.7.1";
 const ML_JS = `https://cdn.jsdelivr.net/npm/maplibre-gl@${ML_VER}/dist/maplibre-gl.js`;
@@ -27,7 +28,6 @@ const STYLES = {
     layers: [{ id: "esri", type: "raster", source: "esri" }] } },
 };
 const ROUTE_COLORS = ["#ff453a", "#8fa8ff", "#b0a7a4"];
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 let mlLoading = null;
 /** MapLibre — UMD-сборка с CDN (одна на страницу) и её стили. */

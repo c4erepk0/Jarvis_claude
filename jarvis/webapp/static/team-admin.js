@@ -1,11 +1,11 @@
 // Окно «Команда» — раздел владельца (корня): операторы (пригласить по ссылке, права, отключить, удалить),
 // чат с каждым, поручения (задачи и встречи с тегом #оператор/<имя>) и все встречи — отметить «выполнено/состоялась».
 // Данные — /api/admin/…, /api/meetings, /api/tasks (сервер; на iPhone без сервера операторов нет).
-import { esc } from "./markdown.js?v=32";
-import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=32";
-import { devicesList } from "./operator-app.js?v=32";
+import { esc } from "./markdown.js?v=33";
+import { fmtDay } from "./util.js?v=33";
+import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=33";
+import { devicesList } from "./operator-app.js?v=33";
 
-const fmtDate = (iso) => (iso ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) : "без даты");
 
 export class TeamWindow {
   constructor(root, { api, toast, store, today, standalone = false }) {
@@ -230,14 +230,14 @@ export class TeamWindow {
   taskRow(t) {
     const done = t.status === "done";
     return `<li class="task ${done ? "done" : ""}" data-id="${esc(t.id)}"><button class="check" data-check="${done ? "todo" : "done"}" aria-label="${done ? "Вернуть" : "Выполнено"}"></button>
-      <div class="t-text">${esc(t.text)}</div>${t.due ? `<div class="t-meta ${t.due < this.today() && !done ? "over" : ""}">${esc(fmtDate(t.due))}</div>` : ""}</li>`;
+      <div class="t-text">${esc(t.text)}</div>${t.due ? `<div class="t-meta ${t.due < this.today() && !done ? "over" : ""}">${esc(fmtDay(t.due))}</div>` : ""}</li>`;
   }
 
   meetRow(m, withWho = false) {
     const done = m.status === "done";
     const who = withWho && m.assignees.length ? ` · 👤 ${m.assignees.map((a) => this.data.operators.find((o) => o.slug === a)?.name || a).join(", ")}` : "";
     return `<li class="task meet ${done ? "done" : ""}" data-id="${esc(m.id)}"><button class="check" data-check="${done ? "todo" : "done"}" aria-label="${done ? "Вернуть" : "Состоялась"}"></button>
-      <div class="t-text"><b>${esc(m.title)}</b><small class="muted">${esc(fmtDate(m.due))}${m.time ? ` · ${esc(m.time)}` : ""}${m.place ? ` · 📍 ${esc(m.place)}` : ""}${esc(who)}</small></div>
+      <div class="t-text"><b>${esc(m.title)}</b><small class="muted">${esc(fmtDay(m.due))}${m.time ? ` · ${esc(m.time)}` : ""}${m.place ? ` · 📍 ${esc(m.place)}` : ""}${esc(who)}</small></div>
       <div class="t-meta ${m.due && m.due < this.today() && !done ? "over" : m.due === this.today() ? "today" : ""}">${m.due === this.today() ? "сегодня" : ""}</div></li>`;
   }
 

@@ -2,7 +2,7 @@
 // ключи и токены (Telegram, Claude, GitHub… и свои), SSH-серверы, версия и обновления с GitHub (вручную —
 // с подтверждения, или автоматически раз в N часов), перезапуск. Данные — /api/system/… (только владелец).
 // В режиме «только iPhone» сервера нет — показываются диагностика устройства и настройки телефона (standalone.js).
-import { esc } from "./markdown.js?v=32";
+import { esc } from "./markdown.js?v=33";
 
 const TABS = [["diag", "Диагностика"], ["keys", "Ключи и токены"], ["ssh", "SSH-серверы"], ["update", "Обновления"]];
 const when = (iso) => (iso ? new Date(iso).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");

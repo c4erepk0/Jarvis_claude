@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { BUILTIN, appIcon, embeddable, launcherItems } from "../../jarvis/webapp/static/apps-catalog.js";
+import { BUILTIN, GROUPS, appIcon, embeddable, groupedBuiltin, launcherItems } from "../../jarvis/webapp/static/apps-catalog.js";
 
 const CENNIKI = { name: "Ценники", note: "Apps/Ценники.md", kind: "app", icon: "🏷", url: "https://c4erepk0.github.io/cenniki/",
   description: "Ценники, прайс-листы и печатная продукция" };
@@ -42,4 +42,12 @@ test("встраивать — только https; значок — эмодзи
 test("«Обмен файлами» — приложение каталога и только с сервером", () => {
   assert.ok(BUILTIN.some((b) => b.id === "exchange"));
   assert.ok(!launcherItems({ standalone: true }).builtin.some((b) => b.id === "exchange"));
+});
+
+test("приложения сгруппированы по делу: дела, люди, анализ, система", () => {
+  const ids = GROUPS.map(([id]) => id);
+  for (const b of BUILTIN) assert.ok(ids.includes(b.group), `${b.id}: ${b.group}`);
+  const groups = groupedBuiltin(launcherItems({}).builtin);
+  assert.deepEqual(groups.map((g) => g.id), ["deals", "people", "analysis", "system"]);
+  assert.ok(groups.every((g) => g.items.length), "пустые группы не показываем");
 });
