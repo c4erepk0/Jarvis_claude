@@ -3,7 +3,7 @@
 // Никакого облака: файлы лежат в data/exchange/ на той машине, где работает Atom (jarvis/fileshare.py).
 // Владелец видит все папки, создаёт свои, загружает и удаляет; оператор — только выданные папки, и грузит
 // туда, где уровень «upload». Один класс на два режима: "owner" и "operator".
-import { esc } from "./markdown.js?v=33";
+import { esc } from "./markdown.js?v=34";
 
 const KIND = { image: "🖼", video: "🎬", audio: "🎵", text: "📝", pdf: "📄", file: "📎", folder: "📁" };
 const LEVEL = { view: "Просмотр", upload: "Просмотр и загрузка" };

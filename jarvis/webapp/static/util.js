@@ -23,3 +23,12 @@ export function todayISO(value = new Date()) {
 export const fmtDay = (iso, { empty = "" } = {}) => (iso
   ? new Date(`${iso}T00:00`).toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" })
   : empty);
+
+/** Русское склонение по числу: plural(2, ["задача", "задачи", "задач"]) → «задачи». */
+export function plural(n, [one, few, many]) {
+  const a = Math.abs(Number(n) || 0) % 100, b = a % 10;
+  if (a > 10 && a < 20) return many;
+  if (b === 1) return one;
+  if (b >= 2 && b <= 4) return few;
+  return many;
+}

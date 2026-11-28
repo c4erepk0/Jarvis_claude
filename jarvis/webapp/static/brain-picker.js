@@ -1,7 +1,7 @@
 // Выбор модели-мозга на главном экране: кнопка под строкой команды показывает, какая модель ответит,
 // по нажатию — список моделей тех провайдеров, у которых задан ключ (GET /api/brain), выбор — POST /api/brain.
 // Логика без DOM (groupOptions, buttonView) проверяется в tests/js/brain-picker.test.mjs.
-import { esc } from "./markdown.js?v=33";
+import { esc } from "./markdown.js?v=34";
 
 /** Модели по провайдерам в порядке списка: [{backend, provider, error, items}]. */
 export function groupOptions(options = []) {

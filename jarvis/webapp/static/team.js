@@ -2,6 +2,13 @@
 // лента чата по дням, относительное «был в сети».
 export const STATUS = { invited: "приглашён", active: "в работе", disabled: "отключён", expired: "приглашение истекло" };
 
+/** Что показывать в «Команде»: на телефоне — сначала весь список, затем карточка выбранного с «←»;
+ *  на компьютере — список и карточка рядом. Без этого список уезжал в горизонтальную карусель. */
+export function opsView({ mobile = false, selected = null, creating = false } = {}) {
+  const detail = Boolean(selected) || Boolean(creating) || !mobile;
+  return { detail, listOnly: !detail };
+}
+
 /** Код приглашения из ссылки «https://…/?invite=КОД» или из самого кода. */
 export function inviteToken(text) {
   const s = String(text || "").trim();

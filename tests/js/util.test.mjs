@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { esc, fmtDay, todayISO } from "../../jarvis/webapp/static/util.js";
+import { esc, fmtDay, plural, todayISO } from "../../jarvis/webapp/static/util.js";
 
 test("esc закрывает пять опасных символов и не падает на null", () => {
   assert.equal(esc(`<b>&"'`), "&lt;b&gt;&amp;&quot;&#39;");
@@ -26,4 +26,14 @@ test("fmtDay — короткая дата для человека, пустая
   assert.notEqual(d, "2026-11-28");       // это дата для человека, а не ISO
   assert.equal(fmtDay("", { empty: "без даты" }), "без даты");
   assert.equal(fmtDay(null), "");
+});
+
+test("plural — русские формы по числу", () => {
+  const f = ["задача", "задачи", "задач"];
+  assert.equal(plural(1, f), "задача");
+  assert.equal(plural(2, f), "задачи");
+  assert.equal(plural(5, f), "задач");
+  assert.equal(plural(11, f), "задач");
+  assert.equal(plural(21, f), "задача");
+  assert.equal(plural(0, f), "задач");
 });
