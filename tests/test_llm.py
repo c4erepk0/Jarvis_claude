@@ -10,7 +10,7 @@ from aiohttp.test_utils import TestServer
 
 from jarvis.brain import TOOLS
 from jarvis.config import Config
-from jarvis.llm import GigaChat, clean_schema, functions
+from jarvis.llm import CustomChat, GigaChat, clean_schema, functions, make_chat
 
 from .conftest import make_jarvis
 
@@ -254,3 +254,23 @@ def test_deepseek_errors(tmp_path, status, kind, phrase):
             assert j.brain.messages == []
             await j.close()
     asyncio.run(run())
+
+
+def test_custom_openai_compatible_model(monkeypatch):
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    cfg = Config(custom_url="https://openrouter.ai/api/v1", custom_key="sk-or", custom_model="vendor/model")
+    assert cfg.llm_ready()["custom"] is True
+    assert cfg.llm_backend == "custom"                       # других ключей нет
+    chat = make_chat(cfg, "custom")
+    assert isinstance(chat, CustomChat) and chat.model == "vendor/model" and chat.url == cfg.custom_url
+    headers = chat.headers()
+    assert headers["Authorization"] == "Bearer sk-or"
+    assert headers["HTTP-Referer"].startswith("https://github.com/c4erepk0")   # OpenRouter любит заголовки
+    assert headers["X-Title"] == "Atom"
+
+    proxy = CustomChat(Config(custom_url="http://127.0.0.1:11434/v1", custom_key="k", custom_model="llama"),
+                       "llama")
+    assert proxy.headers() == {"Authorization": "Bearer k", "Accept": "application/json"}   # без лишних заголовков
+    # без адреса/ключа/модели провайдер не считается подключённым
+    assert Config(custom_url="https://x/v1", custom_key="k").llm_ready()["custom"] is False

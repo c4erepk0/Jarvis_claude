@@ -34,6 +34,9 @@ KNOWN: dict[str, tuple[str, str, bool]] = {
     "YANDEX_FOLDER_ID": ("YandexGPT: каталог (folder id)", "Мозг", False),
     "DEEPSEEK_API_KEY": ("DeepSeek: API-ключ (sk-…)", "Мозг", True),
     "DEEPSEEK_MODEL": ("DeepSeek: модель (deepseek-chat · deepseek-reasoner)", "Мозг", False),
+    "LLM_URL": ("Своя модель: адрес API (OpenRouter, прокси, Ollama)", "Мозг", False),
+    "LLM_KEY": ("Своя модель: ключ", "Мозг", True),
+    "LLM_MODEL": ("Своя модель: имя модели", "Мозг", False),
     "TELEGRAM_BOT_TOKEN": ("Токен бота Telegram", "Telegram", True),
     "TELEGRAM_OWNER_ID": ("Ваш ID в Telegram", "Telegram", False),
     "BRIEFING_TIME": ("Утренний брифинг в Telegram (ЧЧ:ММ, пусто — выкл.)", "Telegram", False),
@@ -49,7 +52,13 @@ KNOWN: dict[str, tuple[str, str, bool]] = {
     "NEWS_FEEDS": ("Свои ленты RSS через запятую (пусто — встроенные)", "Новости", False),
     "NEWS_INTERVAL": ("Опрашивать ленты раз в … минут", "Новости", False),
     "NEWS_ALERTS": ("Оповещать о сильных прогнозах по вашим активам (1/0)", "Новости", False),
-    "TTS_VOICE": ("Голос (edge-tts)", "Голос", False),
+    "TTS_VOICE": ("Голос: имя (edge) / id (ElevenLabs) / голос SpeechKit (filipp, alena…)", "Голос", False),
+    "TTS_ENGINE": ("Синтез речи (yandex · openai · eleven · edge · piper · browser)", "Голос", False),
+    "TTS_MODEL": ("Голос: модель (gpt-4o-mini-tts · eleven_multilingual_v2)", "Голос", False),
+    "TTS_KEY": ("Голос: ключ синтеза", "Голос", True),
+    "TTS_URL": ("Голос: адрес API (пусто — по провайдеру)", "Голос", False),
+    "TTS_STYLE": ("Голос: манера («спокойно, тепло») или эмоция good", "Голос", False),
+    "TTS_RATE": ("Голос: скорость (-4%)", "Голос", False),
 }
 # свои токены не могут подменить то, от чего зависит запуск и безопасность
 BLOCKED = re.compile(r"^(PATH|HOME|USER|SHELL|PWD|LANG|LC_\w*|TZ|LD_\w*|DYLD_\w*|PYTHON\w*|VIRTUAL_ENV|SSL_\w*|"
