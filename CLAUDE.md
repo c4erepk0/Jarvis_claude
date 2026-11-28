@@ -100,7 +100,7 @@ Python 3.11+ · aiohttp (веб + WebSocket) · anthropic SDK (Claude) · edge-t
   (`/api/op/apps`; manage — правка заметки приложения и задачи его проекта), **доверенные заметки** — `notes`
   [{path: заметка или папка, edit}] (`Jarvis.op_access` / `op_trusted`, `/api/op/notes` → `shared`, правка через
   `/api/op/note` с версией; новые и корзина — только в своей папке). Без пароля владельца приглашать нельзя. Раздел владельца —
-  `/api/admin/…`, окно «Команда» `static/team-admin.js` (вкладка «Доступ»: права, проекты, приложения, доверенные заметки); кабинет оператора — `static/operator-app.js`; без DOM —
+  `/api/admin/…`, окно «Команда» `static/team-admin.js` (вкладка «Доступ»: права, проекты, приложения, доверенные заметки; на телефоне — список операторов и карточка с «←», без боковой колонки); кабинет оператора — `static/operator-app.js`; без DOM —
   `static/team.js`. Только сервер (в JS-ядре для iPhone операторов нет намеренно). Тесты — `tests/test_operators.py`,
   `tests/js/team.test.mjs`.
 - **«Обмен файлами»** — `jarvis/fileshare.py`: папки на своём сервере (`data/exchange/`, вне хранилища Obsidian —

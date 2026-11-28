@@ -1,6 +1,6 @@
 // Сервис-воркер: оболочка дашборда открывается даже без сети; данные всегда берутся с сервера.
 // версия одна для CACHE и для ?v= — тест tests/js/assets-version.test.mjs не даст им разойтись
-const V = "33";
+const V = "34";
 const CACHE = `atom-v${V}`;
 const SHELL = ["./", "static/app.css", `static/app.js?v=${V}`, `static/reactor.js?v=${V}`, `static/voice.js?v=${V}`,
   `static/standalone.js?v=${V}`, "manifest.webmanifest"];

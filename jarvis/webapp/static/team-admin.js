@@ -1,10 +1,10 @@
 // Окно «Команда» — раздел владельца (корня): операторы (пригласить по ссылке, права, отключить, удалить),
 // чат с каждым, поручения (задачи и встречи с тегом #оператор/<имя>) и все встречи — отметить «выполнено/состоялась».
 // Данные — /api/admin/…, /api/meetings, /api/tasks (сервер; на iPhone без сервера операторов нет).
-import { esc } from "./markdown.js?v=33";
-import { fmtDay } from "./util.js?v=33";
-import { STATUS, chatDays, inviteLink, seen } from "./team.js?v=33";
-import { devicesList } from "./operator-app.js?v=33";
+import { esc } from "./markdown.js?v=34";
+import { fmtDay } from "./util.js?v=34";
+import { STATUS, chatDays, inviteLink, opsView, seen } from "./team.js?v=34";
+import { devicesList } from "./operator-app.js?v=34";
 
 
 export class TeamWindow {
@@ -32,9 +32,13 @@ export class TeamWindow {
 
   get isOpen() { return !this.root.classList.contains("hidden"); }
 
+  /** На телефоне — мастер-детали: сначала весь список, потом карточка оператора с «←». */
+  isMobile() { return typeof matchMedia === "function" && matchMedia("(max-width: 900px)").matches; }
+
   async show(opts = {}) {
     if (opts.tab) this.tab = opts.tab;
     if (opts.operator) { this.tab = "ops"; this.sel = opts.operator; this.sub = "chat"; }
+    else if (this.isMobile()) this.sel = null;          // открыли «Команду» — видно всех, а не последнего
     this.root.classList.remove("hidden");
     document.body.classList.add("fw-on");
     await this.reload();
@@ -49,7 +53,7 @@ export class TeamWindow {
       try { this.data = await this.api("/api/admin/operators"); } catch (e) { this.toast(e.message, "error"); return; }
     }
     if (this.sel && !this.data.operators.some((o) => o.id === this.sel)) this.sel = null;
-    if (!this.sel && this.data.operators.length) this.sel = this.data.operators[0].id;
+    if (!this.sel && this.data.operators.length && !this.isMobile()) this.sel = this.data.operators[0].id;
     await this.render();
   }
 
@@ -62,6 +66,9 @@ export class TeamWindow {
     this.el("meta").textContent = n ? `${n} ${n === 1 ? "оператор" : n < 5 ? "оператора" : "операторов"}` : "";
     const body = this.el("body");
     body.innerHTML = this.tab === "meet" ? await this.renderMeetings() : this.tab === "dev" ? await this.renderDevices() : await this.renderOps();
+    // Смена экрана (список → оператор, вкладка, «Доступ») начинается сверху; обновление данных — нет.
+    const view = `${this.tab}:${this.sel || ""}:${this.sub}:${this.creating ? "new" : ""}`;
+    if (view !== this.viewKey) { body.scrollTop = 0; this.viewKey = view; }
     body.querySelector(".tw-chat-log")?.scrollTo(0, 1e9);
   }
 
@@ -79,11 +86,12 @@ export class TeamWindow {
     if (this.creating) main = await this.newForm();
     else if (!op) main = null;
     else main = await this.opPage(op);
+    const { detail } = opsView({ mobile: this.isMobile(), selected: op?.id, creating: this.creating });
     const list = `<aside class="tw-list">
       ${ops.map((o) => `<button class="tw-op ${o.id === this.sel ? "on" : ""}" data-op="${esc(o.id)}">
         <span class="tw-av">${esc(o.name.slice(0, 1).toUpperCase())}</span>
         <span><b>${esc(o.name)}</b><small class="st-${o.status}">${STATUS[o.status]} · ${esc(seen(o.last_seen))}</small></span>
-        ${o.unread ? `<em class="tw-badge">${o.unread}</em>` : ""}</button>`).join("")}
+        <span class="tw-end">${o.unread ? `<em class="tw-badge">${o.unread}</em>` : ""}<span class="tw-go" aria-hidden="true">›</span></span></button>`).join("")}
       ${this.data.can_invite ? `<button class="btn ghost fm-wide" data-act="new">＋ Пригласить оператора</button>` : ""}
     </aside>`;
     if (main === null) main = `<div class="tw-empty"><h3>Операторы — люди, которые помогают вести дела</h3>
@@ -91,7 +99,8 @@ export class TeamWindow {
       выполненное и сможет написать вам. Финансы, память и остальное ему не видны — откройте только нужное: общие проекты,
       приложения из каталога и доверенные заметки.</p>
       ${this.data.can_invite ? `<button class="btn primary" data-act="new">＋ Пригласить первого</button>` : ""}</div>`;
-    return `${lock}<div class="tw-grid">${list}<section class="tw-main">${main}</section></div>`;
+    if (!detail) return `${lock}<div class="tw-grid tw-list-only">${list}</div>`;
+    return `${lock}<div class="tw-grid${this.isMobile() ? " tw-detail" : ""}">${list}<section class="tw-main">${main}</section></div>`;
   }
 
   async newForm() {
@@ -170,8 +179,8 @@ export class TeamWindow {
     const levels = (this.data.exchange && this.data.exchange.levels)
       || { view: "Просмотр", upload: "Просмотр и загрузка" };
     const rows = (on || []).map((g) => `<li data-file-row="${esc(g.path)}">
-      <span class="tw-note-path">📁 ${esc(g.name || g.path)} <small class="muted">${esc(g.path)}</small></span>
-      <select name="file-level" data-file-path="${esc(g.path)}" data-file-name="${esc(g.name || g.path)}">
+      <span class="tw-note-path">📁 ${esc(g.name || g.path)}${g.path && g.path !== g.name ? ` <small class="muted">${esc(g.path)}</small>` : ""}</span>
+      <select class="tw-file-level" name="file-level" data-file-path="${esc(g.path)}" data-file-name="${esc(g.name || g.path)}">
         ${Object.entries(levels).map(([k, l]) => `<option value="${k}" ${g.level === k ? "selected" : ""}>${esc(l)}</option>`).join("")}
       </select>
       <button type="button" class="h-btn" data-act="file-del" aria-label="Убрать">✕</button></li>`).join("");
@@ -191,7 +200,8 @@ export class TeamWindow {
 
   async opPage(op) {
     const content = this.sub === "work" ? await this.workTab(op) : this.sub === "access" ? await this.accessTab(op) : await this.chatTab(op);
-    const head = `<header class="tw-head"><span class="tw-av big">${esc(op.name.slice(0, 1).toUpperCase())}</span>
+    const head = `<header class="tw-head"><button class="btn ghost tw-back" data-act="back" aria-label="К списку команды">←</button>
+      <span class="tw-av big">${esc(op.name.slice(0, 1).toUpperCase())}</span>
       <div><h3>${esc(op.name)}</h3><small class="st-${op.status}">${STATUS[op.status]} · ${esc(seen(op.last_seen))}${op.note ? ` · ${esc(op.note)}` : ""}</small></div>
       <div class="seg tw-sub">${[["chat", `Чат${op.unread ? ` · ${op.unread}` : ""}`], ["work", "Поручения"], ["access", "Доступ"]]
         .map(([k, l]) => `<button data-sub="${k}" class="${this.sub === k ? "on" : ""}">${l}</button>`).join("")}</div></header>`;
@@ -263,7 +273,7 @@ export class TeamWindow {
       <fieldset class="tw-perms"><legend>Доверенные заметки</legend>${await this.notesBox(op.notes || [])}</fieldset>
       <fieldset class="tw-perms"><legend>Обмен файлами</legend>${this.filesBox(op.files || [])}</fieldset>
       <p class="muted small">Тег поручений: <code>#${esc(op.tag)}</code> — им можно отмечать задачи прямо в Obsidian. Личная папка: <code>${esc(op.folder || "")}</code>.</p>
-      <div class="fw-form-acts"><button class="btn primary">Сохранить</button></div></form>
+      <div class="tw-savebar"><button class="btn primary">Сохранить</button></div></form>
       <section class="tw-card"><h3>Устройства · ${devices.length}</h3>
         ${devicesList(devices)}
         <p class="muted small">${op.has_password ? "Оператор входит по имени и паролю с любого устройства." : "Пароль ещё не задан — он задаётся при принятии приглашения."}</p></section>
@@ -303,9 +313,9 @@ export class TeamWindow {
   async onClick(e) {
     const t = e.target;
     const tab = t.closest("[data-tab]");
-    if (tab) { this.tab = tab.dataset.tab; this.creating = false; this.render(); return; }
+    if (tab) { this.tab = tab.dataset.tab; this.creating = false; if (this.isMobile() && this.tab === "ops") this.sel = null; this.render(); return; }
     const opb = t.closest("[data-op]");
-    if (opb) { this.sel = opb.dataset.op; this.creating = false; this.render(); return; }
+    if (opb) { this.sel = opb.dataset.op; this.sub = "chat"; this.creating = false; this.render(); return; }
     const sub = t.closest("[data-sub]");
     if (sub) { this.sub = sub.dataset.sub; this.render(); return; }
     const copy = t.closest("[data-copy]");
@@ -355,6 +365,7 @@ export class TeamWindow {
       catch (err) { this.toast(err.message, "error"); }
       return;
     }
+    if (act === "back") { this.sel = null; this.creating = false; this.render(); return; }
     if (act === "close") { this.close(); return; }
     if (act === "new") { this.creating = true; this.render(); return; }
     if (act === "cancel-new") { this.creating = false; this.render(); return; }

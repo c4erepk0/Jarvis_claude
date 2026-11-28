@@ -1,8 +1,8 @@
 // Окно первоначального обучения жестам поверх голограммы. Логика шагов — gesture-coach.js,
 // схемы рук рисуются из тех же эталонных поз, по которым проверяется распознавание (gestures.js).
-import { GestureCoach, STEPS } from "./gesture-coach.js?v=33";
-import { BONES, KIND_LABEL, POSES } from "./gestures.js?v=33";
-import { esc } from "./util.js?v=33";
+import { GestureCoach, STEPS } from "./gesture-coach.js?v=34";
+import { BONES, KIND_LABEL, POSES } from "./gestures.js?v=34";
+import { esc } from "./util.js?v=34";
 
 
 /** SVG-схема руки в стиле наложения камеры: голубые кости, белые суставы. flip — левая рука. */

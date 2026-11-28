@@ -3,9 +3,9 @@
 // Мост с приложением (app-bridge.js): готовые файлы приложение отдаёт Atom, и Atom показывает своё окно «Файл готов»
 // (во встроенной странице браузер не даёт скачать файл или вызвать «Поделиться», особенно на iPhone); общие данные
 // приложения хранит Atom (/api/appdata, у оператора — /api/op/appdata) и рассылает изменения всем открытым копиям.
-import { esc } from "./markdown.js?v=33";
-import { appIcon } from "./apps-catalog.js?v=33";
-import { embeddableUrl, fileFromMessage, fileSize, fromApp, toApp } from "./app-bridge.js?v=33";
+import { esc } from "./markdown.js?v=34";
+import { appIcon } from "./apps-catalog.js?v=34";
+import { embeddableUrl, fileFromMessage, fileSize, fromApp, toApp } from "./app-bridge.js?v=34";
 
 const CLIENT = Math.random().toString(36).slice(2, 10);
 

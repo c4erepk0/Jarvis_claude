@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { chatDays, inviteLink, inviteToken, seen } from "../../jarvis/webapp/static/team.js";
+import { chatDays, inviteLink, inviteToken, opsView, seen } from "../../jarvis/webapp/static/team.js";
 import { asMeeting, meetingText, meetings } from "../../jarvis/webapp/static/core/meetings.js";
 import { parse } from "../../jarvis/webapp/static/core/intents.js";
 import { Jarvis } from "../../jarvis/webapp/static/core/jarvis.js";
@@ -62,4 +62,12 @@ test("личные задачи операторов (Команда/<Имя>/) 
     "Tasks/Inbox.md": "# Входящие задачи\n\n- [ ] Позвонить в банк #оператор/анна 📅 2026-11-19\n",
   }), clock: () => new Date(2026, 10, 19, 10), fetchImpl: async () => { throw new TypeError("offline"); } }).init();
   assert.deepEqual(j.tasks.all().map((t) => t.text), ["Позвонить в банк"]);
+});
+
+test("«Команда» на телефоне: сначала все, потом карточка; на компьютере — обе колонки", () => {
+  assert.deepEqual(opsView({ mobile: true }), { detail: false, listOnly: true });
+  assert.deepEqual(opsView({ mobile: true, selected: "op1" }), { detail: true, listOnly: false });
+  assert.deepEqual(opsView({ mobile: true, creating: true }), { detail: true, listOnly: false });
+  assert.deepEqual(opsView({ mobile: false }), { detail: true, listOnly: false });
+  assert.deepEqual(opsView(), { detail: true, listOnly: false });
 });

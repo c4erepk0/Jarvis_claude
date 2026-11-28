@@ -6,10 +6,10 @@
 //  «Рядом» — кафе, аптеки, метро… (Overpass), сохранённые места (Jarvis/Places.md через /api/places),
 //  слои «Карта / Тёмная / Спутник», 3D-здания и наклон, линейка, «поделиться».
 // Логика без DOM — geo.js (тест — tests/js/geo.test.mjs).
-import { esc } from "./util.js?v=33";
+import { esc } from "./util.js?v=34";
 import { HERE_VIEW, NEARBY, PROFILES, WORLD, arrival, bearing, coordsText, distance, formatDistance, formatDuration,
   lineLength, overpassQuery, parseCoords, parseNominatim, parseOverpass, parsePhoton, parseRoute, progress,
-  routeUrl, shareLink, spoken } from "./geo.js?v=33";
+  routeUrl, shareLink, spoken } from "./geo.js?v=34";
 
 const ML_VER = "4.7.1";
 const ML_JS = `https://cdn.jsdelivr.net/npm/maplibre-gl@${ML_VER}/dist/maplibre-gl.js`;
